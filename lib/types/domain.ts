@@ -18,26 +18,82 @@ export type ParsedReport = {
     orders: number;
     revenue: number;
   };
+  agencyInput: {
+    growthStage: string;
+  };
+  scalePlannerInput: {
+    revenueGrowthTargetPct: number;
+    adSpendGrowthTargetPct: number;
+    ordersGrowthTargetPct: number;
+    cacImprovementTargetPct: number;
+    allocationMetaPct: number;
+    allocationGooglePct: number;
+    allocationOtherPct: number;
+  };
 };
 
 export type InsightPayload = {
   summary: string;
   priorityFixes: string[];
+  source: "pending" | "ollama" | "fallback";
+  latencyMs: number;
 };
 
 export type CalculatedReport = {
   unitEconomics: {
     netRevenueExGst: number;
+    totalCogs: number;
+    fulfillmentCost: number;
     grossMargin: number;
     contributionMargin: number;
     contributionMarginPct: number;
     maxAllowableCac: number;
   };
   adMetrics: {
+    totalAdSpend: number;
+    totalRevenue: number;
+    totalOrders: number;
     blendedRoas: number;
     blendedCac: number;
     blendedCtr: number;
     blendedCvr: number;
+    cpc: number;
+    cpm: number;
+  };
+  agencyFee: {
+    growthStage: string;
+    percentOfSpendFee: number;
+    percentOfRevenueFee: number;
+    flatRetainerFee: number;
+    performanceFee: number;
+    hybridFee: number;
+    recommendedFee: number;
+    asPctRevenue: number;
+    asPctAdSpend: number;
+    breakevenRoasWithAgency: number;
+  };
+  scalePlanner: {
+    targetRevenue: number;
+    targetAdSpend: number;
+    targetOrders: number;
+    targetCac: number;
+    budgetMeta: number;
+    budgetGoogle: number;
+    budgetOther: number;
+    expectedOrdersMeta: number;
+    expectedOrdersGoogle: number;
+    expectedOrdersOther: number;
+    allocationTotalPct: number;
+    readiness: string;
+  };
+  monthlyPnl: {
+    netRevenueMonth: number;
+    cogsMonth: number;
+    fulfillmentMonth: number;
+    contributionMonth: number;
+    marketingMonth: number;
+    netProfitMonth: number;
+    netProfitMarginPct: number;
   };
   insights: InsightPayload;
 };

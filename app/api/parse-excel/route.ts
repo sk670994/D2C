@@ -1,7 +1,8 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { parseWorkbookBuffer } from "@/lib/excel/parser";
 
 export async function POST(request: Request) {
+  const startedAt = Date.now();
   try {
     const form = await request.formData();
     const file = form.get("file");
@@ -16,5 +17,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Parse error";
     return NextResponse.json({ error: message }, { status: 500 });
+  } finally {
+    console.info(`[api/parse-excel] completed in ${Date.now() - startedAt}ms`);
   }
 }
