@@ -31,16 +31,7 @@ export default function UploadPage() {
       });
       if (!calc.ok) throw new Error("Failed to calculate metrics");
       const calcJson = await calc.json();
-
-      const insights = await fetch("/api/insights", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(calcJson)
-      });
-      if (!insights.ok) throw new Error("Failed to generate insights");
-      const insightsJson = await insights.json();
-
-      sessionStorage.setItem("report", JSON.stringify({ ...calcJson, insights: insightsJson }));
+      sessionStorage.setItem("report", JSON.stringify(calcJson));
       router.push("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unexpected error");
