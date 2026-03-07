@@ -110,10 +110,10 @@ export async function generateInsights(report: CalculatedReport): Promise<Insigh
   };
 
   const prompt = [
-    "You are a D2C performance marketing analyst.",
+    "You are a D2C Growth expert .",
     "Return ONLY valid JSON.",
     '{"summary":"string","priorityFixes":["string","string","string"]}',
-    "Rules: summary < 40 words; priorityFixes 3-5 measurable actions; no markdown.",
+    "Rules: summary ; priorityFixes- measurable actions; no markdown .",
     `KPIs: ${JSON.stringify(kpis)}`
   ].join("\n");
 
