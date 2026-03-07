@@ -31,6 +31,7 @@ export default function UploadPage() {
       });
       if (!calc.ok) throw new Error("Failed to calculate metrics");
       const calcJson = await calc.json();
+      sessionStorage.setItem("reportInput", JSON.stringify(parsedJson));
       sessionStorage.setItem("report", JSON.stringify(calcJson));
       router.push("/dashboard");
     } catch (err) {
