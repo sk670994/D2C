@@ -18,30 +18,72 @@ Open `http://localhost:3000` and start with the calculator dashboard.
 3. Review all computed sections:
    - Unit Economics
    - Ad Metrics
-   - Agency Fee Calc
    - Scale Planner
    - Monthly P&L
 4. Click `Generate AI Insights` for LLM recommendations.
 
-## Authentication (Supabase + Google OAuth)
+## Authentication (Supabase Email/Password)
 
 1. Create a Supabase project.
-2. Enable Google provider in Supabase Auth.
-3. In Google Cloud OAuth app, add redirect URL:
-   - `https://<YOUR_SUPABASE_PROJECT>.supabase.co/auth/v1/callback`
-4. Set environment variables in `.env.local`:
+2. In Supabase Auth settings, enable Email provider.
+3. Set environment variables in `.env.local`:
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-5. App OAuth callback route:
-   - `/auth/callback`
 
 Protected route:
 - `/dashboard` (redirects to `/login` if not authenticated)
 
-## Ollama LLM Insights
+## Monthly Records (Supabase)
 
-1. Run Ollama locally (default endpoint: `http://127.0.0.1:11434`).
-2. Pull a model (example): `ollama pull llama3:latest`.
-3. Copy `.env.example` to `.env.local` and adjust values if needed.
+Create a table in Supabase SQL editor:
 
-If Ollama is unavailable, the app falls back to local rule-based insights.
+```sql
+create table if not exists public.monthly_records (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null,
+  user_email text not null,
+  month_key text not null,
+  report_input jsonb not null,
+  report_data jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(user_id, month_key)
+);
+
+alter table public.monthly_records enable row level security;
+
+create policy "user_can_read_own_records"
+on public.monthly_records
+for select
+to authenticated
+using (auth.uid() = user_id);
+
+create policy "user_can_upsert_own_records"
+on public.monthly_records
+for insert
+to authenticated
+with check (auth.uid() = user_id);
+
+create policy "user_can_update_own_records"
+on public.monthly_records
+for update
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+```
+
+Admin lookup endpoint:
+- `GET /api/admin/monthly-records?email=user@example.com`
+- Requires:
+  - `NEXT_PUBLIC_ADMIN_EMAIL`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+
+## Gemini LLM Insights
+
+1. Create a Google AI Studio API key.
+2. Copy `.env.example` to `.env.local` and set:
+   - `GEMINI_API_KEY`
+   - `GEMINI_MODEL` (example: `gemini-1.5-flash`)
+   - `GEMINI_TIMEOUT_MS` (optional, default `25000`)
+
+If Gemini is unavailable, the app falls back to local rule-based insights.

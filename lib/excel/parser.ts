@@ -8,13 +8,6 @@ function getNumber(ws: XLSX.WorkSheet, ref: string, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function getText(ws: XLSX.WorkSheet, ref: string, fallback = ""): string {
-  const cell = ws[ref];
-  if (!cell) return fallback;
-  const v = String(cell.v ?? "").trim();
-  return v.length > 0 ? v : fallback;
-}
-
 function findSheetByKeyword(wb: XLSX.WorkBook, keyword: string): XLSX.WorkSheet | null {
   const match = wb.SheetNames.find((name) => name.toLowerCase().includes(keyword.toLowerCase()));
   return match ? wb.Sheets[match] : null;
@@ -24,7 +17,6 @@ export function parseWorkbookBuffer(buffer: Buffer): ParsedReport {
   const wb = XLSX.read(buffer, { type: "buffer" });
   const unit = findSheetByKeyword(wb, "unit economics");
   const ads = findSheetByKeyword(wb, "ad metrics");
-  const agency = findSheetByKeyword(wb, "agency fee");
   const scale = findSheetByKeyword(wb, "scale planner");
 
   if (!unit || !ads) {
@@ -50,9 +42,6 @@ export function parseWorkbookBuffer(buffer: Buffer): ParsedReport {
       clicks: getNumber(ads, "F8"),
       orders: getNumber(ads, "F10"),
       revenue: getNumber(ads, "F12")
-    },
-    agencyInput: {
-      growthStage: getText(agency ?? ads, "C10", "Early Stage")
     },
     scalePlannerInput: {
       revenueGrowthTargetPct: getNumber(scale ?? ads, "D14", 0.3),

@@ -18,9 +18,6 @@ export type ParsedReport = {
     orders: number;
     revenue: number;
   };
-  agencyInput: {
-    growthStage: string;
-  };
   scalePlannerInput: {
     revenueGrowthTargetPct: number;
     adSpendGrowthTargetPct: number;
@@ -35,7 +32,14 @@ export type ParsedReport = {
 export type InsightPayload = {
   summary: string;
   priorityFixes: string[];
-  source: "pending" | "ollama" | "fallback";
+  growthLevers: string[];
+  riskAlerts: string[];
+  channelPlan: string[];
+  experimentBacklog: string[];
+  cashflowActions: string[];
+  watchlistKpis: string[];
+  next30Days: string[];
+  source: "pending" | "gemini" | "fallback";
   latencyMs: number;
 };
 
@@ -59,18 +63,6 @@ export type CalculatedReport = {
     blendedCvr: number;
     cpc: number;
     cpm: number;
-  };
-  agencyFee: {
-    growthStage: string;
-    percentOfSpendFee: number;
-    percentOfRevenueFee: number;
-    flatRetainerFee: number;
-    performanceFee: number;
-    hybridFee: number;
-    recommendedFee: number;
-    asPctRevenue: number;
-    asPctAdSpend: number;
-    breakevenRoasWithAgency: number;
   };
   scalePlanner: {
     targetRevenue: number;
