@@ -23,6 +23,21 @@ Open `http://localhost:3000` and start with the calculator dashboard.
    - Monthly P&L
 4. Click `Generate AI Insights` for LLM recommendations.
 
+## Authentication (Supabase + Google OAuth)
+
+1. Create a Supabase project.
+2. Enable Google provider in Supabase Auth.
+3. In Google Cloud OAuth app, add redirect URL:
+   - `https://<YOUR_SUPABASE_PROJECT>.supabase.co/auth/v1/callback`
+4. Set environment variables in `.env.local`:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+5. App OAuth callback route:
+   - `/auth/callback`
+
+Protected route:
+- `/dashboard` (redirects to `/login` if not authenticated)
+
 ## Ollama LLM Insights
 
 1. Run Ollama locally (default endpoint: `http://127.0.0.1:11434`).

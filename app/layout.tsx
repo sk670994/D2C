@@ -2,8 +2,8 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "D2C Marketing Dashboard",
-  description: "Upload Excel and get a clear D2C dashboard with insights"
+  title: "D2C Growth Intelligence Command Center",
+  description: "High-performance D2C command center with dynamic cards, live economics, and AI insight loops"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
