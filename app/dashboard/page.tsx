@@ -17,6 +17,7 @@ const sectionOptions = [
 ] as const;
 
 type SectionId = (typeof sectionOptions)[number]["id"];
+type ActiveSection = Exclude<SectionId, "all">;
 
 type MetricTone = "good" | "warn" | "neutral";
 
@@ -34,6 +35,14 @@ type ToastMessage = {
   id: number;
   text: string;
   tone: ToastTone;
+};
+
+type ScenarioSnapshot = {
+  id: number;
+  name: string;
+  report: CalculatedReport;
+  input: ParsedReport;
+  createdAt: string;
 };
 
 function inr(n: number): string {
@@ -93,6 +102,9 @@ export default function DashboardPage() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [scenarios, setScenarios] = useState<ScenarioSnapshot[]>([]);
+  const [selectedScenarioId, setSelectedScenarioId] = useState<number | null>(null);
 
   function pushToast(text: string, tone: ToastTone = "neutral") {
     const id = Date.now() + Math.floor(Math.random() * 1000);
@@ -127,6 +139,11 @@ export default function DashboardPage() {
         // no-op
       }
     }
+  }, []);
+
+  useEffect(() => {
+    const seen = localStorage.getItem("seenOnboardingV1");
+    if (!seen) setShowOnboarding(true);
   }, []);
 
   useEffect(() => {
@@ -257,7 +274,7 @@ export default function DashboardPage() {
     }
   }
 
-  function applySectionChanges(id: Exclude<SectionId, "all">) {
+  function applySectionChanges(id: ActiveSection) {
     setSelectedSection(id);
     const sectionLabel = sectionOptions.find((opt) => opt.id === id)?.label ?? id;
     applyChanges(sectionLabel);
@@ -300,6 +317,72 @@ export default function DashboardPage() {
     sessionStorage.setItem("report", JSON.stringify(merged));
     setDirty(false);
     pushToast("Sample data loaded", "good");
+  }
+
+  function closeOnboarding() {
+    setShowOnboarding(false);
+    localStorage.setItem("seenOnboardingV1", "1");
+  }
+
+  function saveScenario() {
+    const nextScenario: ScenarioSnapshot = {
+      id: Date.now(),
+      name: `Scenario ${scenarios.length + 1}`,
+      report,
+      input: reportInput,
+      createdAt: new Date().toLocaleString()
+    };
+    setScenarios((prev) => [nextScenario, ...prev].slice(0, 3));
+    setSelectedScenarioId(nextScenario.id);
+    pushToast(`${nextScenario.name} saved`, "good");
+  }
+
+  function loadScenario(id: number) {
+    const scenario = scenarios.find((s) => s.id === id);
+    if (!scenario) return;
+    setReportInput(structuredClone(scenario.input));
+    setReport(structuredClone(scenario.report));
+    setSelectedScenarioId(id);
+    setDirty(false);
+    sessionStorage.setItem("reportInput", JSON.stringify(scenario.input));
+    sessionStorage.setItem("report", JSON.stringify(scenario.report));
+    pushToast(`${scenario.name} loaded`, "neutral");
+  }
+
+  function applyPriorityFix(index: number) {
+    const fix = report.insights.priorityFixes[index];
+    if (!fix) return;
+
+    const nextInput = structuredClone(reportInput);
+    const lower = fix.toLowerCase();
+
+    if (lower.includes("roas")) {
+      nextInput.adMetricsInput.revenue = Math.round(nextInput.adMetricsInput.revenue * 1.1);
+    } else if (lower.includes("contribution")) {
+      nextInput.unitEconomicsInput.cogsParts = nextInput.unitEconomicsInput.cogsParts.map((v) => Math.max(0, Math.round(v * 0.95)));
+    } else if (lower.includes("cac")) {
+      nextInput.adMetricsInput.totalAdSpend = Math.round(nextInput.adMetricsInput.totalAdSpend * 0.9);
+    } else {
+      nextInput.unitEconomicsInput.discount = Math.max(0, Math.round(nextInput.unitEconomicsInput.discount * 0.95));
+    }
+
+    setReportInput(nextInput);
+    setDirty(true);
+    pushToast("Applied AI fix draft to inputs", "good");
+  }
+
+  function dismissPriorityFix(index: number) {
+    const nextFixes = report.insights.priorityFixes.filter((_, i) => i !== index);
+    const merged = {
+      ...report,
+      insights: {
+        ...report.insights,
+        priorityFixes: nextFixes
+      }
+    };
+    setReport(merged);
+    sessionStorage.setItem("report", JSON.stringify(merged));
+    pushToast("Priority fix dismissed", "neutral");
   }
 
   async function generateInsights() {
@@ -354,6 +437,9 @@ export default function DashboardPage() {
         break;
       case "sample":
         loadSampleData();
+        break;
+      case "scenario":
+        saveScenario();
         break;
       case "insights":
         generateInsights();
@@ -477,7 +563,7 @@ export default function DashboardPage() {
     ];
   }
 
-  function getSectionInputSnapshot(id: Exclude<SectionId, "all">) {
+  function getSectionInputSnapshot(id: ActiveSection) {
     if (id === "unit") return reportInput.unitEconomicsInput;
     if (id === "ad") return reportInput.adMetricsInput;
     if (id === "agency") return reportInput.agencyInput;
@@ -493,7 +579,7 @@ export default function DashboardPage() {
     };
   }
 
-  function saveSectionSheet(id: Exclude<SectionId, "all">) {
+  function saveSectionSheet(id: ActiveSection) {
     const sheet = {
       section: id,
       exportedAt: new Date().toISOString(),
@@ -513,7 +599,7 @@ export default function DashboardPage() {
     pushToast(`${sectionOptions.find((opt) => opt.id === id)?.label ?? id} sheet saved`, "good");
   }
 
-  function sectionInputs(id: Exclude<SectionId, "all">): React.ReactNode {
+  function sectionInputs(id: ActiveSection): React.ReactNode {
     if (id === "unit") {
       return (
         <div className="editor-grid">
@@ -589,7 +675,7 @@ export default function DashboardPage() {
     return "neutral";
   }
 
-  function renderSectionBlock(id: Exclude<SectionId, "all">) {
+  function renderSectionBlock(id: ActiveSection) {
     const sectionHealth = sectionStatus[id];
     const tone = statusTone(sectionHealth);
 
@@ -635,11 +721,21 @@ export default function DashboardPage() {
     { id: "apply", label: "Apply Changes" },
     { id: "reset", label: "Reset Defaults" },
     { id: "sample", label: "Load Sample Data" },
+    { id: "scenario", label: "Save Scenario Snapshot" },
     { id: "insights", label: "Generate AI Insights" }
   ];
 
   const filteredCommands = commands.filter((c) => c.label.toLowerCase().includes(paletteQuery.toLowerCase()));
-  const sectionSequence: Exclude<SectionId, "all">[] = ["unit", "ad", "agency", "scale", "pnl"];
+  const sectionSequence: ActiveSection[] = ["unit", "ad", "agency", "scale", "pnl"];
+  const completedSections = sectionSequence.filter((id) => statusTone(sectionStatus[id]) === "good").length;
+  const checklist = [
+    { label: "Unit Economics Healthy", done: sectionStatus.unit === "Healthy" },
+    { label: "Ad Metrics Healthy", done: sectionStatus.ad === "Healthy" },
+    { label: "Agency Fee In Range", done: sectionStatus.agency === "Healthy" },
+    { label: "Scale Planner Ready", done: sectionStatus.scale === "Ready" },
+    { label: "Monthly Margin Healthy", done: sectionStatus.pnl === "Healthy" },
+    { label: "Insights Generated", done: report.insights.source !== "pending" }
+  ];
 
   return (
     <div className="dashboard-shell">
@@ -683,7 +779,23 @@ export default function DashboardPage() {
           <button type="button" className="button-ghost" onClick={loadSampleData}>
             Load Sample Data
           </button>
+          <button type="button" className="button-ghost" onClick={saveScenario}>
+            Save Scenario
+          </button>
+          <span className="tag">{completedSections}/{sectionSequence.length} sections healthy</span>
           <span className={dirty ? "tag tag-warn" : "tag tag-good"}>{dirty ? "Unsaved Draft" : "All Saved"}</span>
+        </section>
+
+        <section className="surface progress-strip">
+          {sectionSequence.map((id) => {
+            const tone = statusTone(sectionStatus[id]);
+            return (
+              <button key={id} type="button" className={`progress-pill tone-${tone}`} onClick={() => setSelectedSection(id)}>
+                <span>{sectionOptions.find((opt) => opt.id === id)?.label}</span>
+                <small>{sectionStatus[id]}</small>
+              </button>
+            );
+          })}
         </section>
 
         <section className="surface hero-surface">
@@ -722,7 +834,61 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {selectedSection === "all" ? sectionSequence.map((id) => renderSectionBlock(id)) : renderSectionBlock(selectedSection as Exclude<SectionId, "all">)}
+        <section className="surface checklist-surface">
+          <div className="section-head">
+            <h3>Launch Checklist</h3>
+            <p>Track the readiness gates before scaling budgets.</p>
+          </div>
+          <div className="checklist-grid">
+            {checklist.map((item) => (
+              <div key={item.label} className={`check-item ${item.done ? "done" : ""}`}>
+                <span>{item.done ? "✓" : "○"}</span>
+                <p>{item.label}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {selectedSection === "all" ? sectionSequence.map((id) => renderSectionBlock(id)) : renderSectionBlock(selectedSection as ActiveSection)}
+
+        <section className="surface section-surface">
+          <div className="section-head">
+            <h3>Scenario Lab</h3>
+            <p>Save and compare up to 3 scenarios for revenue, profit and ROAS.</p>
+          </div>
+          <div className="scenario-grid">
+            {scenarios.length === 0 ? <p className="muted-text">No scenario saved yet. Use “Save Scenario” after applying changes.</p> : null}
+            {scenarios.map((scenario) => (
+              <article key={scenario.id} className={`scenario-card ${selectedScenarioId === scenario.id ? "active" : ""}`}>
+                <h4>{scenario.name}</h4>
+                <p className="muted-text">{scenario.createdAt}</p>
+                <div className="scenario-bars">
+                  <label>
+                    Revenue
+                    <div className="bar-track">
+                      <span style={{ width: `${Math.min(100, (scenario.report.monthlyPnl.netRevenueMonth / Math.max(report.monthlyPnl.netRevenueMonth, 1)) * 100)}%` }} />
+                    </div>
+                  </label>
+                  <label>
+                    Profit
+                    <div className="bar-track">
+                      <span style={{ width: `${Math.min(100, Math.max(5, (scenario.report.monthlyPnl.netProfitMonth / Math.max(report.monthlyPnl.netProfitMonth, 1)) * 100))}%` }} />
+                    </div>
+                  </label>
+                  <label>
+                    ROAS
+                    <div className="bar-track">
+                      <span style={{ width: `${Math.min(100, (scenario.report.adMetrics.blendedRoas / Math.max(report.adMetrics.blendedRoas, 0.1)) * 100)}%` }} />
+                    </div>
+                  </label>
+                </div>
+                <button type="button" className="button-ghost" onClick={() => loadScenario(scenario.id)}>
+                  Load Scenario
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
 
         <section className="surface section-surface insights-surface">
           <div className="section-head">
@@ -733,8 +899,22 @@ export default function DashboardPage() {
             <span className="tag">Source: {report.insights.source}</span>
             <span className="tag">Latency: {report.insights.latencyMs}ms</span>
             <span className={insightsLoading ? "tag tag-warn" : "tag tag-good"}>{insightsLoading ? "Generating" : "Ready"}</span>
+            <span className="tag">Confidence: {report.insights.source === "ollama" ? "High" : "Medium"}</span>
           </div>
           {insightsError ? <p className="error-text">{insightsError}</p> : null}
+          {report.insights.priorityFixes.length > 0 ? (
+            <div className="fix-grid">
+              {report.insights.priorityFixes.map((fix, index) => (
+                <article key={`${fix}-${index}`} className="fix-card">
+                  <p>{fix}</p>
+                  <div className="fix-actions">
+                    <button type="button" onClick={() => applyPriorityFix(index)}>Apply Draft</button>
+                    <button type="button" className="button-ghost" onClick={() => dismissPriorityFix(index)}>Dismiss</button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : null}
           <textarea
             readOnly
             value={
@@ -767,6 +947,32 @@ export default function DashboardPage() {
                 </button>
               ))}
               {filteredCommands.length === 0 ? <p className="muted-text">No commands found</p> : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <nav className="mobile-nav">
+        {sectionSequence.map((id) => (
+          <button key={id} type="button" className={selectedSection === id ? "active" : ""} onClick={() => setSelectedSection(id)}>
+            {sectionOptions.find((opt) => opt.id === id)?.label?.split(" ")[0]}
+          </button>
+        ))}
+      </nav>
+
+      {showOnboarding ? (
+        <div className="palette-backdrop" onClick={closeOnboarding}>
+          <div className="palette-card onboarding-card" onClick={(e) => e.stopPropagation()}>
+            <h3>Welcome to D2C Command Center</h3>
+            <p className="muted-text">Quick start in 3 steps:</p>
+            <ol>
+              <li>Load sample data to see a full working model.</li>
+              <li>Edit inputs section-by-section and apply changes.</li>
+              <li>Generate AI insights and use Apply Draft on priority fixes.</li>
+            </ol>
+            <div className="action-row">
+              <button type="button" onClick={() => { loadSampleData(); closeOnboarding(); }}>Load Sample + Start</button>
+              <button type="button" className="button-ghost" onClick={closeOnboarding}>Skip</button>
             </div>
           </div>
         </div>
