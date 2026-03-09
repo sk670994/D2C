@@ -2,20 +2,26 @@
 
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { Button } from "@/components/ui/button";
 
 export function SignOutButton() {
   const router = useRouter();
 
   async function onSignOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push("/login");
-    router.refresh();
+    try {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+      router.push("/login");
+      router.refresh();
+    } catch {
+      router.push("/login");
+      router.refresh();
+    }
   }
 
   return (
-    <button type="button" onClick={onSignOut}>
+    <Button type="button" variant="secondary" onClick={onSignOut}>
       Sign Out
-    </button>
+    </Button>
   );
 }

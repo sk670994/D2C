@@ -20,9 +20,6 @@ export const DEFAULT_REPORT_INPUT: ParsedReport = {
     orders: 490,
     revenue: 441000
   },
-  agencyInput: {
-    growthStage: "Early Stage"
-  },
   scalePlannerInput: {
     revenueGrowthTargetPct: 0.3,
     adSpendGrowthTargetPct: 0.25,

@@ -1,17 +1,22 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CalculatedReport, ParsedReport } from "@/lib/types/domain";
 import { calculateReport } from "@/lib/calc/report";
 import { DEFAULT_REPORT_INPUT } from "@/lib/constants/defaultInput";
 import { createClient } from "@/lib/supabase/client";
 import { SignOutButton } from "@/components/auth/SignOutButton";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 const sectionOptions = [
   { id: "all", label: "All" },
   { id: "unit", label: "Unit Economics" },
   { id: "ad", label: "Ad Metrics" },
-  { id: "agency", label: "Agency Fee" },
   { id: "scale", label: "Scale Planner" },
   { id: "pnl", label: "Monthly P&L" }
 ] as const;
@@ -45,6 +50,52 @@ type ScenarioSnapshot = {
   createdAt: string;
 };
 
+type MonthlyRecord = {
+  id: string;
+  user_id: string;
+  user_email: string;
+  month_key: string;
+  report_input: ParsedReport;
+  report_data: CalculatedReport;
+  created_at: string;
+  updated_at: string;
+};
+
+function pendingInsights(summary = "Insights not generated yet"): CalculatedReport["insights"] {
+  return {
+    summary,
+    priorityFixes: [],
+    growthLevers: [],
+    riskAlerts: [],
+    channelPlan: [],
+    experimentBacklog: [],
+    cashflowActions: [],
+    watchlistKpis: [],
+    next30Days: [],
+    source: "pending",
+    latencyMs: 0
+  };
+}
+
+function normalizeInsightPayload(insights: Partial<CalculatedReport["insights"]> | null | undefined): CalculatedReport["insights"] {
+  const base = pendingInsights();
+  if (!insights) return base;
+  const asList = (value: unknown) => (Array.isArray(value) ? value.filter((x): x is string => typeof x === "string") : []);
+  return {
+    ...base,
+    ...insights,
+    summary: typeof insights.summary === "string" ? insights.summary : base.summary,
+    priorityFixes: asList(insights.priorityFixes),
+    growthLevers: asList(insights.growthLevers),
+    riskAlerts: asList(insights.riskAlerts),
+    channelPlan: asList(insights.channelPlan),
+    experimentBacklog: asList(insights.experimentBacklog),
+    cashflowActions: asList(insights.cashflowActions),
+    watchlistKpis: asList(insights.watchlistKpis),
+    next30Days: asList(insights.next30Days)
+  };
+}
+
 function inr(n: number): string {
   return `INR ${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
@@ -71,6 +122,20 @@ function MetricTile({ item }: { item: MetricItem }) {
   );
 }
 
+function InsightList({ title, items }: { title: string; items: string[] }) {
+  if (items.length === 0) return null;
+  return (
+    <article className="fix-card">
+      <p className="metric-title" style={{ marginBottom: 8 }}>{title}</p>
+      <ul className="insight-list">
+        {items.map((item, idx) => (
+          <li key={`${title}-${idx}`}>{item}</li>
+        ))}
+      </ul>
+    </article>
+  );
+}
+
 function NumberField({
   label,
   value,
@@ -83,10 +148,10 @@ function NumberField({
   step?: string;
 }) {
   return (
-    <label className="input-row">
+    <Label className="input-row">
       <span>{label}</span>
-      <input type="number" step={step} value={value} onChange={(e) => onChange(e.target.value)} />
-    </label>
+      <Input type="number" step={step} value={value} onChange={(e) => onChange(e.target.value)} />
+    </Label>
   );
 }
 
@@ -98,6 +163,7 @@ export default function DashboardPage() {
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string>("");
+  const [userName, setUserName] = useState<string>("");
   const [dirty, setDirty] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
@@ -105,8 +171,23 @@ export default function DashboardPage() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [scenarios, setScenarios] = useState<ScenarioSnapshot[]>([]);
   const [selectedScenarioId, setSelectedScenarioId] = useState<number | null>(null);
+  const [userId, setUserId] = useState<string>("");
+  const [appliedFixes, setAppliedFixes] = useState<number[]>([]);
+  const [monthKey, setMonthKey] = useState<string>(new Date().toISOString().slice(0, 7));
+  const [recordsLoading, setRecordsLoading] = useState(false);
+  const [recordsError, setRecordsError] = useState<string>("");
+  const [monthlyRecords, setMonthlyRecords] = useState<MonthlyRecord[]>([]);
+  const [adminTargetEmail, setAdminTargetEmail] = useState<string>("");
+  const [profileName, setProfileName] = useState<string>("");
+  const [profilePhone, setProfilePhone] = useState<string>("");
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const lastToastRef = useRef<{ text: string; at: number }>({ text: "", at: 0 });
 
   function pushToast(text: string, tone: ToastTone = "neutral") {
+    const now = Date.now();
+    if (lastToastRef.current.text === text && now - lastToastRef.current.at < 1200) return;
+    lastToastRef.current = { text, at: now };
     const id = Date.now() + Math.floor(Math.random() * 1000);
     setToasts((prev) => [...prev, { id, text, tone }]);
     window.setTimeout(() => {
@@ -133,7 +214,7 @@ export default function DashboardPage() {
       try {
         const parsedReport = JSON.parse(savedReport) as CalculatedReport;
         if (parsedReport?.insights) {
-          setReport((prev) => ({ ...prev, insights: parsedReport.insights }));
+          setReport((prev) => ({ ...prev, insights: normalizeInsightPayload(parsedReport.insights) }));
         }
       } catch {
         // no-op
@@ -147,10 +228,28 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => {
-      setUserEmail(data.user?.email ?? "");
-    });
+    try {
+      const supabase = createClient();
+      supabase.auth.getUser().then(({ data }) => {
+        const email = data.user?.email ?? "";
+        const id = data.user?.id ?? "";
+        const meta = (data.user?.user_metadata ?? {}) as Record<string, unknown>;
+        const fullName = typeof meta.full_name === "string" ? meta.full_name : typeof meta.name === "string" ? meta.name : "";
+        const phone = typeof meta.phone === "string" ? meta.phone : "";
+        setUserEmail(email);
+        setUserId(id);
+        setUserName(fullName);
+        setProfileName(fullName);
+        setProfilePhone(phone);
+        if (email && (!fullName.trim() || !phone.trim())) {
+          setProfileOpen(true);
+        }
+      });
+    } catch {
+      setUserEmail("");
+      setUserId("");
+      setUserName("");
+    }
   }, []);
 
   useEffect(() => {
@@ -168,6 +267,11 @@ export default function DashboardPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  useEffect(() => {
+    loadMonthlyRecords();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, adminTargetEmail]);
+
   const allocationTotal = useMemo(
     () =>
       reportInput.scalePlannerInput.allocationMetaPct +
@@ -180,7 +284,6 @@ export default function DashboardPage() {
     return {
       unit: report.unitEconomics.contributionMarginPct >= 0.3 ? "Healthy" : "Warning",
       ad: report.adMetrics.blendedRoas >= 3 && report.adMetrics.blendedCac <= report.unitEconomics.maxAllowableCac ? "Healthy" : "Warning",
-      agency: report.agencyFee.asPctAdSpend <= 0.2 ? "Healthy" : "High Fee",
       scale: report.scalePlanner.readiness === "READY TO SCALE" ? "Ready" : "Hold",
       pnl: report.monthlyPnl.netProfitMarginPct >= 0.1 ? "Healthy" : "Low Margin"
     };
@@ -240,29 +343,13 @@ export default function DashboardPage() {
     setDirty(true);
   }
 
-  function updateGrowthStage(value: string) {
-    setReportInput((prev) => ({
-      ...prev,
-      agencyInput: {
-        ...prev.agencyInput,
-        growthStage: value
-      }
-    }));
-    setDirty(true);
-  }
-
   function applyChanges(scopeLabel = "All") {
     setRecalcLoading(true);
     try {
       const next = calculateReport(reportInput);
       const merged = {
         ...next,
-        insights: {
-          summary: "Insights not generated yet",
-          priorityFixes: [],
-          source: "pending" as const,
-          latencyMs: 0
-        }
+        insights: pendingInsights()
       };
       setReport(merged);
       sessionStorage.setItem("reportInput", JSON.stringify(reportInput));
@@ -285,12 +372,7 @@ export default function DashboardPage() {
     const next = calculateReport(DEFAULT_REPORT_INPUT);
     const merged = {
       ...next,
-      insights: {
-        summary: "Insights not generated yet",
-        priorityFixes: [],
-        source: "pending" as const,
-        latencyMs: 0
-      }
+      insights: pendingInsights()
     };
     setReport(merged);
     sessionStorage.setItem("reportInput", JSON.stringify(DEFAULT_REPORT_INPUT));
@@ -306,8 +388,18 @@ export default function DashboardPage() {
     const merged = {
       ...next,
       insights: {
-        summary: "Sample dataset loaded. Fine-tune each section and apply changes.",
+        ...pendingInsights("Sample dataset loaded. Fine-tune each section and apply changes."),
         priorityFixes: ["Start with Unit Economics + Ad Metrics before scaling."],
+        growthLevers: [
+          "Lift AOV via bundles and threshold shipping offers.",
+          "Scale only if ROAS remains above 3x for 7 consecutive days."
+        ],
+        riskAlerts: ["Do not scale if CAC remains above max allowable CAC."],
+        channelPlan: ["Shift 10% spend from low-performing campaigns to winners."],
+        experimentBacklog: ["Test one new offer angle and one new landing page hook."],
+        cashflowActions: ["Set weekly spend cap aligned to contribution margin health."],
+        watchlistKpis: ["Track ROAS, CAC, contribution margin %, and net margin weekly."],
+        next30Days: ["Week 1-2: fix fundamentals. Week 3-4: controlled scale."],
         source: "fallback" as const,
         latencyMs: 0
       }
@@ -316,6 +408,7 @@ export default function DashboardPage() {
     sessionStorage.setItem("reportInput", JSON.stringify(DEFAULT_REPORT_INPUT));
     sessionStorage.setItem("report", JSON.stringify(merged));
     setDirty(false);
+    setAppliedFixes([]);
     pushToast("Sample data loaded", "good");
   }
 
@@ -350,6 +443,7 @@ export default function DashboardPage() {
   }
 
   function applyPriorityFix(index: number) {
+    if (appliedFixes.includes(index)) return;
     const fix = report.insights.priorityFixes[index];
     if (!fix) return;
 
@@ -368,6 +462,7 @@ export default function DashboardPage() {
 
     setReportInput(nextInput);
     setDirty(true);
+    setAppliedFixes((prev) => [...prev, index]);
     pushToast("Applied AI fix draft to inputs", "good");
   }
 
@@ -382,6 +477,7 @@ export default function DashboardPage() {
     };
     setReport(merged);
     sessionStorage.setItem("report", JSON.stringify(merged));
+    setAppliedFixes([]);
     pushToast("Priority fix dismissed", "neutral");
   }
 
@@ -395,10 +491,11 @@ export default function DashboardPage() {
         body: JSON.stringify(report)
       });
       if (!res.ok) throw new Error("Insights API failed");
-      const insights = await res.json();
+      const insights = normalizeInsightPayload((await res.json()) as Partial<CalculatedReport["insights"]>);
       const merged = { ...report, insights };
       setReport(merged);
       sessionStorage.setItem("report", JSON.stringify(merged));
+      setAppliedFixes([]);
       pushToast("AI insights generated", "good");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unable to generate insights";
@@ -406,6 +503,34 @@ export default function DashboardPage() {
       pushToast(message, "warn");
     } finally {
       setInsightsLoading(false);
+    }
+  }
+
+  async function saveProfileDetails() {
+    const fullName = profileName.trim();
+    const phone = profilePhone.trim();
+    if (!fullName || !phone) {
+      pushToast("Name and phone are required", "warn");
+      return;
+    }
+
+    setProfileSaving(true);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.updateUser({
+        data: {
+          full_name: fullName,
+          phone
+        }
+      });
+      if (error) throw error;
+      setUserName(fullName);
+      setProfileOpen(false);
+      pushToast("Profile details saved", "good");
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Unable to save profile details", "warn");
+    } finally {
+      setProfileSaving(false);
     }
   }
 
@@ -419,9 +544,6 @@ export default function DashboardPage() {
         break;
       case "go-ad":
         setSelectedSection("ad");
-        break;
-      case "go-agency":
-        setSelectedSection("agency");
         break;
       case "go-scale":
         setSelectedSection("scale");
@@ -500,28 +622,6 @@ export default function DashboardPage() {
       ];
     }
 
-    if (id === "agency") {
-      return [
-        { title: "Growth Stage", value: data.agencyFee.growthStage, hint: "Selected operating stage", tone: "neutral" },
-        { title: "Recommended Fee", value: inr(data.agencyFee.recommendedFee), hint: "Model-selected pricing", tone: "neutral" },
-        {
-          title: "Fee % of Revenue",
-          value: pct(data.agencyFee.asPctRevenue),
-          hint: data.agencyFee.asPctRevenue <= 0.1 ? "Lean agency profile" : "Heavy share of topline",
-          tone: data.agencyFee.asPctRevenue <= 0.1 ? "good" : "warn"
-        },
-        {
-          title: "Fee % of Ad Spend",
-          value: pct(data.agencyFee.asPctAdSpend),
-          hint: data.agencyFee.asPctAdSpend <= 0.2 ? "Within benchmark" : "Over 20% benchmark",
-          tone: data.agencyFee.asPctAdSpend <= 0.2 ? "good" : "warn",
-          benchmark: "Target <= 20%"
-        },
-        { title: "Hybrid Model Fee", value: inr(data.agencyFee.hybridFee), hint: "Retainer + performance blend", tone: "neutral" },
-        { title: "Break-even ROAS", value: `${data.agencyFee.breakevenRoasWithAgency.toFixed(2)}x`, hint: "ROAS needed with agency cost", tone: "neutral" }
-      ];
-    }
-
     if (id === "scale") {
       return [
         { title: "Target Revenue", value: inr(data.scalePlanner.targetRevenue), hint: "Projected topline", tone: "neutral" },
@@ -566,14 +666,12 @@ export default function DashboardPage() {
   function getSectionInputSnapshot(id: ActiveSection) {
     if (id === "unit") return reportInput.unitEconomicsInput;
     if (id === "ad") return reportInput.adMetricsInput;
-    if (id === "agency") return reportInput.agencyInput;
     if (id === "scale") return reportInput.scalePlannerInput;
     return {
       note: "Monthly P&L is derived from other sections",
       dependencies: {
         unitEconomicsInput: reportInput.unitEconomicsInput,
         adMetricsInput: reportInput.adMetricsInput,
-        agencyInput: reportInput.agencyInput,
         scalePlannerInput: reportInput.scalePlannerInput
       }
     };
@@ -597,6 +695,103 @@ export default function DashboardPage() {
     link.remove();
     URL.revokeObjectURL(url);
     pushToast(`${sectionOptions.find((opt) => opt.id === id)?.label ?? id} sheet saved`, "good");
+  }
+
+  async function loadMonthlyRecords() {
+    if (!userId) return;
+    setRecordsLoading(true);
+    setRecordsError("");
+
+    try {
+      const supabase = createClient();
+      let query = supabase
+        .from("monthly_records")
+        .select("*")
+        .order("month_key", { ascending: false })
+        .limit(24);
+
+      const adminEmail = (process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? "").trim().toLowerCase();
+      const isAdmin = !!adminEmail && userEmail.toLowerCase() === adminEmail;
+
+      if (isAdmin && adminTargetEmail.trim()) {
+        const res = await fetch(`/api/admin/monthly-records?email=${encodeURIComponent(adminTargetEmail.trim().toLowerCase())}`);
+        const json = (await res.json()) as { records?: MonthlyRecord[]; error?: string };
+        if (!res.ok) throw new Error(json.error || "Unable to load admin records");
+        setMonthlyRecords(json.records ?? []);
+        return;
+      } else {
+        query = query.eq("user_id", userId);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      setMonthlyRecords((data ?? []) as MonthlyRecord[]);
+    } catch (err) {
+      setRecordsError(err instanceof Error ? err.message : "Failed to load monthly records");
+    } finally {
+      setRecordsLoading(false);
+    }
+  }
+
+  async function saveCurrentMonthRecord() {
+    if (!userId || !userEmail) {
+      pushToast("Login required to save monthly records", "warn");
+      return;
+    }
+
+    try {
+      const supabase = createClient();
+      const payload = {
+        user_id: userId,
+        user_email: userEmail.toLowerCase(),
+        month_key: monthKey,
+        report_input: reportInput,
+        report_data: report
+      };
+
+      const { error } = await supabase
+        .from("monthly_records")
+        .upsert(payload, { onConflict: "user_id,month_key" });
+      if (error) throw error;
+
+      pushToast(`Record saved for ${monthKey}`, "good");
+      await loadMonthlyRecords();
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Unable to save month record", "warn");
+    }
+  }
+
+  function loadRecordToWorkspace(record: MonthlyRecord) {
+    setReportInput(record.report_input);
+    setReport(record.report_data);
+    sessionStorage.setItem("reportInput", JSON.stringify(record.report_input));
+    sessionStorage.setItem("report", JSON.stringify(record.report_data));
+    setDirty(false);
+    pushToast(`Loaded ${record.month_key} record`, "neutral");
+  }
+
+  function downloadAllRecordsCsv() {
+    if (monthlyRecords.length === 0) return;
+    const headers = ["month", "revenue", "profit", "profit_margin_pct", "roas", "cac", "scale_verdict"];
+    const rows = monthlyRecords.map((r) => [
+      r.month_key,
+      r.report_data.monthlyPnl.netRevenueMonth,
+      r.report_data.monthlyPnl.netProfitMonth,
+      r.report_data.monthlyPnl.netProfitMarginPct,
+      r.report_data.adMetrics.blendedRoas,
+      r.report_data.adMetrics.blendedCac,
+      r.report_data.scalePlanner.readiness
+    ]);
+    const csv = [headers.join(","), ...rows.map((row) => row.map((v) => `"${String(v).replace(/"/g, "\"\"")}"`).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `monthly-records-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   }
 
   function sectionInputs(id: ActiveSection): React.ReactNode {
@@ -632,21 +827,6 @@ export default function DashboardPage() {
       );
     }
 
-    if (id === "agency") {
-      return (
-        <div className="editor-grid">
-          <label className="input-row">
-            <span>Growth Stage</span>
-            <select value={reportInput.agencyInput.growthStage} onChange={(e) => updateGrowthStage(e.target.value)}>
-              <option>Early Stage</option>
-              <option>Growth</option>
-              <option>Scale</option>
-            </select>
-          </label>
-        </div>
-      );
-    }
-
     if (id === "scale") {
       return (
         <>
@@ -671,8 +851,13 @@ export default function DashboardPage() {
 
   function statusTone(status: string): MetricTone {
     if (status === "Healthy" || status === "Ready") return "good";
-    if (status === "Warning" || status === "High Fee" || status === "Low Margin" || status === "Hold") return "warn";
+    if (status === "Warning" || status === "Low Margin" || status === "Hold") return "warn";
     return "neutral";
+  }
+
+  function goToSection(id: SectionId) {
+    setSelectedSection(id);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function renderSectionBlock(id: ActiveSection) {
@@ -690,12 +875,12 @@ export default function DashboardPage() {
             <h4>{id === "pnl" ? "Input Dependencies" : "Section Inputs"}</h4>
             {sectionInputs(id)}
             <div className="section-actions">
-              <button type="button" onClick={() => applySectionChanges(id)} disabled={recalcLoading}>
+              <Button type="button" onClick={() => applySectionChanges(id)} disabled={recalcLoading}>
                 {recalcLoading ? "Applying..." : `Apply ${sectionOptions.find((opt) => opt.id === id)?.label} Changes`}
-              </button>
-              <button type="button" className="button-ghost" onClick={() => saveSectionSheet(id)}>
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => saveSectionSheet(id)}>
                 Save Sheet
-              </button>
+              </Button>
             </div>
           </article>
           <article className="output-cluster">
@@ -715,7 +900,6 @@ export default function DashboardPage() {
     { id: "go-all", label: "Go to All Sections" },
     { id: "go-unit", label: "Go to Unit Economics" },
     { id: "go-ad", label: "Go to Ad Metrics" },
-    { id: "go-agency", label: "Go to Agency Fee" },
     { id: "go-scale", label: "Go to Scale Planner" },
     { id: "go-pnl", label: "Go to Monthly P&L" },
     { id: "apply", label: "Apply Changes" },
@@ -726,16 +910,27 @@ export default function DashboardPage() {
   ];
 
   const filteredCommands = commands.filter((c) => c.label.toLowerCase().includes(paletteQuery.toLowerCase()));
-  const sectionSequence: ActiveSection[] = ["unit", "ad", "agency", "scale", "pnl"];
+  const sectionSequence: ActiveSection[] = ["unit", "ad", "scale", "pnl"];
+  const adminEmail = (process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? "").trim().toLowerCase();
+  const isAdmin = !!adminEmail && userEmail.toLowerCase() === adminEmail;
   const completedSections = sectionSequence.filter((id) => statusTone(sectionStatus[id]) === "good").length;
   const checklist = [
     { label: "Unit Economics Healthy", done: sectionStatus.unit === "Healthy" },
     { label: "Ad Metrics Healthy", done: sectionStatus.ad === "Healthy" },
-    { label: "Agency Fee In Range", done: sectionStatus.agency === "Healthy" },
     { label: "Scale Planner Ready", done: sectionStatus.scale === "Ready" },
     { label: "Monthly Margin Healthy", done: sectionStatus.pnl === "Healthy" },
     { label: "Insights Generated", done: report.insights.source !== "pending" }
   ];
+  const tally = useMemo(() => {
+    return monthlyRecords.reduce(
+      (acc, row) => {
+        acc.revenue += row.report_data.monthlyPnl.netRevenueMonth;
+        acc.profit += row.report_data.monthlyPnl.netProfitMonth;
+        return acc;
+      },
+      { revenue: 0, profit: 0 }
+    );
+  }, [monthlyRecords]);
 
   return (
     <div className="dashboard-shell">
@@ -747,7 +942,7 @@ export default function DashboardPage() {
         <div className="section-list">
           {sectionOptions.map((opt) => {
             const key = opt.id === "all" ? "unit" : opt.id;
-            const status = opt.id === "all" ? (dirty ? "Unsaved" : "Synced") : sectionStatus[key as "unit" | "ad" | "agency" | "scale" | "pnl"];
+            const status = opt.id === "all" ? (dirty ? "Unsaved" : "Synced") : sectionStatus[key as "unit" | "ad" | "scale" | "pnl"];
             const tone = opt.id === "all" ? (dirty ? "warn" : "good") : statusTone(status);
 
             return (
@@ -755,7 +950,7 @@ export default function DashboardPage() {
                 key={opt.id}
                 type="button"
                 className={`section-chip ${selectedSection === opt.id ? "active" : ""}`}
-                onClick={() => setSelectedSection(opt.id)}
+                onClick={() => goToSection(opt.id)}
               >
                 <span>{opt.label}</span>
                 <small className={`rail-status rail-${tone}`}>{status}</small>
@@ -773,24 +968,24 @@ export default function DashboardPage() {
 
       <main className="dashboard-content-grid">
         <section className="surface utility-bar">
-          <button type="button" className="button-ghost" onClick={() => setPaletteOpen(true)}>
+          <Button type="button" variant="secondary" onClick={() => setPaletteOpen(true)}>
             Open Command Palette
-          </button>
-          <button type="button" className="button-ghost" onClick={loadSampleData}>
+          </Button>
+          <Button type="button" variant="secondary" onClick={loadSampleData}>
             Load Sample Data
-          </button>
-          <button type="button" className="button-ghost" onClick={saveScenario}>
+          </Button>
+          <Button type="button" variant="secondary" onClick={saveScenario}>
             Save Scenario
-          </button>
-          <span className="tag">{completedSections}/{sectionSequence.length} sections healthy</span>
-          <span className={dirty ? "tag tag-warn" : "tag tag-good"}>{dirty ? "Unsaved Draft" : "All Saved"}</span>
+          </Button>
+          <Badge variant="secondary">{completedSections}/{sectionSequence.length} sections healthy</Badge>
+          <Badge variant={dirty ? "warning" : "success"}>{dirty ? "Unsaved Draft" : "All Saved"}</Badge>
         </section>
 
         <section className="surface progress-strip">
           {sectionSequence.map((id) => {
             const tone = statusTone(sectionStatus[id]);
             return (
-              <button key={id} type="button" className={`progress-pill tone-${tone}`} onClick={() => setSelectedSection(id)}>
+              <button key={id} type="button" className={`progress-pill tone-${tone}`} onClick={() => goToSection(id)}>
                 <span>{sectionOptions.find((opt) => opt.id === id)?.label}</span>
                 <small>{sectionStatus[id]}</small>
               </button>
@@ -802,10 +997,11 @@ export default function DashboardPage() {
           <div>
             <p className="eyebrow">D2C Operating System</p>
             <h1>Growth Intelligence Command Center</h1>
-            <p className="hero-copy">Fast signal loops for unit economics, paid media, agency cost, and scale readiness with visible levers and actionable AI guidance.</p>
+            <p className="hero-copy">Fast signal loops for unit economics, paid media, scale readiness, and actionable AI guidance.</p>
           </div>
           <div className="hero-meta">
-            <span className="muted-text">{userEmail ? `Signed in as ${userEmail}` : "Not signed in"}</span>
+            <span className="muted-text">{userEmail ? `Signed in as ${userName ? `${userName} (${userEmail})` : userEmail}` : "Not signed in"}</span>
+            <ThemeToggle />
             <SignOutButton />
           </div>
         </section>
@@ -822,15 +1018,15 @@ export default function DashboardPage() {
             <p>Apply edits instantly, reset assumptions, and trigger AI insight generation.</p>
           </div>
           <div className="action-row">
-            <button type="button" onClick={() => applyChanges()} disabled={recalcLoading}>
+            <Button type="button" onClick={() => applyChanges()} disabled={recalcLoading}>
               {recalcLoading ? "Applying..." : "Apply All Changes"}
-            </button>
-            <button type="button" onClick={resetToDefaults} className="button-ghost">
+            </Button>
+            <Button type="button" variant="secondary" onClick={resetToDefaults}>
               Reset Defaults
-            </button>
-            <button type="button" onClick={generateInsights} disabled={insightsLoading} className="button-ghost">
+            </Button>
+            <Button type="button" variant="secondary" onClick={generateInsights} disabled={insightsLoading}>
               {insightsLoading ? "Generating..." : "Generate AI Insights"}
-            </button>
+            </Button>
           </div>
         </section>
 
@@ -842,7 +1038,7 @@ export default function DashboardPage() {
           <div className="checklist-grid">
             {checklist.map((item) => (
               <div key={item.label} className={`check-item ${item.done ? "done" : ""}`}>
-                <span>{item.done ? "✓" : "○"}</span>
+                <span>{item.done ? "OK" : "\.\.\."}</span>
                 <p>{item.label}</p>
               </div>
             ))}
@@ -857,7 +1053,7 @@ export default function DashboardPage() {
             <p>Save and compare up to 3 scenarios for revenue, profit and ROAS.</p>
           </div>
           <div className="scenario-grid">
-            {scenarios.length === 0 ? <p className="muted-text">No scenario saved yet. Use “Save Scenario” after applying changes.</p> : null}
+            {scenarios.length === 0 ? <p className="muted-text">No scenario saved yet. Use "Save Scenario" after applying changes.</p> : null}
             {scenarios.map((scenario) => (
               <article key={scenario.id} className={`scenario-card ${selectedScenarioId === scenario.id ? "active" : ""}`}>
                 <h4>{scenario.name}</h4>
@@ -882,24 +1078,111 @@ export default function DashboardPage() {
                     </div>
                   </label>
                 </div>
-                <button type="button" className="button-ghost" onClick={() => loadScenario(scenario.id)}>
+                <Button type="button" variant="secondary" onClick={() => loadScenario(scenario.id)}>
                   Load Scenario
-                </button>
+                </Button>
               </article>
             ))}
+          </div>
+        </section>
+
+        <section className="surface section-surface">
+          <div className="section-head">
+            <h3>Monthly Records Vault</h3>
+            <p>Save current month data, review history, tally totals, and export records.</p>
+          </div>
+          <div className="action-row">
+            <Label className="input-row" style={{ minWidth: 180 }}>
+              <span>Month</span>
+              <Input type="month" value={monthKey} onChange={(e) => setMonthKey(e.target.value)} />
+            </Label>
+            <Button type="button" onClick={saveCurrentMonthRecord}>Save Month Record</Button>
+            <Button type="button" variant="secondary" onClick={downloadAllRecordsCsv} disabled={monthlyRecords.length === 0}>
+              Download CSV
+            </Button>
+            <Button type="button" variant="secondary" onClick={loadMonthlyRecords} disabled={recordsLoading}>
+              {recordsLoading ? "Refreshing..." : "Refresh"}
+            </Button>
+            {isAdmin ? (
+              <Label className="input-row" style={{ minWidth: 240 }}>
+                <span>Admin: user email filter</span>
+                <Input
+                  type="email"
+                  placeholder="user@example.com"
+                  value={adminTargetEmail}
+                  onChange={(e) => setAdminTargetEmail(e.target.value)}
+                />
+              </Label>
+            ) : null}
+          </div>
+
+          {recordsError ? <p className="error-text" style={{ marginTop: 10 }}>{recordsError}</p> : null}
+
+          <div className="records-summary">
+            <Badge variant="secondary">Months: {monthlyRecords.length}</Badge>
+            <Badge variant="secondary">Total Revenue: {inr(tally.revenue)}</Badge>
+            <Badge variant={tally.profit >= 0 ? "success" : "warning"}>Total Profit: {inr(tally.profit)}</Badge>
+          </div>
+
+          <div className="records-table-wrap">
+            <table className="records-table">
+              <thead>
+                <tr>
+                  <th>Month</th>
+                  <th>Revenue</th>
+                  <th>Profit</th>
+                  <th>ROAS</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {monthlyRecords.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="muted-text">No records saved yet.</td>
+                  </tr>
+                ) : (
+                  monthlyRecords.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.month_key}</td>
+                      <td>{inr(row.report_data.monthlyPnl.netRevenueMonth)}</td>
+                      <td>{inr(row.report_data.monthlyPnl.netProfitMonth)}</td>
+                      <td>{row.report_data.adMetrics.blendedRoas.toFixed(2)}x</td>
+                      <td>{row.report_data.scalePlanner.readiness}</td>
+                      <td>
+                        <div className="row-actions">
+                          <Button type="button" variant="secondary" onClick={() => loadRecordToWorkspace(row)}>Load</Button>
+                          <Button type="button" variant="secondary" onClick={() => {
+                            const blob = new Blob([JSON.stringify(row, null, 2)], { type: "application/json" });
+                            const url = URL.createObjectURL(blob);
+                            const link = document.createElement("a");
+                            link.href = url;
+                            link.download = `${row.month_key}-record.json`;
+                            document.body.appendChild(link);
+                            link.click();
+                            link.remove();
+                            URL.revokeObjectURL(url);
+                          }}>JSON</Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </section>
 
         <section className="surface section-surface insights-surface">
           <div className="section-head">
             <h3>AI Insights</h3>
-            <p>Priority fixes and executive summary from the latest model run.</p>
+            <p>Operator-grade insights for profitability, scaling, and execution.</p>
           </div>
           <div className="insight-meta-row">
-            <span className="tag">Source: {report.insights.source}</span>
-            <span className="tag">Latency: {report.insights.latencyMs}ms</span>
-            <span className={insightsLoading ? "tag tag-warn" : "tag tag-good"}>{insightsLoading ? "Generating" : "Ready"}</span>
-            <span className="tag">Confidence: {report.insights.source === "ollama" ? "High" : "Medium"}</span>
+            <Badge variant="secondary">Source: {report.insights.source}</Badge>
+            <Badge variant="secondary">Latency: {report.insights.latencyMs}ms</Badge>
+            <Badge variant={insightsLoading ? "warning" : "success"}>{insightsLoading ? "Generating" : "Ready"}</Badge>
+            <Badge variant="secondary">Confidence: {report.insights.source === "gemini" ? "High" : "Medium"}</Badge>
           </div>
           {insightsError ? <p className="error-text">{insightsError}</p> : null}
           {report.insights.priorityFixes.length > 0 ? (
@@ -908,21 +1191,29 @@ export default function DashboardPage() {
                 <article key={`${fix}-${index}`} className="fix-card">
                   <p>{fix}</p>
                   <div className="fix-actions">
-                    <button type="button" onClick={() => applyPriorityFix(index)}>Apply Draft</button>
-                    <button type="button" className="button-ghost" onClick={() => dismissPriorityFix(index)}>Dismiss</button>
+                    <Button type="button" onClick={() => applyPriorityFix(index)} disabled={appliedFixes.includes(index)}>
+                      {appliedFixes.includes(index) ? "Applied" : "Apply Draft"}
+                    </Button>
+                    <Button type="button" variant="secondary" onClick={() => dismissPriorityFix(index)}>Dismiss</Button>
                   </div>
                 </article>
               ))}
             </div>
           ) : null}
-          <textarea
-            readOnly
-            value={
-              report.insights.summary +
-              "\n\nPriority fixes:\n" +
-              (report.insights.priorityFixes.length > 0 ? report.insights.priorityFixes.map((fix) => `- ${fix}`).join("\n") : "- No priority fixes yet")
-            }
-          />
+          <article className="fix-card">
+            <p className="metric-title">Executive Summary</p>
+            <p className="muted-text">{report.insights.summary}</p>
+          </article>
+          <div className="fix-grid">
+            <InsightList title="Growth Levers" items={report.insights.growthLevers} />
+            <InsightList title="Risk Alerts" items={report.insights.riskAlerts} />
+            <InsightList title="Channel Plan" items={report.insights.channelPlan} />
+            <InsightList title="Experiment Backlog" items={report.insights.experimentBacklog} />
+            <InsightList title="Cashflow Actions" items={report.insights.cashflowActions} />
+            <InsightList title="KPI Watchlist" items={report.insights.watchlistKpis} />
+            <InsightList title="Next 30 Days" items={report.insights.next30Days} />
+          </div>
+          <Textarea readOnly value={report.insights.summary} />
         </section>
       </main>
 
@@ -954,7 +1245,7 @@ export default function DashboardPage() {
 
       <nav className="mobile-nav">
         {sectionSequence.map((id) => (
-          <button key={id} type="button" className={selectedSection === id ? "active" : ""} onClick={() => setSelectedSection(id)}>
+          <button key={id} type="button" className={selectedSection === id ? "active" : ""} onClick={() => goToSection(id)}>
             {sectionOptions.find((opt) => opt.id === id)?.label?.split(" ")[0]}
           </button>
         ))}
@@ -971,8 +1262,30 @@ export default function DashboardPage() {
               <li>Generate AI insights and use Apply Draft on priority fixes.</li>
             </ol>
             <div className="action-row">
-              <button type="button" onClick={() => { loadSampleData(); closeOnboarding(); }}>Load Sample + Start</button>
-              <button type="button" className="button-ghost" onClick={closeOnboarding}>Skip</button>
+              <Button type="button" onClick={() => { loadSampleData(); closeOnboarding(); }}>Load Sample + Start</Button>
+              <Button type="button" variant="secondary" onClick={closeOnboarding}>Skip</Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {profileOpen ? (
+        <div className="palette-backdrop">
+          <div className="palette-card onboarding-card" onClick={(e) => e.stopPropagation()}>
+            <h3>Complete Your Profile</h3>
+            <p className="muted-text">Name and phone are required for account setup.</p>
+            <div className="auth-field">
+              <Label htmlFor="profileName">Full Name</Label>
+              <Input id="profileName" type="text" value={profileName} onChange={(e) => setProfileName(e.target.value)} />
+            </div>
+            <div className="auth-field">
+              <Label htmlFor="profilePhone">Phone Number</Label>
+              <Input id="profilePhone" type="tel" value={profilePhone} onChange={(e) => setProfilePhone(e.target.value)} />
+            </div>
+            <div className="action-row">
+              <Button type="button" onClick={saveProfileDetails} disabled={profileSaving}>
+                {profileSaving ? "Saving..." : "Save Profile"}
+              </Button>
             </div>
           </div>
         </div>
@@ -980,3 +1293,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+

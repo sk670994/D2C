@@ -10,15 +10,19 @@ export function GoogleSignInButton({
   showBadge?: boolean;
 }) {
   async function onClick() {
-    const supabase = createClient();
-    const origin = window.location.origin;
+    try {
+      const supabase = createClient();
+      const origin = window.location.origin;
 
-    await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: `${origin}/auth/callback?next=${encodeURIComponent(nextPath)}`
-      }
-    });
+      await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${origin}/auth/callback?next=${encodeURIComponent(nextPath)}`
+        }
+      });
+    } catch {
+      window.alert("Supabase is not configured. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local");
+    }
   }
 
   return (

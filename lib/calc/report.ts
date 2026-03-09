@@ -27,16 +27,6 @@ export function calculateReport(input: ParsedReport): CalculatedReport {
   const cpc = a.clicks > 0 ? a.totalAdSpend / a.clicks : 0;
   const cpm = a.impressions > 0 ? (a.totalAdSpend / a.impressions) * 1000 : 0;
 
-  const percentOfSpendFee = a.totalAdSpend * 0.12;
-  const percentOfRevenueFee = a.revenue * 0.03;
-  const flatRetainerFee = 25000;
-  const performanceFee = 15000 + (blendedRoas > 3 ? (blendedRoas - 3) * 5000 : 0);
-  const hybridFee = 15000 + a.totalAdSpend * 0.08;
-  const recommendedFee = hybridFee;
-  const asPctRevenue = a.revenue > 0 ? recommendedFee / a.revenue : 0;
-  const asPctAdSpend = a.totalAdSpend > 0 ? recommendedFee / a.totalAdSpend : 0;
-  const breakevenRoasWithAgency = a.totalAdSpend > 0 ? (a.totalAdSpend + recommendedFee) / a.totalAdSpend : 0;
-
   const targetRevenue = a.revenue * (1 + g.revenueGrowthTargetPct);
   const targetAdSpend = a.totalAdSpend * (1 + g.adSpendGrowthTargetPct);
   const targetOrders = Math.round(a.orders * (1 + g.ordersGrowthTargetPct));
@@ -58,7 +48,7 @@ export function calculateReport(input: ParsedReport): CalculatedReport {
   const cogsMonth = totalCogs * a.orders;
   const fulfillmentMonth = fulfillmentCost * a.orders;
   const contributionMonth = contributionMargin * a.orders;
-  const marketingMonth = a.totalAdSpend + recommendedFee;
+  const marketingMonth = a.totalAdSpend;
   const netProfitMonth = contributionMonth - marketingMonth;
   const netProfitMarginPct = netRevenueMonth > 0 ? netProfitMonth / netRevenueMonth : 0;
 
@@ -82,18 +72,6 @@ export function calculateReport(input: ParsedReport): CalculatedReport {
       blendedCvr,
       cpc,
       cpm
-    },
-    agencyFee: {
-      growthStage: input.agencyInput.growthStage,
-      percentOfSpendFee,
-      percentOfRevenueFee,
-      flatRetainerFee,
-      performanceFee,
-      hybridFee,
-      recommendedFee,
-      asPctRevenue,
-      asPctAdSpend,
-      breakevenRoasWithAgency
     },
     scalePlanner: {
       targetRevenue: toNonNegative(targetRevenue),
@@ -121,6 +99,13 @@ export function calculateReport(input: ParsedReport): CalculatedReport {
     insights: {
       summary: "Insights not generated yet",
       priorityFixes: [],
+      growthLevers: [],
+      riskAlerts: [],
+      channelPlan: [],
+      experimentBacklog: [],
+      cashflowActions: [],
+      watchlistKpis: [],
+      next30Days: [],
       source: "pending",
       latencyMs: 0
     }

@@ -1,24 +1,33 @@
 import Link from "next/link";
-import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 export default function HomePage() {
   return (
     <main className="main" style={{ display: "grid", gap: 14 }}>
-      <section className="card" style={{ display: "grid", gap: 16 }}>
-        <p className="eyebrow">D2C Intelligence Platform</p>
-        <h1 style={{ margin: 0, fontSize: "clamp(1.6rem, 2.4vw + 0.8rem, 2.7rem)", maxWidth: "20ch" }}>
-          Not Another SaaS Dashboard. This Is Your Growth Operating Layer.
-        </h1>
-        <p className="muted" style={{ margin: 0, maxWidth: "72ch" }}>
-          Real-time unit economics, media efficiency, scale planning, and AI-backed priority fixes in one low-latency interface designed for decisive action.
-        </p>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <GoogleSignInButton />
-          <Link href="/dashboard">
-            <button type="button" className="button-ghost">Open Command Center</button>
+      <Card>
+        <CardHeader style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div>
+            <p className="eyebrow">D2C Intelligence Platform</p>
+            <CardTitle style={{ fontSize: "clamp(1.6rem, 2.4vw + 0.8rem, 2.7rem)", maxWidth: "24ch" }}>
+              D2C Operating System for Founders, Marketers, and Agencies.
+            </CardTitle>
+            <CardDescription style={{ maxWidth: "72ch" }}>
+              Real-time unit economics, media efficiency, scale planning, and AI-backed priority fixes with scenario comparison.
+            </CardDescription>
+          </div>
+          <ThemeToggle />
+        </CardHeader>
+        <CardContent style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <Link href="/login">
+            <Button type="button">Sign In / Sign Up</Button>
           </Link>
-        </div>
-      </section>
+          <Link href="/dashboard">
+            <Button type="button" variant="secondary">Open Command Center</Button>
+          </Link>
+        </CardContent>
+      </Card>
     </main>
   );
 }
