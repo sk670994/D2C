@@ -43,9 +43,19 @@ export default async function LoginPage({
             <div className="auth-oauth">
               <GoogleSignInButton nextPath={nextPath} />
             </div>
+            <p className="auth-legal">
+              By continuing, you agree to our <a href="/terms">Terms</a> and <a href="/privacy">Privacy Policy</a>.
+            </p>
           </CardContent>
         </Card>
       </div>
+      <footer className="site-footer compact">
+        <p className="muted-text">Need help? support@yourcompany.com</p>
+        <div className="footer-links">
+          <a href="/privacy">Privacy Policy</a>
+          <a href="/terms">Terms</a>
+        </div>
+      </footer>
     </main>
   );
 }
