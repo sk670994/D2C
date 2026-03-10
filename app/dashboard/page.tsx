@@ -61,6 +61,33 @@ type MonthlyRecord = {
   updated_at: string;
 };
 
+type UserProfileRow = {
+  user_id: string;
+  user_email: string;
+  full_name: string | null;
+  phone: string | null;
+};
+
+type UserWorkspaceRow = {
+  user_id: string;
+  user_email: string;
+  latest_report_input: ParsedReport | null;
+  latest_report_data: CalculatedReport | null;
+  scenarios: ScenarioSnapshot[] | null;
+};
+
+type AdminUserRow = {
+  user_id: string;
+  user_email: string;
+  full_name: string | null;
+  phone: string | null;
+  created_at: string;
+  updated_at: string;
+  workspace_updated_at: string | null;
+  active_month_key: string | null;
+  scenario_count: number;
+};
+
 function pendingInsights(summary = "Insights not generated yet"): CalculatedReport["insights"] {
   return {
     summary,
@@ -178,10 +205,14 @@ export default function DashboardPage() {
   const [recordsError, setRecordsError] = useState<string>("");
   const [monthlyRecords, setMonthlyRecords] = useState<MonthlyRecord[]>([]);
   const [adminTargetEmail, setAdminTargetEmail] = useState<string>("");
+  const [adminUsers, setAdminUsers] = useState<AdminUserRow[]>([]);
+  const [adminUsersLoading, setAdminUsersLoading] = useState(false);
+  const [adminUsersError, setAdminUsersError] = useState<string>("");
   const [profileName, setProfileName] = useState<string>("");
   const [profilePhone, setProfilePhone] = useState<string>("");
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
+  const [workspaceSyncing, setWorkspaceSyncing] = useState(false);
   const lastToastRef = useRef<{ text: string; at: number }>({ text: "", at: 0 });
 
   function pushToast(text: string, tone: ToastTone = "neutral") {
@@ -193,6 +224,76 @@ export default function DashboardPage() {
     window.setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 2400);
+  }
+
+  async function syncProfileToDatabase(
+    supabase: ReturnType<typeof createClient>,
+    id: string,
+    email: string,
+    fullName: string,
+    phone: string
+  ) {
+    const payload = {
+      user_id: id,
+      user_email: email.toLowerCase(),
+      full_name: fullName || null,
+      phone: phone || null
+    };
+    const { error } = await supabase.from("user_profiles").upsert(payload, { onConflict: "user_id" });
+    if (error) throw error;
+  }
+
+  async function loadProfileFromDatabase(supabase: ReturnType<typeof createClient>, id: string) {
+    const { data, error } = await supabase
+      .from("user_profiles")
+      .select("user_id,user_email,full_name,phone")
+      .eq("user_id", id)
+      .maybeSingle();
+    if (error) throw error;
+    return (data ?? null) as UserProfileRow | null;
+  }
+
+  async function persistWorkspaceToDatabase(
+    input: ParsedReport,
+    data: CalculatedReport,
+    scenarioList: ScenarioSnapshot[],
+    scenarioId: number | null,
+    month: string,
+    muteToast = true
+  ) {
+    if (!userId || !userEmail) return;
+    setWorkspaceSyncing(true);
+    try {
+      const supabase = createClient();
+      const payload = {
+        user_id: userId,
+        user_email: userEmail.toLowerCase(),
+        latest_report_input: input,
+        latest_report_data: data,
+        scenarios: scenarioList,
+        selected_scenario_id: scenarioId,
+        month_key: month
+      };
+      const { error } = await supabase.from("user_workspaces").upsert(payload, { onConflict: "user_id" });
+      if (error) throw error;
+      if (!muteToast) pushToast("Workspace synced to cloud", "good");
+    } catch (err) {
+      if (!muteToast) {
+        pushToast(err instanceof Error ? err.message : "Unable to sync workspace", "warn");
+      }
+    } finally {
+      setWorkspaceSyncing(false);
+    }
+  }
+
+  async function loadWorkspaceFromDatabase(supabase: ReturnType<typeof createClient>, id: string) {
+    const { data, error } = await supabase
+      .from("user_workspaces")
+      .select("user_id,user_email,latest_report_input,latest_report_data,scenarios,selected_scenario_id,month_key")
+      .eq("user_id", id)
+      .maybeSingle();
+    if (error) throw error;
+    return (data ?? null) as (UserWorkspaceRow & { selected_scenario_id?: number | null; month_key?: string | null }) | null;
   }
 
   useEffect(() => {
@@ -228,28 +329,88 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    try {
-      const supabase = createClient();
-      supabase.auth.getUser().then(({ data }) => {
-        const email = data.user?.email ?? "";
-        const id = data.user?.id ?? "";
-        const meta = (data.user?.user_metadata ?? {}) as Record<string, unknown>;
+    let active = true;
+    const supabase = createClient();
+
+    const applyUserContext = async (user: { id?: string; email?: string; user_metadata?: Record<string, unknown> } | null | undefined) => {
+      if (!active) return;
+      try {
+        const email = user?.email ?? "";
+        const id = user?.id ?? "";
+        const meta = (user?.user_metadata ?? {}) as Record<string, unknown>;
         const fullName = typeof meta.full_name === "string" ? meta.full_name : typeof meta.name === "string" ? meta.name : "";
         const phone = typeof meta.phone === "string" ? meta.phone : "";
+
         setUserEmail(email);
         setUserId(id);
-        setUserName(fullName);
-        setProfileName(fullName);
-        setProfilePhone(phone);
-        if (email && (!fullName.trim() || !phone.trim())) {
-          setProfileOpen(true);
+
+        if (!id || !email) {
+          setUserName("");
+          return;
         }
-      });
-    } catch {
-      setUserEmail("");
-      setUserId("");
-      setUserName("");
+
+        await syncProfileToDatabase(supabase, id, email, fullName.trim(), phone.trim());
+        const profile = await loadProfileFromDatabase(supabase, id);
+        if (active) {
+          const resolvedName = (profile?.full_name ?? fullName).trim();
+          const resolvedPhone = (profile?.phone ?? phone).trim();
+          setUserName(resolvedName);
+          setProfileName(resolvedName);
+          setProfilePhone(resolvedPhone);
+          if (!resolvedName || !resolvedPhone) {
+            setProfileOpen(true);
+          }
+        }
+
+        const workspace = await loadWorkspaceFromDatabase(supabase, id);
+        if (active && workspace?.latest_report_input) {
+          const nextInput = workspace.latest_report_input;
+          const calculated = calculateReport(nextInput);
+          const loadedReport = workspace.latest_report_data
+            ? { ...calculated, ...workspace.latest_report_data, insights: normalizeInsightPayload(workspace.latest_report_data.insights) }
+            : { ...calculated, insights: pendingInsights() };
+
+          setReportInput(nextInput);
+          setReport(loadedReport);
+          setScenarios(Array.isArray(workspace.scenarios) ? workspace.scenarios.slice(0, 3) : []);
+          setSelectedScenarioId(typeof workspace.selected_scenario_id === "number" ? workspace.selected_scenario_id : null);
+          if (workspace.month_key) setMonthKey(workspace.month_key);
+          setDirty(false);
+        }
+      } catch {
+        if (!active) return;
+        setUserEmail("");
+        setUserId("");
+        setUserName("");
+      }
+    };
+
+    async function hydrateUserContext() {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData.session?.user) {
+          await applyUserContext(sessionData.session.user);
+          return;
+        }
+        const { data } = await supabase.auth.getUser();
+        await applyUserContext(data.user);
+      } catch {
+        if (!active) return;
+        setUserEmail("");
+        setUserId("");
+        setUserName("");
+      }
     }
+
+    void hydrateUserContext();
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      void applyUserContext(session?.user ?? null);
+    });
+
+    return () => {
+      active = false;
+      authListener?.subscription?.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -271,6 +432,14 @@ export default function DashboardPage() {
     loadMonthlyRecords();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, adminTargetEmail]);
+
+  useEffect(() => {
+    const adminEmail = (process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? "").trim().toLowerCase();
+    const canViewAdminUsers = !!adminEmail && userEmail.toLowerCase() === adminEmail;
+    if (!userId || !canViewAdminUsers) return;
+    void loadAdminUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, userEmail, adminTargetEmail]);
 
   const allocationTotal = useMemo(
     () =>
@@ -354,6 +523,7 @@ export default function DashboardPage() {
       setReport(merged);
       sessionStorage.setItem("reportInput", JSON.stringify(reportInput));
       sessionStorage.setItem("report", JSON.stringify(merged));
+      void persistWorkspaceToDatabase(reportInput, merged, scenarios, selectedScenarioId, monthKey);
       setDirty(false);
       pushToast(`${scopeLabel} changes applied`, "good");
     } finally {
@@ -375,8 +545,11 @@ export default function DashboardPage() {
       insights: pendingInsights()
     };
     setReport(merged);
+    setScenarios([]);
+    setSelectedScenarioId(null);
     sessionStorage.setItem("reportInput", JSON.stringify(DEFAULT_REPORT_INPUT));
     sessionStorage.setItem("report", JSON.stringify(merged));
+    void persistWorkspaceToDatabase(DEFAULT_REPORT_INPUT, merged, [], null, monthKey);
     setDirty(false);
     pushToast("Default assumptions loaded", "neutral");
   }
@@ -405,8 +578,11 @@ export default function DashboardPage() {
       }
     };
     setReport(merged);
+    setScenarios([]);
+    setSelectedScenarioId(null);
     sessionStorage.setItem("reportInput", JSON.stringify(DEFAULT_REPORT_INPUT));
     sessionStorage.setItem("report", JSON.stringify(merged));
+    void persistWorkspaceToDatabase(DEFAULT_REPORT_INPUT, merged, [], null, monthKey);
     setDirty(false);
     setAppliedFixes([]);
     pushToast("Sample data loaded", "good");
@@ -427,6 +603,8 @@ export default function DashboardPage() {
     };
     setScenarios((prev) => [nextScenario, ...prev].slice(0, 3));
     setSelectedScenarioId(nextScenario.id);
+    const nextScenarios = [nextScenario, ...scenarios].slice(0, 3);
+    void persistWorkspaceToDatabase(reportInput, report, nextScenarios, nextScenario.id, monthKey);
     pushToast(`${nextScenario.name} saved`, "good");
   }
 
@@ -439,6 +617,7 @@ export default function DashboardPage() {
     setDirty(false);
     sessionStorage.setItem("reportInput", JSON.stringify(scenario.input));
     sessionStorage.setItem("report", JSON.stringify(scenario.report));
+    void persistWorkspaceToDatabase(scenario.input, scenario.report, scenarios, id, monthKey);
     pushToast(`${scenario.name} loaded`, "neutral");
   }
 
@@ -495,6 +674,7 @@ export default function DashboardPage() {
       const merged = { ...report, insights };
       setReport(merged);
       sessionStorage.setItem("report", JSON.stringify(merged));
+      void persistWorkspaceToDatabase(reportInput, merged, scenarios, selectedScenarioId, monthKey);
       setAppliedFixes([]);
       pushToast("AI insights generated", "good");
     } catch (err) {
@@ -509,6 +689,10 @@ export default function DashboardPage() {
   async function saveProfileDetails() {
     const fullName = profileName.trim();
     const phone = profilePhone.trim();
+    if (!userId || !userEmail) {
+      pushToast("Login required to save profile", "warn");
+      return;
+    }
     if (!fullName || !phone) {
       pushToast("Name and phone are required", "warn");
       return;
@@ -524,6 +708,7 @@ export default function DashboardPage() {
         }
       });
       if (error) throw error;
+      await syncProfileToDatabase(supabase, userId, userEmail, fullName, phone);
       setUserName(fullName);
       setProfileOpen(false);
       pushToast("Profile details saved", "good");
@@ -733,6 +918,27 @@ export default function DashboardPage() {
     }
   }
 
+  async function loadAdminUsers() {
+    const adminEmail = (process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? "").trim().toLowerCase();
+    const canViewAdminUsers = !!adminEmail && userEmail.toLowerCase() === adminEmail;
+    if (!userId || !canViewAdminUsers) return;
+
+    setAdminUsersLoading(true);
+    setAdminUsersError("");
+    try {
+      const queryEmail = adminTargetEmail.trim().toLowerCase();
+      const path = queryEmail ? `/api/admin/users?email=${encodeURIComponent(queryEmail)}&limit=200` : "/api/admin/users?limit=200";
+      const res = await fetch(path);
+      const json = (await res.json()) as { users?: AdminUserRow[]; error?: string };
+      if (!res.ok) throw new Error(json.error || "Unable to load users");
+      setAdminUsers(json.users ?? []);
+    } catch (err) {
+      setAdminUsersError(err instanceof Error ? err.message : "Failed to load users");
+    } finally {
+      setAdminUsersLoading(false);
+    }
+  }
+
   async function saveCurrentMonthRecord() {
     if (!userId || !userEmail) {
       pushToast("Login required to save monthly records", "warn");
@@ -755,6 +961,7 @@ export default function DashboardPage() {
       if (error) throw error;
 
       pushToast(`Record saved for ${monthKey}`, "good");
+      void persistWorkspaceToDatabase(reportInput, report, scenarios, selectedScenarioId, monthKey);
       await loadMonthlyRecords();
     } catch (err) {
       pushToast(err instanceof Error ? err.message : "Unable to save month record", "warn");
@@ -766,6 +973,7 @@ export default function DashboardPage() {
     setReport(record.report_data);
     sessionStorage.setItem("reportInput", JSON.stringify(record.report_input));
     sessionStorage.setItem("report", JSON.stringify(record.report_data));
+    void persistWorkspaceToDatabase(record.report_input, record.report_data, scenarios, selectedScenarioId, record.month_key);
     setDirty(false);
     pushToast(`Loaded ${record.month_key} record`, "neutral");
   }
@@ -979,6 +1187,7 @@ export default function DashboardPage() {
           </Button>
           <Badge variant="secondary">{completedSections}/{sectionSequence.length} sections healthy</Badge>
           <Badge variant={dirty ? "warning" : "success"}>{dirty ? "Unsaved Draft" : "All Saved"}</Badge>
+          <Badge variant={workspaceSyncing ? "warning" : "secondary"}>{workspaceSyncing ? "Syncing cloud data..." : "Cloud sync ready"}</Badge>
         </section>
 
         <section className="surface progress-strip">
@@ -1085,6 +1294,54 @@ export default function DashboardPage() {
             ))}
           </div>
         </section>
+
+        {isAdmin ? (
+          <section className="surface section-surface">
+            <div className="section-head">
+              <h3>Admin Users Vault</h3>
+              <p>Cross-user profile and workspace visibility for operations.</p>
+            </div>
+            <div className="action-row">
+              <Button type="button" variant="secondary" onClick={loadAdminUsers} disabled={adminUsersLoading}>
+                {adminUsersLoading ? "Refreshing..." : "Refresh Users"}
+              </Button>
+              <Badge variant="secondary">Users: {adminUsers.length}</Badge>
+            </div>
+            {adminUsersError ? <p className="error-text" style={{ marginTop: 10 }}>{adminUsersError}</p> : null}
+            <div className="records-table-wrap">
+              <table className="records-table">
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Name</th>
+                    <th>Phone</th>
+                    <th>Month</th>
+                    <th>Scenarios</th>
+                    <th>Workspace Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {adminUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="muted-text">No users found.</td>
+                    </tr>
+                  ) : (
+                    adminUsers.map((row) => (
+                      <tr key={row.user_id}>
+                        <td>{row.user_email}</td>
+                        <td>{row.full_name ?? "-"}</td>
+                        <td>{row.phone ?? "-"}</td>
+                        <td>{row.active_month_key ?? "-"}</td>
+                        <td>{row.scenario_count}</td>
+                        <td>{row.workspace_updated_at ? new Date(row.workspace_updated_at).toLocaleString() : "-"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ) : null}
 
         <section className="surface section-surface">
           <div className="section-head">

@@ -12,24 +12,40 @@ export default async function LoginPage({
   const nextPath = params.next && params.next.startsWith("/") ? params.next : "/dashboard";
 
   return (
-    <main className="main">
-      <Card style={{ maxWidth: 560, margin: "0 auto" }}>
-        <CardHeader style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-          <div>
-            <CardTitle>Access Your Workspace</CardTitle>
-            <CardDescription>Email/password sign-in for owners and agencies.</CardDescription>
-          </div>
-          <ThemeToggle />
-        </CardHeader>
-        <CardContent>
-          {params.error ? <p style={{ color: "crimson" }}>Authentication failed. Please try again.</p> : null}
-          <EmailAuthForm nextPath={nextPath} />
-          <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
-            <p className="muted" style={{ margin: 0, fontSize: "0.9rem" }}>or continue with Google</p>
-            <GoogleSignInButton nextPath={nextPath} />
-          </div>
-        </CardContent>
-      </Card>
+    <main className="main auth-page">
+      <div className="auth-shell">
+        <div className="auth-hero">
+          <p className="eyebrow">D2C Growth OS</p>
+          <h1 className="auth-title">Access the Growth Intelligence Command Center</h1>
+          <p className="auth-lead">Join your workspace to track unit economics, ad efficiency, and scale readiness in one place.</p>
+          <ul className="auth-points">
+            <li>Live KPI health checks across sections.</li>
+            <li>Scenario lab with cloud-sync snapshots.</li>
+            <li>AI-guided fixes and action plans.</li>
+          </ul>
+        </div>
+        <Card className="auth-card">
+          <CardHeader className="auth-card-header">
+            <div>
+              <CardTitle>Sign In or Create Account</CardTitle>
+              <CardDescription>Email/password sign-in for owners and agencies.</CardDescription>
+            </div>
+            <ThemeToggle />
+          </CardHeader>
+          <CardContent className="auth-card-content">
+            {params.error ? <p className="auth-error">Authentication failed. Please try again.</p> : null}
+            <div className="auth-form-shell">
+              <EmailAuthForm nextPath={nextPath} />
+            </div>
+            <div className="auth-divider">
+              <span>or continue with Google</span>
+            </div>
+            <div className="auth-oauth">
+              <GoogleSignInButton nextPath={nextPath} />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </main>
   );
 }

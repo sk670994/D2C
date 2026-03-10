@@ -56,8 +56,22 @@ export function EmailAuthForm({ nextPath = "/dashboard" }: { nextPath?: string }
   return (
     <form onSubmit={onSubmit} className="auth-form">
       <div className="auth-mode-row">
-        <Button type="button" variant={mode === "signin" ? "default" : "ghost"} onClick={() => setMode("signin")}>Sign In</Button>
-        <Button type="button" variant={mode === "signup" ? "default" : "ghost"} onClick={() => setMode("signup")}>Sign Up</Button>
+        <Button
+          type="button"
+          variant="ghost"
+          className={`auth-mode-btn ${mode === "signin" ? "active" : ""}`}
+          onClick={() => setMode("signin")}
+        >
+          Sign In
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          className={`auth-mode-btn ${mode === "signup" ? "active" : ""}`}
+          onClick={() => setMode("signup")}
+        >
+          Sign Up
+        </Button>
       </div>
 
       <div className="auth-field">
