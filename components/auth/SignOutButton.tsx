@@ -11,9 +11,21 @@ export function SignOutButton() {
     try {
       const supabase = createClient();
       await supabase.auth.signOut();
+      try {
+        sessionStorage.removeItem("reportInput");
+        sessionStorage.removeItem("report");
+      } catch {
+        // ignore storage errors
+      }
       router.push("/login");
       router.refresh();
     } catch {
+      try {
+        sessionStorage.removeItem("reportInput");
+        sessionStorage.removeItem("report");
+      } catch {
+        // ignore storage errors
+      }
       router.push("/login");
       router.refresh();
     }

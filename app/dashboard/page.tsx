@@ -663,14 +663,17 @@ export default function DashboardPage() {
   async function generateInsights() {
     setInsightsLoading(true);
     setInsightsError(null);
-    try {
-      const res = await fetch("/api/insights", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(report)
-      });
-      if (!res.ok) throw new Error("Insights API failed");
-      const insights = normalizeInsightPayload((await res.json()) as Partial<CalculatedReport["insights"]>);
+      try {
+        const res = await fetch("/api/insights", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(report)
+        });
+        if (!res.ok) {
+          const errorJson = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(errorJson?.error || "Insights API failed");
+        }
+        const insights = normalizeInsightPayload((await res.json()) as Partial<CalculatedReport["insights"]>);
       const merged = { ...report, insights };
       setReport(merged);
       sessionStorage.setItem("report", JSON.stringify(merged));
