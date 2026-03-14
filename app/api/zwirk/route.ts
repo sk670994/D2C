@@ -110,7 +110,9 @@ export async function POST(request: Request) {
     }
 
     const data = (await res.json()) as GeminiGenerateResponse;
-    const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "No response generated.";
+    const parts = data.candidates?.[0]?.content?.parts ?? [];
+    const rawReply = parts.map((part) => part.text ?? "").join("").trim() || "No response generated.";
+    const reply = rawReply.replace(/^ZWIRK:\s*/i, "").replace(/\nUser:.*$/s, "").trim();
 
     return NextResponse.json({ reply, latencyMs: Date.now() - startedAt });
   } catch (error) {
@@ -120,3 +122,7 @@ export async function POST(request: Request) {
     console.info(`[api/zwirk] completed in ${Date.now() - startedAt}ms`);
   }
 }
+
+
+
+
