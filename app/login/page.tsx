@@ -15,8 +15,8 @@ export default async function LoginPage({
     <main className="main auth-page">
       <div className="auth-shell">
         <div className="auth-hero">
-          <p className="eyebrow">D2C Growth OS</p>
-          <h1 className="auth-title">Access the Growth Intelligence Command Center</h1>
+          <p className="eyebrow">Zooptrack Growth OS</p>
+          <h1 className="auth-title">Access the Zooptrack Growth Intelligence Command Center</h1>
           <p className="auth-lead">Join your workspace to track unit economics, ad efficiency, and scale readiness in one place.</p>
           <ul className="auth-points">
             <li>Live KPI health checks across sections.</li>
@@ -49,13 +49,6 @@ export default async function LoginPage({
           </CardContent>
         </Card>
       </div>
-      <footer className="site-footer compact">
-        <p className="muted-text">Need help? support@yourcompany.com</p>
-        <div className="footer-links">
-          <a href="/privacy">Privacy Policy</a>
-          <a href="/terms">Terms</a>
-        </div>
-      </footer>
     </main>
   );
 }

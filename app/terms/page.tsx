@@ -43,7 +43,7 @@ export default function TermsPage() {
         <p className="eyebrow">Legal</p>
         <h1>Terms and Conditions</h1>
         <p className="muted-text">
-          These terms govern use of the D2C Growth Intelligence Command Center. Please read them carefully.
+          These terms govern use of the Zooptrack Growth Intelligence Command Center. Please read them carefully.
         </p>
         <p className="policy-meta">Effective date: March 10, 2026</p>
       </header>

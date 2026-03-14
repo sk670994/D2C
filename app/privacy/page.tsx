@@ -2,7 +2,7 @@ const sections = [
   {
     title: "Information We Collect",
     body:
-      "We collect account details (name, email, phone), workspace inputs you provide, and usage data needed to operate the D2C Growth Intelligence Command Center."
+      "We collect account details (name, email, phone), workspace inputs you provide, and usage data needed to operate the Zooptrack Growth Intelligence Command Center."
   },
   {
     title: "How We Use Data",
@@ -38,7 +38,7 @@ export default function PrivacyPage() {
         <p className="eyebrow">Legal</p>
         <h1>Privacy Policy</h1>
         <p className="muted-text">
-          This policy explains how we collect, use, and safeguard information in the D2C Growth Intelligence Command Center.
+          This policy explains how we collect, use, and safeguard information in the Zooptrack Growth Intelligence Command Center.
         </p>
         <p className="policy-meta">Effective date: March 10, 2026</p>
       </header>

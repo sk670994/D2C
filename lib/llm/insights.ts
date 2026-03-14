@@ -484,19 +484,31 @@ async function callGemini(apiKey: string, model: string, prompt: string, timeout
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     if (!apiKey) return null;
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+    const payload = {
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.25,
+        maxOutputTokens: 1800,
+        responseMimeType: "application/json"
+      }
+    };
+    const baseUrl = "https://generativelanguage.googleapis.com";
+    const modelPath = `/models/${model.replace(/^models\//, "")}:generateContent?key=${apiKey}`;
+
+    let res = await fetch(`${baseUrl}/v1beta${modelPath}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.25,
-          maxOutputTokens: 1800,
-          responseMimeType: "application/json"
-        }
-      }),
+      body: JSON.stringify(payload),
       signal: controller.signal
     });
+    if (!res.ok && res.status === 404) {
+      res = await fetch(`${baseUrl}/v1${modelPath}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+    }
     if (!res.ok) return null;
     const data = (await res.json()) as GeminiGenerateResponse;
     const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("").trim();
@@ -511,13 +523,22 @@ async function callGemini(apiKey: string, model: string, prompt: string, timeout
 export async function generateInsights(report: CalculatedReport): Promise<InsightPayload> {
   const startedAt = Date.now();
   const apiKey = process.env.GEMINI_API_KEY || "";
-  const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+  const rawModel = process.env.GEMINI_MODEL || "";
+  const model = rawModel.startsWith("models/") ? rawModel : `models/${rawModel}`;
   const timeoutMs = Number(process.env.GEMINI_TIMEOUT_MS || 25000);
 
   const dx = diagnose(report);
   const deterministic = buildDeterministicInsights(report, dx);
 
   const prompt = buildGeminiPrompt(report, dx);
+  if (!apiKey || !rawModel) {
+    return {
+      ...deterministic,
+      source: "fallback",
+      latencyMs: Date.now() - startedAt
+    };
+  }
+
   const raw = await callGemini(apiKey, model, prompt, timeoutMs);
   const parsed = raw ? parseModelInsights(raw) : null;
 
