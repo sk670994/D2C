@@ -23,12 +23,14 @@ function buildPrompt(messages: ChatMessage[], context?: string) {
   });
   return [
     "You are ZWIRK, a sharp virtual assistant for DTC operators.",
-    "Provide concise, actionable answers. Use numbers where possible. Ask one clarifying question only if required.",
+    "Provide concise, actionable answers with concrete steps. Use numbers where possible.",
+    "Ask one clarifying question only if it is required to answer.",
+    "Respond with the answer only. Do not include role labels like 'ZWIRK:' or 'User:'.",
     "If you are unsure, say so.",
     context ? `Context:\n${context}` : "",
     "",
     ...trimmed,
-    "ZWIRK:"
+    "Answer:"
   ].join("\n");
 }
 
@@ -68,7 +70,7 @@ export async function POST(request: Request) {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: 0.4,
-        maxOutputTokens: 500
+        maxOutputTokens: 900
       }
     };
 
@@ -110,7 +112,9 @@ export async function POST(request: Request) {
     }
 
     const data = (await res.json()) as GeminiGenerateResponse;
-    const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "No response generated.";
+    const parts = data.candidates?.[0]?.content?.parts ?? [];
+    const rawReply = parts.map((part) => part.text ?? "").join("").trim() || "No response generated.";
+    const reply = rawReply.replace(/^ZWIRK:\s*/i, "").replace(/\nUser:.*$/s, "").trim();
 
     return NextResponse.json({ reply, latencyMs: Date.now() - startedAt });
   } catch (error) {
@@ -120,3 +124,11 @@ export async function POST(request: Request) {
     console.info(`[api/zwirk] completed in ${Date.now() - startedAt}ms`);
   }
 }
+
+
+
+
+
+
+
+
