@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { motion } from "framer-motion";\r\nimport type { Variants } from "framer-motion";
+import { motion } from "framer-motion";
+import type { Variants } from "framer-motion";
 import type { CalculatedReport, ParsedReport } from "@/lib/types/domain";
 import { calculateReport } from "@/lib/calc/report";
 import { DEFAULT_REPORT_INPUT } from "@/lib/constants/defaultInput";
@@ -91,7 +92,10 @@ type AdminUserRow = {
   scenario_count: number;
 };
 
-const fadeUp: Variants = {\r\n  hidden: { opacity: 0, y: 16 },\r\n  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" } }\r\n};
+const fadeUp: Variants = {
+  hidden: { opacity: 0, y: 16 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" } }
+};
 
 const stagger = {
   hidden: {},
@@ -1567,5 +1571,8 @@ export default function DashboardPage() {
     </motion.div>
   );
 }
+
+
+
 
 
