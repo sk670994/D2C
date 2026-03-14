@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { motion } from "framer-motion";
 import type { CalculatedReport, ParsedReport } from "@/lib/types/domain";
 import { calculateReport } from "@/lib/calc/report";
 import { DEFAULT_REPORT_INPUT } from "@/lib/constants/defaultInput";
@@ -86,6 +89,16 @@ type AdminUserRow = {
   workspace_updated_at: string | null;
   active_month_key: string | null;
   scenario_count: number;
+};
+
+const fadeUp = {
+  hidden: { opacity: 0, y: 16 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" } }
+};
+
+const stagger = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.08 } }
 };
 
 function pendingInsights(summary = "Insights not generated yet"): CalculatedReport["insights"] {
@@ -183,6 +196,7 @@ function NumberField({
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [reportInput, setReportInput] = useState<ParsedReport>(DEFAULT_REPORT_INPUT);
   const [report, setReport] = useState<CalculatedReport>(() => calculateReport(DEFAULT_REPORT_INPUT));
   const [selectedSection, setSelectedSection] = useState<SectionId>("all");
@@ -213,6 +227,7 @@ export default function DashboardPage() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
   const [workspaceSyncing, setWorkspaceSyncing] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
   const lastToastRef = useRef<{ text: string; at: number }>({ text: "", at: 0 });
 
   function pushToast(text: string, tone: ToastTone = "neutral") {
@@ -346,6 +361,7 @@ export default function DashboardPage() {
 
         if (!id || !email) {
           setUserName("");
+          setAuthChecked(true);
           return;
         }
 
@@ -382,6 +398,8 @@ export default function DashboardPage() {
         setUserEmail("");
         setUserId("");
         setUserName("");
+      } finally {
+        if (active) setAuthChecked(true);
       }
     };
 
@@ -412,6 +430,12 @@ export default function DashboardPage() {
       authListener?.subscription?.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (authChecked && !userId) {
+      router.push("/login?next=/dashboard");
+    }
+  }, [authChecked, userId, router]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -663,14 +687,17 @@ export default function DashboardPage() {
   async function generateInsights() {
     setInsightsLoading(true);
     setInsightsError(null);
-    try {
-      const res = await fetch("/api/insights", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(report)
-      });
-      if (!res.ok) throw new Error("Insights API failed");
-      const insights = normalizeInsightPayload((await res.json()) as Partial<CalculatedReport["insights"]>);
+      try {
+        const res = await fetch("/api/insights", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(report)
+        });
+        if (!res.ok) {
+          const errorJson = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(errorJson?.error || "Insights API failed");
+        }
+        const insights = normalizeInsightPayload((await res.json()) as Partial<CalculatedReport["insights"]>);
       const merged = { ...report, insights };
       setReport(merged);
       sessionStorage.setItem("report", JSON.stringify(merged));
@@ -883,7 +910,10 @@ export default function DashboardPage() {
   }
 
   async function loadMonthlyRecords() {
-    if (!userId) return;
+    if (!userId) {
+      setRecordsError("Login required to load monthly records");
+      return;
+    }
     setRecordsLoading(true);
     setRecordsError("");
 
@@ -911,12 +941,14 @@ export default function DashboardPage() {
       const { data, error } = await query;
       if (error) throw error;
       setMonthlyRecords((data ?? []) as MonthlyRecord[]);
-    } catch (err) {
-      setRecordsError(err instanceof Error ? err.message : "Failed to load monthly records");
-    } finally {
-      setRecordsLoading(false);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to load monthly records";
+        setRecordsError(message);
+        pushToast(message, "warn");
+      } finally {
+        setRecordsLoading(false);
+      }
     }
-  }
 
   async function loadAdminUsers() {
     const adminEmail = (process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? "").trim().toLowerCase();
@@ -980,17 +1012,33 @@ export default function DashboardPage() {
 
   function downloadAllRecordsCsv() {
     if (monthlyRecords.length === 0) return;
-    const headers = ["month", "revenue", "profit", "profit_margin_pct", "roas", "cac", "scale_verdict"];
+    const headerRow = [
+      "Month",
+      "Unit Economics: Contribution Margin %",
+      "Unit Economics: Max Allowable CAC",
+      "Ad Metrics: Blended ROAS",
+      "Ad Metrics: Blended CAC",
+      "Ad Metrics: Total Ad Spend",
+      "Scale Planner: Readiness",
+      "Scale Planner: Allocation Total %",
+      "Monthly P&L: Net Revenue",
+      "Monthly P&L: Net Profit",
+      "Monthly P&L: Net Margin %"
+    ];
     const rows = monthlyRecords.map((r) => [
       r.month_key,
-      r.report_data.monthlyPnl.netRevenueMonth,
-      r.report_data.monthlyPnl.netProfitMonth,
-      r.report_data.monthlyPnl.netProfitMarginPct,
+      r.report_data.unitEconomics.contributionMarginPct,
+      r.report_data.unitEconomics.maxAllowableCac,
       r.report_data.adMetrics.blendedRoas,
       r.report_data.adMetrics.blendedCac,
-      r.report_data.scalePlanner.readiness
+      r.report_data.adMetrics.totalAdSpend,
+      r.report_data.scalePlanner.readiness,
+      r.report_data.scalePlanner.allocationTotalPct,
+      r.report_data.monthlyPnl.netRevenueMonth,
+      r.report_data.monthlyPnl.netProfitMonth,
+      r.report_data.monthlyPnl.netProfitMarginPct
     ]);
-    const csv = [headers.join(","), ...rows.map((row) => row.map((v) => `"${String(v).replace(/"/g, "\"\"")}"`).join(","))].join("\n");
+    const csv = [headerRow.join(","), ...rows.map((row) => row.map((v) => `"${String(v).replace(/"/g, "\"\"")}"`).join(","))].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -1073,7 +1121,11 @@ export default function DashboardPage() {
     const tone = statusTone(sectionHealth);
 
     return (
-      <section className={`surface section-surface section-block tone-${tone}`} key={id}>
+      <motion.section
+        className={`surface section-surface section-block tone-${tone}`}
+        key={id}
+        variants={fadeUp}
+      >
         <div className="section-head section-head-rich">
           <h3>{sectionOptions.find((opt) => opt.id === id)?.label ?? id}</h3>
           <span className={`status-dot status-${tone}`}>{sectionHealth}</span>
@@ -1100,7 +1152,7 @@ export default function DashboardPage() {
             </div>
           </article>
         </div>
-      </section>
+      </motion.section>
     );
   }
 
@@ -1141,7 +1193,7 @@ export default function DashboardPage() {
   }, [monthlyRecords]);
 
   return (
-    <div className="dashboard-shell">
+    <motion.div className="dashboard-shell" initial="hidden" animate="visible" variants={stagger}>
       <aside className="command-rail surface">
         <div className="rail-top">
           <p className="eyebrow">Control</p>
@@ -1166,16 +1218,16 @@ export default function DashboardPage() {
             );
           })}
         </div>
-        <div className="rail-shortcuts">
-          <p>Command Palette</p>
-          <kbd>Ctrl</kbd>
-          <span>+</span>
-          <kbd>K</kbd>
-        </div>
-      </aside>
-
-      <main className="dashboard-content-grid">
-        <section className="surface utility-bar">
+        <div className="rail-controls">
+          <Link href="/zwirk">
+            <Button type="button" className="zwirk-cta">
+              <span className="zwirk-cta-text">
+                <span className="zwirk-cta-title">ZWIRK</span>
+                <span className="zwirk-cta-sub">assistant</span>
+                <span className="zwirk-cta-arrow">→</span>
+              </span>
+            </Button>
+          </Link>
           <Button type="button" variant="secondary" onClick={() => setPaletteOpen(true)}>
             Open Command Palette
           </Button>
@@ -1188,40 +1240,44 @@ export default function DashboardPage() {
           <Badge variant="secondary">{completedSections}/{sectionSequence.length} sections healthy</Badge>
           <Badge variant={dirty ? "warning" : "success"}>{dirty ? "Unsaved Draft" : "All Saved"}</Badge>
           <Badge variant={workspaceSyncing ? "warning" : "secondary"}>{workspaceSyncing ? "Syncing cloud data..." : "Cloud sync ready"}</Badge>
-        </section>
+        </div>
+        <div className="rail-shortcuts">
+          <p>Command Palette</p>
+          <kbd>Ctrl</kbd>
+          <span>+</span>
+          <kbd>K</kbd>
+        </div>
+      </aside>
 
-        <section className="surface progress-strip">
-          {sectionSequence.map((id) => {
-            const tone = statusTone(sectionStatus[id]);
-            return (
-              <button key={id} type="button" className={`progress-pill tone-${tone}`} onClick={() => goToSection(id)}>
-                <span>{sectionOptions.find((opt) => opt.id === id)?.label}</span>
-                <small>{sectionStatus[id]}</small>
-              </button>
-            );
-          })}
-        </section>
-
-        <section className="surface hero-surface">
+      <main className="dashboard-content-grid">
+        <motion.section className="surface hero-surface" variants={fadeUp}>
           <div>
-            <p className="eyebrow">D2C Operating System</p>
-            <h1>Growth Intelligence Command Center</h1>
+            <p className="eyebrow">Zooptrack Operating System</p>
+            <h1>Zooptrack Growth Intelligence Command Center</h1>
             <p className="hero-copy">Fast signal loops for unit economics, paid media, scale readiness, and actionable AI guidance.</p>
           </div>
           <div className="hero-meta">
-            <span className="muted-text">{userEmail ? `Signed in as ${userName ? `${userName} (${userEmail})` : userEmail}` : "Not signed in"}</span>
+            <span className="muted-text">
+              {userEmail ? `Signed in as ${userName ? `${userName} (${userEmail})` : userEmail}` : "Not signed in"}
+            </span>
             <ThemeToggle />
-            <SignOutButton />
+            {userEmail ? (
+              <SignOutButton />
+            ) : (
+              <Link href="/login">
+                <Button type="button" variant="secondary">Sign In</Button>
+              </Link>
+            )}
           </div>
-        </section>
+        </motion.section>
 
-        <section className="hero-kpi-grid">
+        <motion.section className="hero-kpi-grid" variants={fadeUp}>
           {heroKpis.map((item) => (
             <MetricTile key={item.title} item={item as MetricItem} />
           ))}
-        </section>
+        </motion.section>
 
-        <section className="surface action-surface">
+        <motion.section className="surface action-surface" variants={fadeUp}>
           <div className="section-head">
             <h3>Execution Controls</h3>
             <p>Apply edits instantly, reset assumptions, and trigger AI insight generation.</p>
@@ -1237,9 +1293,9 @@ export default function DashboardPage() {
               {insightsLoading ? "Generating..." : "Generate AI Insights"}
             </Button>
           </div>
-        </section>
+        </motion.section>
 
-        <section className="surface checklist-surface">
+        <motion.section className="surface checklist-surface" variants={fadeUp}>
           <div className="section-head">
             <h3>Launch Checklist</h3>
             <p>Track the readiness gates before scaling budgets.</p>
@@ -1252,11 +1308,11 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
-        </section>
+        </motion.section>
 
         {selectedSection === "all" ? sectionSequence.map((id) => renderSectionBlock(id)) : renderSectionBlock(selectedSection as ActiveSection)}
 
-        <section className="surface section-surface">
+        <motion.section className="surface section-surface" variants={fadeUp}>
           <div className="section-head">
             <h3>Scenario Lab</h3>
             <p>Save and compare up to 3 scenarios for revenue, profit and ROAS.</p>
@@ -1293,10 +1349,10 @@ export default function DashboardPage() {
               </article>
             ))}
           </div>
-        </section>
+        </motion.section>
 
         {isAdmin ? (
-          <section className="surface section-surface">
+          <motion.section className="surface section-surface" variants={fadeUp}>
             <div className="section-head">
               <h3>Admin Users Vault</h3>
               <p>Cross-user profile and workspace visibility for operations.</p>
@@ -1340,10 +1396,10 @@ export default function DashboardPage() {
                 </tbody>
               </table>
             </div>
-          </section>
+          </motion.section>
         ) : null}
 
-        <section className="surface section-surface">
+        <motion.section className="surface section-surface" variants={fadeUp}>
           <div className="section-head">
             <h3>Monthly Records Vault</h3>
             <p>Save current month data, review history, tally totals, and export records.</p>
@@ -1360,6 +1416,9 @@ export default function DashboardPage() {
             <Button type="button" variant="secondary" onClick={loadMonthlyRecords} disabled={recordsLoading}>
               {recordsLoading ? "Refreshing..." : "Refresh"}
             </Button>
+            <Button type="button" variant="secondary" onClick={() => router.push("/records")}>
+              See Monthly Records →
+            </Button>
             {isAdmin ? (
               <Label className="input-row" style={{ minWidth: 240 }}>
                 <span>Admin: user email filter</span>
@@ -1373,64 +1432,25 @@ export default function DashboardPage() {
             ) : null}
           </div>
 
-          {recordsError ? <p className="error-text" style={{ marginTop: 10 }}>{recordsError}</p> : null}
+          {recordsError ? (
+            <div style={{ marginTop: 10 }}>
+              <p className="error-text">{recordsError}</p>
+              {!userId ? (
+                <p className="muted-text" style={{ margin: 0 }}>
+                  Please sign in to access your records.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="records-summary">
             <Badge variant="secondary">Months: {monthlyRecords.length}</Badge>
             <Badge variant="secondary">Total Revenue: {inr(tally.revenue)}</Badge>
             <Badge variant={tally.profit >= 0 ? "success" : "warning"}>Total Profit: {inr(tally.profit)}</Badge>
           </div>
+        </motion.section>
 
-          <div className="records-table-wrap">
-            <table className="records-table">
-              <thead>
-                <tr>
-                  <th>Month</th>
-                  <th>Revenue</th>
-                  <th>Profit</th>
-                  <th>ROAS</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {monthlyRecords.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="muted-text">No records saved yet.</td>
-                  </tr>
-                ) : (
-                  monthlyRecords.map((row) => (
-                    <tr key={row.id}>
-                      <td>{row.month_key}</td>
-                      <td>{inr(row.report_data.monthlyPnl.netRevenueMonth)}</td>
-                      <td>{inr(row.report_data.monthlyPnl.netProfitMonth)}</td>
-                      <td>{row.report_data.adMetrics.blendedRoas.toFixed(2)}x</td>
-                      <td>{row.report_data.scalePlanner.readiness}</td>
-                      <td>
-                        <div className="row-actions">
-                          <Button type="button" variant="secondary" onClick={() => loadRecordToWorkspace(row)}>Load</Button>
-                          <Button type="button" variant="secondary" onClick={() => {
-                            const blob = new Blob([JSON.stringify(row, null, 2)], { type: "application/json" });
-                            const url = URL.createObjectURL(blob);
-                            const link = document.createElement("a");
-                            link.href = url;
-                            link.download = `${row.month_key}-record.json`;
-                            document.body.appendChild(link);
-                            link.click();
-                            link.remove();
-                            URL.revokeObjectURL(url);
-                          }}>JSON</Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="surface section-surface insights-surface">
+        <motion.section className="surface section-surface insights-surface" variants={fadeUp}>
           <div className="section-head">
             <h3>AI Insights</h3>
             <p>Operator-grade insights for profitability, scaling, and execution.</p>
@@ -1471,7 +1491,7 @@ export default function DashboardPage() {
             <InsightList title="Next 30 Days" items={report.insights.next30Days} />
           </div>
           <Textarea readOnly value={report.insights.summary} />
-        </section>
+        </motion.section>
       </main>
 
       {toasts.length > 0 ? (
@@ -1511,7 +1531,7 @@ export default function DashboardPage() {
       {showOnboarding ? (
         <div className="palette-backdrop" onClick={closeOnboarding}>
           <div className="palette-card onboarding-card" onClick={(e) => e.stopPropagation()}>
-            <h3>Welcome to D2C Command Center</h3>
+            <h3>Welcome to Zooptrack Command Center</h3>
             <p className="muted-text">Quick start in 3 steps:</p>
             <ol>
               <li>Load sample data to see a full working model.</li>
@@ -1547,7 +1567,7 @@ export default function DashboardPage() {
           </div>
         </div>
       ) : null}
-    </div>
+    </motion.div>
   );
 }
 
