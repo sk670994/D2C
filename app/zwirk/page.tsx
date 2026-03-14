@@ -151,7 +151,7 @@ export default function ZwirkPage() {
   async function sendMessage(message: string) {
     setLoading(true);
     setError(null);
-    const nextMessages = [...messages, { role: "user", content: message }];
+    const nextMessages: ChatMessage[] = [...messages, { role: "user", content: message }];
     setMessages(nextMessages);
     setInput("");
 
@@ -357,3 +357,4 @@ export default function ZwirkPage() {
     </main>
   );
 }
+
