@@ -229,6 +229,7 @@ export default function DashboardPage() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [workspaceSyncing, setWorkspaceSyncing] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
+  const [brandVaultStatus, setBrandVaultStatus] = useState<"loading" | "complete" | "incomplete">("loading");
   const lastToastRef = useRef<{ text: string; at: number }>({ text: "", at: 0 });
 
   function pushToast(text: string, tone: ToastTone = "neutral") {
@@ -437,6 +438,30 @@ export default function DashboardPage() {
       router.push("/login?next=/dashboard");
     }
   }, [authChecked, userId, router]);
+
+  useEffect(() => {
+    if (!userId) return;
+    let active = true;
+    async function loadBrandVault() {
+      try {
+        const res = await fetch("/api/brand-vault");
+        if (!res.ok) throw new Error("Failed to load Brand Vault");
+        const data = (await res.json()) as { brandVault?: { brandName?: string; tone?: string; audience?: string; heroProduct?: string } };
+        if (!active) return;
+        const vault = data.brandVault;
+        const hasData = !!vault && [vault.brandName, vault.tone, vault.audience, vault.heroProduct].some((value) =>
+          typeof value === "string" && value.trim().length > 0
+        );
+        setBrandVaultStatus(hasData ? "complete" : "incomplete");
+      } catch {
+        if (active) setBrandVaultStatus("incomplete");
+      }
+    }
+    void loadBrandVault();
+    return () => {
+      active = false;
+    };
+  }, [userId]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -1182,6 +1207,8 @@ export default function DashboardPage() {
     { label: "Monthly Margin Healthy", done: sectionStatus.pnl === "Healthy" },
     { label: "Insights Generated", done: report.insights.source !== "pending" }
   ];
+  const brandVaultLabel = brandVaultStatus === "complete" ? "Complete" : brandVaultStatus === "loading" ? "Checking" : "Incomplete";
+  const brandVaultVariant = brandVaultStatus === "complete" ? "success" : brandVaultStatus === "loading" ? "secondary" : "warning";
   const tally = useMemo(() => {
     return monthlyRecords.reduce(
       (acc, row) => {
@@ -1225,8 +1252,13 @@ export default function DashboardPage() {
               <span className="zwirk-cta-text">
                 <span className="zwirk-cta-title">ZWIRK</span>
                 <span className="zwirk-cta-sub">assistant</span>
-                <span className="zwirk-cta-arrow">→</span>
+                <span className="zwirk-cta-arrow">{" >"}</span>
               </span>
+            </Button>
+          </Link>
+          <Link href="/brand-vault">
+            <Button type="button" variant="secondary" title="Set your brand DNA so ZWIRK sounds like you.">
+              Brand Vault
             </Button>
           </Link>
           <Button type="button" variant="secondary" onClick={() => setPaletteOpen(true)}>
@@ -1238,6 +1270,12 @@ export default function DashboardPage() {
           <Button type="button" variant="secondary" onClick={saveScenario}>
             Save Scenario
           </Button>
+          <Badge variant={brandVaultVariant}>Brand Vault: {brandVaultLabel}</Badge>
+          {brandVaultStatus !== "complete" ? (
+            <Link href="/brand-vault">
+              <Button type="button">Complete your Brand Vault</Button>
+            </Link>
+          ) : null}
           <Badge variant="secondary">{completedSections}/{sectionSequence.length} sections healthy</Badge>
           <Badge variant={dirty ? "warning" : "success"}>{dirty ? "Unsaved Draft" : "All Saved"}</Badge>
           <Badge variant={workspaceSyncing ? "warning" : "secondary"}>{workspaceSyncing ? "Syncing cloud data..." : "Cloud sync ready"}</Badge>
@@ -1418,7 +1456,7 @@ export default function DashboardPage() {
               {recordsLoading ? "Refreshing..." : "Refresh"}
             </Button>
             <Button type="button" variant="secondary" onClick={() => router.push("/records")}>
-              See Monthly Records →
+              See Monthly Records {" >"}
             </Button>
             {isAdmin ? (
               <Label className="input-row" style={{ minWidth: 240 }}>
@@ -1571,6 +1609,19 @@ export default function DashboardPage() {
     </motion.div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

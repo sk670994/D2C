@@ -16,6 +16,13 @@ type GeminiGenerateResponse = {
   }>;
 };
 
+type ProofOfWork = {
+  context: string;
+  brandVault: string;
+  assumptions: string[];
+};
+
+
 type BrandVaultRow = {
   brand_name: string | null;
   website_url: string | null;
@@ -126,7 +133,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "LLM not configured" }, { status: 500 });
     }
 
-    const prompt = buildPrompt(messages, typeof body.context === "string" ? body.context : undefined, brandVault ?? undefined);
+    const prompt = buildPrompt(messages, contextValue, brandVault ?? undefined);
     const baseUrl = "https://generativelanguage.googleapis.com";
     const modelPath = `/models/${model.replace(/^models\//, "")}:generateContent?key=${apiKey}`;
 
@@ -190,7 +197,7 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ reply, latencyMs: Date.now() - startedAt });
+    return NextResponse.json({ reply, latencyMs: Date.now() - startedAt, proof });
   } catch (error) {
     const message = error instanceof Error ? error.message : "ZWIRK error";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -198,3 +205,12 @@ export async function POST(request: Request) {
     console.info(`[api/zwirk] completed in ${Date.now() - startedAt}ms`);
   }
 }
+
+
+
+
+
+
+
+
+
