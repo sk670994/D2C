@@ -2086,3 +2086,46 @@ textarea {
     display: grid;
   }
 }
+
+.brand-vault-page {
+  display: grid;
+  gap: 28px;
+}
+
+.brand-vault-hero {
+  display: grid;
+  gap: 16px;
+}
+
+.brand-vault-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.brand-vault-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.vault-field {
+  display: grid;
+  gap: 8px;
+}
+
+.brand-vault-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.form-error {
+  color: #b91c1c;
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  padding: 10px 12px;
+  border-radius: 10px;
+}
