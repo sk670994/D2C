@@ -27,7 +27,7 @@ export default function ZwirkPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
-      content: "I’m ZWIRK. Tell me your current ROAS, CAC, margin, and order volume, and I’ll map the fastest path to profit."
+      content: "I'm ZWIRK. Tell me your current ROAS, CAC, margin, and order volume, and I'll map the fastest path to profit."
     }
   ]);
   const [input, setInput] = useState("");
@@ -99,7 +99,7 @@ export default function ZwirkPage() {
     const initial: ChatMessage[] = [
       {
         role: "assistant",
-        content: "I’m ZWIRK. Tell me your current ROAS, CAC, margin, and order volume, and I’ll map the fastest path to profit."
+        content: "I'm ZWIRK. Tell me your current ROAS, CAC, margin, and order volume, and I'll map the fastest path to profit."
       }
     ];
     setMessages(initial);
@@ -185,7 +185,7 @@ export default function ZwirkPage() {
       <header className="zwirk-hero">
         <div>
           <p className="eyebrow">Zooptrack AI Assistant</p>
-          <h1><span>ZWIRK</span> — your on-demand growth operator</h1>
+          <h1><span>ZWIRK</span> -- your on-demand growth operator</h1>
           <p className="muted-text">
             Ask profit questions, scenario ideas, and growth diagnostics. ZWIRK responds with actionable next steps.
           </p>
@@ -357,4 +357,5 @@ export default function ZwirkPage() {
     </main>
   );
 }
+
 

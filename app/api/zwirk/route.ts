@@ -23,12 +23,14 @@ function buildPrompt(messages: ChatMessage[], context?: string) {
   });
   return [
     "You are ZWIRK, a sharp virtual assistant for DTC operators.",
-    "Provide concise, actionable answers. Use numbers where possible. Ask one clarifying question only if required.",
+    "Provide concise, actionable answers with concrete steps. Use numbers where possible.",
+    "Ask one clarifying question only if it is required to answer.",
+    "Respond with the answer only. Do not include role labels like 'ZWIRK:' or 'User:'.",
     "If you are unsure, say so.",
     context ? `Context:\n${context}` : "",
     "",
     ...trimmed,
-    "ZWIRK:"
+    "Answer:"
   ].join("\n");
 }
 
@@ -68,7 +70,7 @@ export async function POST(request: Request) {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: 0.4,
-        maxOutputTokens: 500
+        maxOutputTokens: 900
       }
     };
 
@@ -122,6 +124,10 @@ export async function POST(request: Request) {
     console.info(`[api/zwirk] completed in ${Date.now() - startedAt}ms`);
   }
 }
+
+
+
+
 
 
 
