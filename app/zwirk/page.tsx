@@ -389,12 +389,6 @@ export default function ZwirkPage() {
           </div>
         ) : null}
 
-        {proof ? (
-              </div>
-            </details>
-          </div>
-        ) : null}
-
         <div className="zwirk-input">
           <Textarea
             value={input}
@@ -410,6 +404,8 @@ export default function ZwirkPage() {
     </main>
   );
 }
+
+
 
 
 

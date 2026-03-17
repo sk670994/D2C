@@ -198,6 +198,18 @@ function NumberField({
 
 export default function DashboardPage() {
   const router = useRouter();
+  const percentPaths = new Set([
+    "unitEconomicsInput.gstRate",
+    "unitEconomicsInput.paymentGatewayPct",
+    "unitEconomicsInput.returnsRate",
+    "scalePlannerInput.revenueGrowthTargetPct",
+    "scalePlannerInput.adSpendGrowthTargetPct",
+    "scalePlannerInput.ordersGrowthTargetPct",
+    "scalePlannerInput.cacImprovementTargetPct",
+    "scalePlannerInput.allocationMetaPct",
+    "scalePlannerInput.allocationGooglePct",
+    "scalePlannerInput.allocationOtherPct"
+  ]);
   const [reportInput, setReportInput] = useState<ParsedReport>(DEFAULT_REPORT_INPUT);
   const [report, setReport] = useState<CalculatedReport>(() => calculateReport(DEFAULT_REPORT_INPUT));
   const [selectedSection, setSelectedSection] = useState<SectionId>("all");
@@ -542,9 +554,15 @@ export default function DashboardPage() {
     [report, dirty]
   );
 
+  function normalizePercentValue(path: string, value: number) {
+    if (!percentPaths.has(path)) return value;
+    return Math.abs(value) > 1 ? value / 100 : value;
+  }
+
   function updateNumber(path: string, value: string) {
     const n = Number(value);
     if (!Number.isFinite(n)) return;
+    const sanitized = normalizePercentValue(path, n);
 
     setReportInput((prev) => {
       const next = structuredClone(prev);
@@ -555,7 +573,7 @@ export default function DashboardPage() {
         ref = (ref as Record<string, unknown>)[keys[i]];
       }
 
-      (ref as Record<string, unknown>)[keys[keys.length - 1]] = n;
+      (ref as Record<string, unknown>)[keys[keys.length - 1]] = sanitized;
       return next;
     });
 

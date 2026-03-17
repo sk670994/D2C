@@ -133,6 +133,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "LLM not configured" }, { status: 500 });
     }
 
+    const contextValue = typeof body.context === "string" ? body.context : undefined;
     const prompt = buildPrompt(messages, contextValue, brandVault ?? undefined);
     const baseUrl = "https://generativelanguage.googleapis.com";
     const modelPath = `/models/${model.replace(/^models\//, "")}:generateContent?key=${apiKey}`;
@@ -197,6 +198,7 @@ export async function POST(request: Request) {
       }
     }
 
+    const proof: ProofOfWork | null = null;
     return NextResponse.json({ reply, latencyMs: Date.now() - startedAt, proof });
   } catch (error) {
     const message = error instanceof Error ? error.message : "ZWIRK error";
