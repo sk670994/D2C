@@ -31,6 +31,7 @@ type BrandVaultRow = {
   do_not_say: string | null;
   hero_product: string | null;
   main_objection: string | null;
+  competitor_focus: string | null;
 };
 
 function formatBrandVault(row: BrandVaultRow) {
@@ -41,7 +42,8 @@ function formatBrandVault(row: BrandVaultRow) {
     row.audience ? `Audience: ${row.audience}` : null,
     row.do_not_say ? `Do-not-say: ${row.do_not_say}` : null,
     row.hero_product ? `Hero product: ${row.hero_product}` : null,
-    row.main_objection ? `Main objection: ${row.main_objection}` : null
+    row.main_objection ? `Main objection: ${row.main_objection}` : null,
+    row.competitor_focus ? `Competitor focus: ${row.competitor_focus}` : null
   ].filter(Boolean);
   return items.length ? items.join("\n") : "No brand vault data provided.";
 }
@@ -53,6 +55,7 @@ function buildPrompt(messages: ChatMessage[], context?: string, brandVault?: Bra
   });
   const lockedContext = context && context.trim().length > 0 ? context.trim() : "No dashboard context provided.";
   const lockedVault = brandVault ? formatBrandVault(brandVault) : "No brand vault data provided.";
+  const lockedCompetitors = brandVault?.competitor_focus?.trim().length ? brandVault.competitor_focus.trim() : "No competitor focus provided.";
   return [
     "You are ZWIRK, a sharp virtual assistant for DTC operators.",
     "Goal: Provide outcome-focused, specific, and practical guidance a founder can implement.",
@@ -66,6 +69,9 @@ function buildPrompt(messages: ChatMessage[], context?: string, brandVault?: Bra
     "",
     "Brand Vault (locked):",
     lockedVault,
+    "",
+    "Competitor Focus (locked):",
+    lockedCompetitors,
     "",
     "Required output format:",
     "Summary:",
@@ -129,7 +135,7 @@ export async function POST(request: Request) {
 
     const { data: brandVault, error: brandVaultError } = await authClient
       .from("brand_vaults")
-      .select("brand_name,website_url,tone,audience,do_not_say,hero_product,main_objection")
+      .select("brand_name,website_url,tone,audience,do_not_say,hero_product,main_objection,competitor_focus")
       .eq("user_id", user.id)
       .maybeSingle();
 
