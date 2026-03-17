@@ -41,7 +41,8 @@ export default function DemoPage() {
 
   async function sendMessage(message: string) {
     setLoading(true);
-    const next = [...messages, { role: "user", content: message }];
+    const nextMessage: ChatMessage = { role: "user", content: message };
+    const next = [...messages, nextMessage];
     setMessages(next);
     setInput("");
 
