@@ -181,11 +181,13 @@ export default function ZwirkPage() {
         throw new Error(detail?.error || "Unable to reach ZWIRK");
       }
 
-      const data = (await res.json()) as { reply?: string };
+      const data = (await res.json()) as { reply?: string; proof?: ProofOfWork | null };
       const reply = data.reply || "I could not generate a response.";
+      setProof(data.proof ?? null);
       setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "ZWIRK is unavailable right now.");
+      setProof(null);
     } finally {
       setLoading(false);
     }
@@ -266,6 +268,19 @@ export default function ZwirkPage() {
       <section className="zwirk-chat surface">
         <div className="zwirk-chat-header">
           <h2>Conversation</h2>
+          <span
+            className="proof-badge"
+            style={{
+              backgroundColor: proof ? (proof.assumptions.length > 0 ? "#e7f8ec" : "#fdf2d6") : "#f4f4f4",
+              color: proof ? (proof.assumptions.length > 0 ? "#0f6b30" : "#805500") : "#666",
+              borderRadius: 999,
+              padding: "2px 10px",
+              fontSize: 12,
+              marginLeft: 12
+            }}
+          >
+            {proof ? (proof.assumptions.length > 0 ? "Proof attached" : "Proof pending") : "Proof pending"}
+          </span>
           <span className={`status-dot ${loading ? "status-warn" : "status-good"}`}>
             {loading ? "ZWIRK is thinking..." : "Ready"}
           </span>
@@ -383,7 +398,12 @@ export default function ZwirkPage() {
                       ))}
                     </ul>
                   </div>
-                ) : null}
+                ) : (
+                  <div>
+                    <h4>Assumptions</h4>
+                    <p className="muted-text">No assumptions detected.</p>
+                  </div>
+                )}
               </div>
             </details>
           </div>
