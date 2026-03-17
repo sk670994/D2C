@@ -92,8 +92,21 @@ function buildPrompt(messages: ChatMessage[], context?: string, brandVault?: Bra
 function extractReply(data: GeminiGenerateResponse) {
   const parts = data.candidates?.[0]?.content?.parts ?? [];
   const rawReply = parts.map((part) => part.text ?? "").join("").trim() || "No response generated.";
-  return rawReply.replace(/^ZWIRK:\s*/i, "").replace(/\nUser:.*$/s, "").trim();
+  return {
+    reply: rawReply.replace(/^ZWIRK:\s*/i, "").replace(/\nUser:.*$/s, "").trim(),
+    raw: rawReply
+  };
 }
+
+
+function detectAssumptions(text: string) {
+  if (!text) return [];
+  const matches = text.match(/[^.!?]*\bassum(?:ed|ing|es)?\b[^.!?]*[.!?]?/gi) ?? [];
+  const normalized = matches.map((m) => m.replace(/\s+/g, " ").trim()).filter(Boolean);
+  return Array.from(new Set(normalized)).slice(0, 4);
+}
+
+
 
 export async function POST(request: Request) {
   const startedAt = Date.now();
@@ -135,6 +148,17 @@ export async function POST(request: Request) {
 
     const contextValue = typeof body.context === "string" ? body.context : undefined;
     const prompt = buildPrompt(messages, contextValue, brandVault ?? undefined);
+    const proofContext = contextValue?.trim() ? contextValue.trim() : "No dashboard context provided.";
+    const proofBrandVault = brandVault ? formatBrandVault(brandVault) : "No brand vault data provided.";
+    const proofAssumptions: string[] = [];
+    if (!contextValue || !contextValue.trim()) {
+      proofAssumptions.push("Dashboard context was missing, so default D2C benchmarks were used.");
+    } else if (/n\/a/i.test(proofContext)) {
+      proofAssumptions.push("Some dashboard metrics were unavailable (n/a), so healthy benchmarks were assumed.");
+    }
+    if (!brandVault) {
+      proofAssumptions.push("Brand Vault is empty, so a neutral voice was assumed.");
+    }
     const baseUrl = "https://generativelanguage.googleapis.com";
     const modelPath = `/models/${model.replace(/^models\//, "")}:generateContent?key=${apiKey}`;
 
@@ -186,7 +210,9 @@ export async function POST(request: Request) {
     }
 
     let data = (await res.json()) as GeminiGenerateResponse;
-    let reply = extractReply(data);
+    let result = extractReply(data);
+    let reply = result.reply;
+    let rawText = result.raw;
 
     if (reply.length < 400) {
       const retryConfig = { temperature: 0.2, maxOutputTokens: 1500 };
@@ -194,11 +220,17 @@ export async function POST(request: Request) {
       if (retry.res.ok) {
         endpoint = retry.endpoint;
         data = (await retry.res.json()) as GeminiGenerateResponse;
-        reply = extractReply(data);
+        result = extractReply(data);
+        reply = result.reply;
+        rawText = result.raw;
       }
     }
 
-    const proof: ProofOfWork | null = null;
+    detectAssumptions(rawText).forEach((sentence) => {
+      if (sentence && !proofAssumptions.includes(sentence)) proofAssumptions.push(sentence);
+    });
+
+    const proof: ProofOfWork = { context: proofContext, brandVault: proofBrandVault, assumptions: proofAssumptions };
     return NextResponse.json({ reply, latencyMs: Date.now() - startedAt, proof });
   } catch (error) {
     const message = error instanceof Error ? error.message : "ZWIRK error";
