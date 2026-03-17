@@ -2129,3 +2129,134 @@ textarea {
   padding: 10px 12px;
   border-radius: 10px;
 }
+
+.zwirk-proof {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--surface-strong) 92%, var(--bg-1));
+}
+
+.zwirk-proof details {
+  cursor: pointer;
+}
+
+.zwirk-proof summary {
+  font-weight: 600;
+  list-style: none;
+}
+
+.zwirk-proof summary::-webkit-details-marker {
+  display: none;
+}
+
+.zwirk-proof-body {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.zwirk-proof-body pre {
+  white-space: pre-wrap;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 0.85rem;
+}
+
+.zwirk-proof-body ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.site-footer-global {
+  margin-top: 60px;
+  border-top: 1px solid var(--line);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--surface-strong) 94%, var(--bg-1)), color-mix(in srgb, var(--brand) 6%, transparent));
+  padding: 36px 6vw 20px;
+}
+
+.site-footer-inner {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(320px, 1.8fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.footer-brand h3 {
+  margin: 8px 0 6px;
+}
+
+.footer-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 18px;
+}
+
+.footer-columns a {
+  display: block;
+  color: var(--text);
+  text-decoration: none;
+  margin-top: 6px;
+}
+
+.footer-columns a:hover {
+  color: var(--brand);
+}
+
+.footer-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.site-footer-bottom {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  color: var(--text-muted);
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+@media (max-width: 860px) {
+  .site-footer-inner {
+    grid-template-columns: 1fr;
+  }
+}
+
+.zwirk-vault-cta {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px dashed color-mix(in srgb, var(--brand) 45%, transparent);
+  background: color-mix(in srgb, var(--brand) 8%, var(--bg-1));
+}
+
+.footer-column {
+  display: grid;
+  gap: 10px;
+}
+
+.footer-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.footer-list a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.footer-list a:hover {
+  color: var(--brand);
+}

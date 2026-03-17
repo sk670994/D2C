@@ -23,6 +23,14 @@ type ZwirkContext = {
   summary: string;
 };
 
+type ProofOfWork = {
+  context: string;
+  brandVault: string;
+  assumptions: string[];
+};
+
+type BrandVaultStatus = "loading" | "complete" | "incomplete";
+
 export default function ZwirkPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -34,6 +42,8 @@ export default function ZwirkPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [context, setContext] = useState<ZwirkContext | null>(null);
+  const [proof, setProof] = useState<ProofOfWork | null>(null);
+  const [brandVaultStatus, setBrandVaultStatus] = useState<BrandVaultStatus>("loading");
   const [useContext, setUseContext] = useState(true);
   const [actionToasts, setActionToasts] = useState<Record<string, string>>({});
 
@@ -151,6 +161,7 @@ export default function ZwirkPage() {
   async function sendMessage(message: string) {
     setLoading(true);
     setError(null);
+    setProof(null);
     const nextMessages: ChatMessage[] = [...messages, { role: "user", content: message }];
     setMessages(nextMessages);
     setInput("");
@@ -208,6 +219,14 @@ export default function ZwirkPage() {
           ) : (
             <p className="muted-text zwirk-context-note">Connect your dashboard to unlock context-aware answers.</p>
           )}
+          {brandVaultStatus !== "complete" ? (
+            <div className="zwirk-vault-cta">
+              <p className="muted-text">Complete your Brand Vault to make ZWIRK sound like your brand.</p>
+              <Link href="/brand-vault">
+                <Button type="button" variant="secondary">Complete Brand Vault</Button>
+              </Link>
+            </div>
+          ) : null}
         </div>
         <Card className="zwirk-hero-card">
           <CardHeader>
@@ -234,7 +253,7 @@ export default function ZwirkPage() {
             </div>
             <div>
               <h4>Scale guidance</h4>
-              <p className="muted-text">Turn numbers into “scale / hold / fix” calls.</p>
+              <p className="muted-text">Turn numbers into "scale / hold / fix" calls.</p>
             </div>
             <div>
               <h4>Scenario planning</h4>
@@ -342,6 +361,34 @@ export default function ZwirkPage() {
           ) : null}
         </div>
         {error ? <p className="error-text">{error}</p> : null}
+        {proof ? (
+          <div className="zwirk-proof">
+            <details>
+              <summary>Why this plan?</summary>
+              <div className="zwirk-proof-body">
+                <div>
+                  <h4>Inputs Used</h4>
+                  <pre>{proof.context}</pre>
+                </div>
+                <div>
+                  <h4>Brand Rules Applied</h4>
+                  <pre>{proof.brandVault}</pre>
+                </div>
+                {proof.assumptions.length > 0 ? (
+                  <div>
+                    <h4>Assumptions</h4>
+                    <ul>
+                      {proof.assumptions.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            </details>
+          </div>
+        ) : null}
+
         <div className="zwirk-input">
           <Textarea
             value={input}
@@ -357,5 +404,18 @@ export default function ZwirkPage() {
     </main>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
