@@ -198,7 +198,11 @@ export default function ZwirkPage() {
       <header className="zwirk-hero">
         <div>
           <p className="eyebrow">Zooptrack AI Assistant</p>
-          <h1><span>ZWIRK</span> -- your on-demand growth operator</h1>
+          <h1>
+            <span>ZWIRK</span>
+            <span className="zwirk-title-beta">BETA version</span>
+            -- your on-demand growth operator
+          </h1>
           <p className="muted-text">
             Ask profit questions, scenario ideas, and growth diagnostics. ZWIRK responds with actionable next steps.
           </p>
