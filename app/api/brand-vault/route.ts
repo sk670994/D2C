@@ -9,6 +9,7 @@ type BrandVaultPayload = {
   doNotSay?: string;
   heroProduct?: string;
   mainObjection?: string;
+  competitorFocus?: string;
 };
 
 
@@ -20,6 +21,7 @@ type BrandVaultRow = {
   do_not_say: string | null;
   hero_product: string | null;
   main_objection: string | null;
+  competitor_focus: string | null;
   updated_at: string | null;
 };
 
@@ -32,6 +34,7 @@ function toClient(row: BrandVaultRow) {
     doNotSay: row.do_not_say ?? "",
     heroProduct: row.hero_product ?? "",
     mainObjection: row.main_objection ?? "",
+    competitorFocus: row.competitor_focus ?? "",
     updatedAt: row.updated_at ?? null
   };
 }
@@ -50,7 +53,7 @@ export async function GET() {
 
     const { data, error } = await authClient
       .from("brand_vaults")
-      .select("brand_name,website_url,tone,audience,do_not_say,hero_product,main_objection,updated_at")
+      .select("brand_name,website_url,tone,audience,do_not_say,hero_product,main_objection,competitor_focus,updated_at")
       .eq("user_id", user.id)
       .maybeSingle();
 
@@ -87,13 +90,14 @@ export async function POST(request: Request) {
       do_not_say: body.doNotSay?.trim() || null,
       hero_product: body.heroProduct?.trim() || null,
       main_objection: body.mainObjection?.trim() || null,
+      competitor_focus: body.competitorFocus?.trim() || null,
       updated_at: new Date().toISOString()
     };
 
     const { data, error } = await authClient
       .from("brand_vaults")
       .upsert(payload, { onConflict: "user_id" })
-      .select("brand_name,website_url,tone,audience,do_not_say,hero_product,main_objection,updated_at")
+      .select("brand_name,website_url,tone,audience,do_not_say,hero_product,main_objection,competitor_focus,updated_at")
       .maybeSingle();
 
     if (error) {

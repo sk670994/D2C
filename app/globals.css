@@ -1403,6 +1403,22 @@ textarea {
   color: transparent;
 }
 
+.zwirk-title-beta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--brand) 40%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 88%, transparent);
+  font-size: 0.75rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--brand) 70%, #1c2a3a);
+}
+
 .zwirk-hero-actions {
   display: flex;
   gap: 10px;

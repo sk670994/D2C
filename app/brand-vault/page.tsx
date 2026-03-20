@@ -15,6 +15,7 @@ type BrandVaultForm = {
   doNotSay: string;
   heroProduct: string;
   mainObjection: string;
+  competitorFocus: string;
 };
 
 const emptyForm: BrandVaultForm = {
@@ -24,7 +25,8 @@ const emptyForm: BrandVaultForm = {
   audience: "",
   doNotSay: "",
   heroProduct: "",
-  mainObjection: ""
+  mainObjection: "",
+  competitorFocus: ""
 };
 
 export default function BrandVaultPage() {
@@ -52,7 +54,8 @@ export default function BrandVaultPage() {
             audience: data.brandVault.audience ?? "",
             doNotSay: data.brandVault.doNotSay ?? "",
             heroProduct: data.brandVault.heroProduct ?? "",
-            mainObjection: data.brandVault.mainObjection ?? ""
+            mainObjection: data.brandVault.mainObjection ?? "",
+            competitorFocus: data.brandVault.competitorFocus ?? ""
           });
           setSavedAt(data.brandVault.updatedAt ?? null);
         }
@@ -187,6 +190,17 @@ export default function BrandVaultPage() {
             value={form.mainObjection}
             onChange={(e) => updateField("mainObjection", e.target.value)}
             placeholder="Why people hesitate to buy"
+            rows={3}
+            disabled={loading}
+          />
+        </div>
+        <div className="vault-field">
+          <Label htmlFor="competitor-focus">Competitor focus</Label>
+          <Textarea
+            id="competitor-focus"
+            value={form.competitorFocus}
+            onChange={(e) => updateField("competitorFocus", e.target.value)}
+            placeholder="List your top 2-3 competitors or what they keep testing."
             rows={3}
             disabled={loading}
           />
