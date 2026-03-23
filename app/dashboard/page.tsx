@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import DataConnectorPanel from "@/components/data-connector-panel/DataConnectorPanel";
 
 const sectionOptions = [
   { id: "all", label: "All" },
@@ -580,18 +581,22 @@ export default function DashboardPage() {
     setDirty(true);
   }
 
-  function applyChanges(scopeLabel = "All") {
+  function applyChanges(scopeLabel = "All", nextInput?: ParsedReport) {
     setRecalcLoading(true);
     try {
-      const next = calculateReport(reportInput);
+      const inputToUse = nextInput ?? reportInput;
+      if (nextInput) {
+        setReportInput(nextInput);
+      }
+      const next = calculateReport(inputToUse);
       const merged = {
         ...next,
         insights: pendingInsights()
       };
       setReport(merged);
-      sessionStorage.setItem("reportInput", JSON.stringify(reportInput));
+      sessionStorage.setItem("reportInput", JSON.stringify(inputToUse));
       sessionStorage.setItem("report", JSON.stringify(merged));
-      void persistWorkspaceToDatabase(reportInput, merged, scenarios, selectedScenarioId, monthKey);
+      void persistWorkspaceToDatabase(inputToUse, merged, scenarios, selectedScenarioId, monthKey);
       setDirty(false);
       pushToast(`${scopeLabel} changes applied`, "good");
     } finally {
@@ -1350,6 +1355,20 @@ export default function DashboardPage() {
               {insightsLoading ? "Generating..." : "Generate AI Insights"}
             </Button>
           </div>
+        </motion.section>
+
+        <motion.section className="surface section-surface" variants={fadeUp}>
+          <div className="section-head">
+            <h3>Data Connectors</h3>
+            <p className="muted-text">
+              Paste JSON exports from Shopify, Meta, or Google to auto-populate unit economics and ad metrics, then run a recalculation.
+            </p>
+          </div>
+          <DataConnectorPanel
+            currentInput={reportInput}
+            onApply={(nextInput) => applyChanges("Connector import", nextInput)}
+            onToast={pushToast}
+          />
         </motion.section>
 
         <motion.section className="surface checklist-surface" variants={fadeUp}>
