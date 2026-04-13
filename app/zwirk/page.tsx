@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import type { CalculatedReport } from "@/lib/types/domain";
+import { buildCompetitiveNarrative } from "@/lib/competitive/signals";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +29,7 @@ type ProofOfWork = {
   context: string;
   brandVault: string;
   assumptions: string[];
+  competitiveContext?: string;
 };
 
 type BrandVaultStatus = "loading" | "complete" | "incomplete";
@@ -42,6 +45,7 @@ export default function ZwirkPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [context, setContext] = useState<ZwirkContext | null>(null);
+  const [competitorSignals, setCompetitorSignals] = useState<string[]>([]);
   const [proof, setProof] = useState<ProofOfWork | null>(null);
   const [brandVaultStatus, setBrandVaultStatus] = useState<BrandVaultStatus>("loading");
   const [useContext, setUseContext] = useState(true);
@@ -73,23 +77,23 @@ export default function ZwirkPage() {
     const stored = sessionStorage.getItem("report");
     if (!stored) return;
     try {
-      const report = JSON.parse(stored) as {
-        unitEconomics?: { contributionMarginPct?: number; maxAllowableCac?: number };
-        adMetrics?: { blendedRoas?: number; blendedCac?: number; totalAdSpend?: number };
-        monthlyPnl?: { netProfitMarginPct?: number; netRevenueMonth?: number; netProfitMonth?: number };
-        scalePlanner?: { readiness?: string };
-      };
-      const summary = [
-        `Contribution margin: ${pct(report.unitEconomics?.contributionMarginPct)}`,
-        `Blended ROAS: ${fmt(report.adMetrics?.blendedRoas)}x`,
-        `Blended CAC: ${fmt(report.adMetrics?.blendedCac)}`,
-        `Max allowable CAC: ${fmt(report.unitEconomics?.maxAllowableCac)}`,
-        `Net profit margin: ${pct(report.monthlyPnl?.netProfitMarginPct)}`,
-        `Net revenue (month): ${fmt(report.monthlyPnl?.netRevenueMonth)}`,
-        `Net profit (month): ${fmt(report.monthlyPnl?.netProfitMonth)}`,
-        `Scale verdict: ${report.scalePlanner?.readiness ?? "Unknown"}`
-      ].join("\n");
+      const report = JSON.parse(stored) as CalculatedReport;
+      const summaryLines = [
+        `Contribution margin: ${pct(report.unitEconomics.contributionMarginPct)}`,
+        `Blended ROAS: ${fmt(report.adMetrics.blendedRoas)}x`,
+        `Blended CAC: ${fmt(report.adMetrics.blendedCac)}`,
+        `Max allowable CAC: ${fmt(report.unitEconomics.maxAllowableCac)}`,
+        `Net profit margin: ${pct(report.monthlyPnl.netProfitMarginPct)}`,
+        `Net revenue (month): ${fmt(report.monthlyPnl.netRevenueMonth)}`,
+        `Net profit (month): ${fmt(report.monthlyPnl.netProfitMonth)}`,
+        `Scale verdict: ${report.scalePlanner.readiness}`
+      ];
+      const competitorNarrative = buildCompetitiveNarrative(report);
+      const summary = competitorNarrative.length
+        ? [...summaryLines, "", "Competitive radar:", ...competitorNarrative].join("\n")
+        : summaryLines.join("\n");
       setContext({ label: "Dashboard context loaded", summary });
+      setCompetitorSignals(competitorNarrative);
     } catch {
       // no-op
     }
@@ -164,16 +168,195 @@ export default function ZwirkPage() {
     setProof(null);
     const nextMessages: ChatMessage[] = [...messages, { role: "user", content: message }];
     setMessages(nextMessages);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+    
     setInput("");
 
     try {
+      const payload: { messages: ChatMessage[]; context?: string; competitorContext?: string } = { messages: nextMessages };
+      if (useContext && context?.summary) payload.context = context.summary;
+      if (competitorSignals.length > 0) payload.competitorContext = competitorSignals.join("\n");
       const res = await fetch("/api/zwirk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: nextMessages,
-          context: useContext ? context?.summary : undefined
-        })
+        body: JSON.stringify(payload)
       });
 
       if (!res.ok) {
@@ -225,6 +408,16 @@ export default function ZwirkPage() {
           ) : (
             <p className="muted-text zwirk-context-note">Connect your dashboard to unlock context-aware answers.</p>
           )}
+          {competitorSignals.length > 0 ? (
+            <div className="zwirk-competitive-summary">
+              <h4>Competitor radar</h4>
+              <ul>
+                {competitorSignals.map((signal) => (
+                  <li key={signal}>{signal}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {brandVaultStatus !== "complete" ? (
             <div className="zwirk-vault-cta">
               <p className="muted-text">Complete your Brand Vault to make ZWIRK sound like your brand.</p>
@@ -393,6 +586,12 @@ export default function ZwirkPage() {
                   <h4>Brand Rules Applied</h4>
                   <pre>{proof.brandVault}</pre>
                 </div>
+                {proof.competitiveContext ? (
+                  <div>
+                    <h4>Competitive radar</h4>
+                    <pre>{proof.competitiveContext}</pre>
+                  </div>
+                ) : null}
                 {proof.assumptions.length > 0 ? (
                   <div>
                     <h4>Assumptions</h4>
