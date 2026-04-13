@@ -12,7 +12,12 @@ export function GoogleSignInButton({
   async function onClick() {
     try {
       const supabase = createClient();
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() || window.location.origin;
+      const defaultAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+      const appUrl =
+        defaultAppUrl ||
+        (process.env.NODE_ENV === "production"
+          ? "https://www.zooptrack.co.in"
+          : window.location.origin);
 
       await supabase.auth.signInWithOAuth({
         provider: "google",
