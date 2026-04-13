@@ -16,8 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
-import DataConnectorPanel from "@/components/data-connector-panel/DataConnectorPanel";
-
+ 
 const sectionOptions = [
   { id: "all", label: "All" },
   { id: "unit", label: "Unit Economics" },
@@ -1356,21 +1355,6 @@ export default function DashboardPage() {
             </Button>
           </div>
         </motion.section>
-
-        <motion.section className="surface section-surface" variants={fadeUp}>
-          <div className="section-head">
-            <h3>Data Connectors</h3>
-            <p className="muted-text">
-              Paste JSON exports from Shopify, Meta, or Google to auto-populate unit economics and ad metrics, then run a recalculation.
-            </p>
-          </div>
-          <DataConnectorPanel
-            currentInput={reportInput}
-            onApply={(nextInput) => applyChanges("Connector import", nextInput)}
-            onToast={pushToast}
-          />
-        </motion.section>
-
         <motion.section className="surface checklist-surface" variants={fadeUp}>
           <div className="section-head">
             <h3>Launch Checklist</h3>

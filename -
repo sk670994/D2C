@@ -1,0 +1,9 @@
+        <motion.section className="surface hero-surface" variants={fadeUp}>
+        <motion.section className="hero-kpi-grid" variants={fadeUp}>
+        <motion.section className="surface action-surface" variants={fadeUp}>
+        <motion.section className="surface section-surface" variants={fadeUp}>
+        <motion.section className="surface checklist-surface" variants={fadeUp}>
+        <motion.section className="surface section-surface" variants={fadeUp}>
+          <motion.section className="surface section-surface" variants={fadeUp}>
+        <motion.section className="surface section-surface" variants={fadeUp}>
+        <motion.section className="surface section-surface insights-surface" variants={fadeUp}>

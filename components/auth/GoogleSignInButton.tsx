@@ -12,12 +12,12 @@ export function GoogleSignInButton({
   async function onClick() {
     try {
       const supabase = createClient();
-      const origin = window.location.origin;
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() || window.location.origin;
 
       await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: `${origin}/auth/callback?next=${encodeURIComponent(nextPath)}`
+          redirectTo: `${appUrl}/auth/callback?next=${encodeURIComponent(nextPath)}`
         }
       });
     } catch {

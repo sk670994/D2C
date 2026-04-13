@@ -20,6 +20,7 @@ type ProofOfWork = {
   context: string;
   brandVault: string;
   assumptions: string[];
+  competitiveContext?: string;
 };
 
 
@@ -48,7 +49,7 @@ function formatBrandVault(row: BrandVaultRow) {
   return items.length ? items.join("\n") : "No brand vault data provided.";
 }
 
-function buildPrompt(messages: ChatMessage[], context?: string, brandVault?: BrandVaultRow) {
+function buildPrompt(messages: ChatMessage[], context?: string, competitorContext?: string, brandVault?: BrandVaultRow) {
   const trimmed = messages.slice(-12).map((msg) => {
     const role = msg.role === "assistant" ? "ZWIRK" : "User";
     return `${role}: ${msg.content.trim()}`;
@@ -72,6 +73,9 @@ function buildPrompt(messages: ChatMessage[], context?: string, brandVault?: Bra
     "",
     "Competitor Focus (locked):",
     lockedCompetitors,
+    "",
+    "Competitive radar (locked):",
+    competitorContext ?? "No competitor radar data provided.",
     "",
     "Required output format:",
     "Summary:",
@@ -127,8 +131,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = (await request.json()) as { messages?: ChatMessage[]; context?: string };
+    const body = (await request.json()) as { messages?: ChatMessage[]; context?: string; competitorContext?: string };
     const messages = Array.isArray(body.messages) ? body.messages : [];
+    const competitorContext = typeof body.competitorContext === "string" ? body.competitorContext : undefined;
     if (messages.length === 0) {
       return NextResponse.json({ error: "No messages provided" }, { status: 400 });
     }
@@ -153,7 +158,7 @@ export async function POST(request: Request) {
     }
 
     const contextValue = typeof body.context === "string" ? body.context : undefined;
-    const prompt = buildPrompt(messages, contextValue, brandVault ?? undefined);
+    const prompt = buildPrompt(messages, contextValue, competitorContext, brandVault ?? undefined);
     const proofContext = contextValue?.trim() ? contextValue.trim() : "No dashboard context provided.";
     const proofBrandVault = brandVault ? formatBrandVault(brandVault) : "No brand vault data provided.";
     const proofAssumptions: string[] = [];
@@ -236,7 +241,12 @@ export async function POST(request: Request) {
       if (sentence && !proofAssumptions.includes(sentence)) proofAssumptions.push(sentence);
     });
 
-    const proof: ProofOfWork = { context: proofContext, brandVault: proofBrandVault, assumptions: proofAssumptions };
+    const proof: ProofOfWork = {
+      context: proofContext,
+      brandVault: proofBrandVault,
+      assumptions: proofAssumptions,
+      competitiveContext: competitorContext?.trim() ? competitorContext.trim() : undefined
+    };
     return NextResponse.json({ reply, latencyMs: Date.now() - startedAt, proof });
   } catch (error) {
     const message = error instanceof Error ? error.message : "ZWIRK error";

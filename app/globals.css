@@ -543,6 +543,126 @@ kbd {
   color: var(--text-muted);
 }
 
+.competitive-panel {
+  margin-top: 12px;
+  display: grid;
+  gap: 14px;
+}
+
+.competitive-grid {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.competitive-card {
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-strong) 92%, var(--bg-1));
+  display: grid;
+  gap: 10px;
+}
+
+.competitive-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.competitive-card-head h4 {
+  margin: 2px 0 0;
+  font-size: 1.1rem;
+}
+
+.competitive-badge {
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 0.75rem;
+  border: 1px solid var(--line);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.competitive-badge-success {
+  color: color-mix(in srgb, var(--good) 85%, #214d31);
+  border-color: color-mix(in srgb, var(--good) 45%, transparent);
+}
+
+.competitive-badge-neutral {
+  color: var(--text-muted);
+  border-color: var(--line);
+}
+
+.competitive-stats {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.competitive-label {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.competitive-delta {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.competitive-footnote {
+  font-size: 0.84rem;
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.competitive-signals {
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-strong) 92%, var(--bg-1));
+}
+
+.competitive-signals h4 {
+  margin: 0 0 8px;
+}
+
+.competitive-signals ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  color: var(--text-muted);
+}
+
+.competitive-actions {
+  margin-top: 12px;
+}
+
+.competitive-actions h4 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.competitive-actions ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: color-mix(in srgb, var(--text-muted) 90%, #1c2a3a);
+  font-size: 0.85rem;
+  display: grid;
+  gap: 4px;
+}
+
+.competitive-uploader {
+  margin-top: 16px;
+  display: grid;
+  gap: 8px;
+}
+
 .action-row {
   display: flex;
   gap: var(--space-1);
@@ -2184,7 +2304,34 @@ textarea {
 .zwirk-proof-body ul {
   margin: 0;
   padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 0.84rem;
 }
+
+.zwirk-competitive-summary {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-top: 12px;
+  background: color-mix(in srgb, var(--surface-strong) 92%, var(--bg-1));
+}
+
+.zwirk-competitive-summary h4 {
+  margin: 0 0 6px;
+  font-size: 0.95rem;
+}
+
+.zwirk-competitive-summary ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
 
 .site-footer-global {
   margin-top: 60px;
