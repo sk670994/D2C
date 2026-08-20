@@ -80,11 +80,26 @@ function buildPrompt(
 
   return [
     "You are ZWIRK, a sharp virtual assistant for DTC operators.",
-    "Goal: Provide outcome-focused, specific, and practical guidance a founder can implement.",
-    "If key metrics are missing for the request (ROAS, CAC, AOV, margin, order volume), ask for them first and do not give a plan yet.",
-    "Use the Context block as facts. Do not contradict it.",
-    "Respond with the answer only. Do not include role labels like 'ZWIRK:' or 'User:'.",
-    "If you are unsure, say so.",
+    "Goal: Provide outcome-focused, specific, practical guidance that a founder can implement.",
+    "",
+    "CORE BEHAVIOR:",
+    "Use the metrics available in the Context block first.",
+    "Do not stop and ask the user for missing metrics if a useful recommendation can still be made.",
+    "Only ask for additional metrics when they are absolutely required to answer the question accurately.",
+    "If a metric such as AOV or order volume is unavailable, explicitly state that it is unavailable and continue using the available dashboard metrics.",
+    "Never refuse to provide a useful analysis or plan merely because one or more metrics are missing.",
+    "Clearly distinguish dashboard facts from assumptions.",
+    "Do not invent dashboard metrics, campaign performance, revenue, CAC, ROAS, margins, orders, or other business data.",
+    "When data is unavailable, say 'not available' or make a clearly labeled reasonable assumption.",
+    "Use INR formatting when discussing Indian currency.",
+    "",
+    "DECISION PRINCIPLES:",
+    "Prioritize profitability over vanity metrics.",
+    "Use contribution margin, allowable CAC, blended CAC, ROAS, revenue, and net profit when available.",
+    "When recommending scaling, do not recommend aggressive scaling if CAC is above allowable CAC or profitability is deteriorating.",
+    "When recommending budget increases, prioritize proven profitable campaigns before expanding into unproven campaigns.",
+    "When data suggests a problem, identify the likely root cause before recommending actions.",
+    "Give concrete actions rather than generic marketing advice.",
     "",
     "Context (locked):",
     lockedContext,
@@ -98,22 +113,37 @@ function buildPrompt(
     "Competitive radar (locked):",
     competitorContext ?? "No competitor radar data provided.",
     "",
-    "Required output format:",
-    "Summary:",
-    "- 2-3 bullet points with the main diagnosis",
+    "RESPONSE STYLE:",
+    "Be concise, direct, and founder-friendly.",
+    "Do not include role labels such as 'ZWIRK:' or 'User:'.",
+    "Do not repeat the user's question.",
+    "Do not fabricate certainty.",
+    "If you make an assumption, clearly label it.",
     "",
+    "RESPONSE STRUCTURE:",
+    "Start with:",
+    "Summary:",
+    "- 2-3 bullets containing the main diagnosis or answer.",
+    "",
+    "If the user asks for a plan, include:",
     "30-Day Plan:",
     "Week 1:",
-    "- bullet steps",
+    "- concrete actions",
     "Week 2:",
-    "- bullet steps",
+    "- concrete actions",
     "Week 3:",
-    "- bullet steps",
+    "- concrete actions",
     "Week 4:",
-    "- bullet steps",
+    "- concrete actions",
     "",
+    "If the user asks for analysis, diagnosis, comparison, or explanation rather than a plan, do not force a 30-day plan.",
+    "",
+    "When relevant, finish with:",
     "Metrics to Monitor:",
-    "- 4-6 bullets",
+    "- 4-6 important metrics.",
+    "",
+    "Use actual numbers from the Context whenever available.",
+    "Explain why each major recommendation matters.",
     "",
     ...trimmed,
     "Answer:",
@@ -304,16 +334,23 @@ export async function POST(request: Request) {
       `/models/${model.replace(/^models\//, "")}` +
       `:generateContent?key=${apiKey}`;
 
-    const callGemini = async (generationConfig: {
-      maxOutputTokens: number;
-    }) => {
-      const controller = new AbortController();
+const callGemini = async (generationConfig: {
+  maxOutputTokens: number;
+}) => {
+  let lastResponse: Response | null = null;
+  let lastEndpoint = "";
 
-      const timeout = setTimeout(
-        () => controller.abort(),
-        timeoutMs
-      );
+  const maxAttempts = 3;
 
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const controller = new AbortController();
+
+    const timeout = setTimeout(
+      () => controller.abort(),
+      timeoutMs
+    );
+
+    try {
       const payload = {
         contents: [
           {
@@ -325,42 +362,56 @@ export async function POST(request: Request) {
             ],
           },
         ],
-
         generationConfig,
       };
 
-      // Try v1beta first
+      const modelName = model.replace(/^models\//, "");
+
       let endpoint =
-        `${baseUrl}/v1beta${modelPath}`;
+        `${baseUrl}/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
       let res = await fetch(endpoint, {
         method: "POST",
-
         headers: {
           "Content-Type": "application/json",
         },
-
         body: JSON.stringify(payload),
-
         signal: controller.signal,
       });
 
-      // Fallback to v1 if v1beta returns 404
+      // Try v1 if v1beta says model is not found.
       if (!res.ok && res.status === 404) {
         endpoint =
-          `${baseUrl}/v1${modelPath}`;
+          `${baseUrl}/v1/models/${modelName}:generateContent?key=${apiKey}`;
 
         res = await fetch(endpoint, {
           method: "POST",
-
           headers: {
             "Content-Type": "application/json",
           },
-
           body: JSON.stringify(payload),
-
           signal: controller.signal,
         });
+      }
+
+      lastResponse = res;
+      lastEndpoint = endpoint;
+
+      // Gemini 503 = temporary service overload.
+      if (res.status === 503) {
+        if (attempt < maxAttempts) {
+          const delay = attempt * 1500;
+
+          console.warn(
+            `[api/zwirk] Gemini 503. Retrying in ${delay}ms...`
+          );
+
+          await new Promise((resolve) =>
+            setTimeout(resolve, delay)
+          );
+
+          continue;
+        }
       }
 
       clearTimeout(timeout);
@@ -369,8 +420,36 @@ export async function POST(request: Request) {
         res,
         endpoint,
       };
-    };
+    } catch (error) {
+      clearTimeout(timeout);
 
+      if (attempt === maxAttempts) {
+        throw error;
+      }
+
+      const delay = attempt * 1500;
+
+      console.warn(
+        `[api/zwirk] Gemini request failed. Retrying in ${delay}ms...`
+      );
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, delay)
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  if (!lastResponse) {
+    throw new Error("Gemini request failed.");
+  }
+
+  return {
+    res: lastResponse,
+    endpoint: lastEndpoint,
+  };
+};
     // --------------------------------------------------
     // 8. Primary Gemini request
     // --------------------------------------------------
@@ -386,28 +465,43 @@ export async function POST(request: Request) {
     // 9. Handle Gemini error
     // --------------------------------------------------
 
-    if (!res.ok) {
-      const errorText = await res.text();
+   if (!res.ok) {
+  const errorText = await res.text();
 
-      return NextResponse.json(
-        {
-          error: "LLM error",
+  // Gemini can temporarily return 503 when the model
+  // is experiencing high demand.
+  if (res.status === 503) {
+    return NextResponse.json(
+      {
+        error: "Gemini temporarily unavailable",
+        status: 503,
+        detail:
+          "The selected Gemini model is currently experiencing high demand. Please try again in a few seconds.",
+        model,
+        endpoint,
+        retryable: true,
+      },
+      {
+        status: 503,
+      }
+    );
+  }
 
-          status: res.status,
-
-          detail:
-            errorText ||
-            "No error body returned",
-
-          model,
-
-          endpoint,
-        },
-        {
-          status: res.status,
-        }
-      );
+  return NextResponse.json(
+    {
+      error: "LLM error",
+      status: res.status,
+      detail:
+        errorText ||
+        "No error body returned",
+      model,
+      endpoint,
+    },
+    {
+      status: res.status,
     }
+  );
+}
 
     // --------------------------------------------------
     // 10. Parse Gemini response
@@ -426,27 +520,6 @@ export async function POST(request: Request) {
     // 11. Retry if response is too short
     // --------------------------------------------------
 
-    if (reply.length < 400) {
-      const retryConfig = {
-        maxOutputTokens: 1500,
-      };
-
-      const retry =
-        await callGemini(retryConfig);
-
-      if (retry.res.ok) {
-        endpoint = retry.endpoint;
-
-        data =
-          (await retry.res.json()) as GeminiGenerateResponse;
-
-        result = extractReply(data);
-
-        reply = result.reply;
-
-        rawText = result.raw;
-      }
-    }
 
     // --------------------------------------------------
     // 12. Detect assumptions

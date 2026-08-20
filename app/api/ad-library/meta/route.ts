@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 
 const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v18.0";
 const META_AD_LIBRARY_FIELDS = [
@@ -38,10 +39,17 @@ function getMetaLibraryToken() {
 }
 
 export async function GET(request: NextRequest) {
+  const supabase = await createServerAuthClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { searchParams } = new URL(request.url);
   const query = (searchParams.get("q") || "").trim();
   const country = (searchParams.get("country") || "IN").trim().toUpperCase();
-  const limit = Math.min(Number(searchParams.get("limit") || 20), 50);
+  const parsedLimit = Number(searchParams.get("limit") || 20);
+  const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(Math.floor(parsedLimit), 1), 50) : 20;
   const accessToken = getMetaLibraryToken();
 
   if (!query) {
@@ -62,20 +70,27 @@ export async function GET(request: NextRequest) {
     access_token: accessToken
   });
 
-  const response = await fetch(`https://graph.facebook.com/${META_GRAPH_VERSION}/ads_archive?${params.toString()}`, {
-    headers: { Accept: "application/json" }
-  });
+  try {
+    const response = await fetch(`https://graph.facebook.com/${META_GRAPH_VERSION}/ads_archive?${params.toString()}`, {
+      headers: { Accept: "application/json" }
+    });
 
-  const data = await response.json();
+    const data = await response.json();
 
-  if (!response.ok) {
-    return NextResponse.json(
-      { error: data?.error?.message || "Failed to search Meta Ad Library", details: data?.error },
-      { status: response.status }
-    );
-  }
+    if (!response.ok) {
+      const providerError = data?.error;
+      return NextResponse.json(
+        {
+          error: providerError?.message || "Failed to search Meta Ad Library",
+          provider: "meta",
+          providerCode: providerError?.code ?? null,
+          providerType: providerError?.type ?? null
+        },
+        { status: response.status }
+      );
+    }
 
-  const ads = ((data.data || []) as MetaLibraryAd[]).map((ad) => ({
+    const ads = ((data.data || []) as MetaLibraryAd[]).map((ad) => ({
     id: ad.ad_archive_id || ad.ad_id,
     platform: "meta",
     pageId: ad.page_id,
@@ -89,11 +104,18 @@ export async function GET(request: NextRequest) {
     publisherPlatforms: ad.publisher_platforms || []
   }));
 
-  return NextResponse.json({
-    provider: "meta",
-    query,
-    country,
-    ads,
-    paging: data.paging || null
-  });
+    return NextResponse.json({
+      provider: "meta",
+      query,
+      country,
+      ads,
+      paging: data.paging || null
+    });
+  } catch (error) {
+    console.error("Meta Ad Library request failed:", error);
+    return NextResponse.json(
+      { error: "Unable to reach Meta Ad Library. Check the token and Meta app access." },
+      { status: 502 }
+    );
+  }
 }
