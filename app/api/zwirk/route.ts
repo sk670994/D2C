@@ -14,11 +14,6 @@ type GeminiGenerateResponse = {
       }>;
     };
   }>;
-  error?: {
-    code?: number;
-    message?: string;
-    status?: string;
-  };
 };
 
 type ProofOfWork = {
@@ -39,7 +34,7 @@ type BrandVaultRow = {
   competitor_focus: string | null;
 };
 
-function formatBrandVault(row: BrandVaultRow): string {
+function formatBrandVault(row: BrandVaultRow) {
   const items = [
     row.brand_name ? `Brand name: ${row.brand_name}` : null,
     row.website_url ? `Website: ${row.website_url}` : null,
@@ -53,7 +48,7 @@ function formatBrandVault(row: BrandVaultRow): string {
     row.competitor_focus
       ? `Competitor focus: ${row.competitor_focus}`
       : null,
-  ].filter(Boolean) as string[];
+  ].filter(Boolean);
 
   return items.length > 0
     ? items.join("\n")
@@ -65,9 +60,10 @@ function buildPrompt(
   context?: string,
   competitorContext?: string,
   brandVault?: BrandVaultRow
-): string {
-  const trimmedMessages = messages.slice(-12).map((msg) => {
+) {
+  const trimmed = messages.slice(-12).map((msg) => {
     const role = msg.role === "assistant" ? "ZWIRK" : "User";
+
     return `${role}: ${msg.content.trim()}`;
   });
 
@@ -87,19 +83,14 @@ function buildPrompt(
 
   return [
     "You are ZWIRK, a sharp virtual assistant for DTC operators.",
-    "",
-    "Goal:",
-    "Provide outcome-focused, specific, practical guidance that a DTC founder can implement.",
-    "",
-    "IMPORTANT:",
-    "Use the Context block as facts.",
-    "Do not contradict dashboard data.",
-    "Do not invent metrics that are not present.",
-    "If metrics are missing and they are necessary for the question, clearly state which metrics are missing.",
-    "If enough context exists, analyze it directly instead of asking the user to repeat information already present in Context.",
+    "Goal: Provide outcome-focused, specific, and practical guidance a founder can implement.",
+    "Use the Context block as facts. Do not contradict it.",
+    "Use the Brand Vault to match the brand's tone and constraints.",
+    "If important information is genuinely missing, clearly state what is missing.",
+    "Do not invent business metrics.",
+    "If you are unsure, say so.",
     "Respond with the answer only.",
     "Do not include role labels such as 'ZWIRK:' or 'User:'.",
-    "If you are unsure, say so.",
     "",
     "Context (locked):",
     lockedContext,
@@ -111,47 +102,44 @@ function buildPrompt(
     lockedCompetitors,
     "",
     "Competitive radar (locked):",
-    competitorContext?.trim() || "No competitor radar data provided.",
-    "",
-    "Conversation:",
-    ...trimmedMessages,
+    competitorContext?.trim() ||
+      "No competitor radar data provided.",
     "",
     "Required output format:",
     "",
     "Summary:",
-    "- Give the biggest problem first.",
-    "- Give 2-3 concise supporting points.",
+    "- 2-3 bullet points with the main diagnosis",
     "",
     "30-Day Plan:",
     "Week 1:",
-    "- Concrete actions.",
+    "- bullet steps",
     "",
     "Week 2:",
-    "- Concrete actions.",
+    "- bullet steps",
     "",
     "Week 3:",
-    "- Concrete actions.",
+    "- bullet steps",
     "",
     "Week 4:",
-    "- Concrete actions.",
+    "- bullet steps",
     "",
     "Metrics to Monitor:",
-    "- 4-6 metrics.",
+    "- 4-6 bullets",
+    "",
+    ...trimmed,
     "",
     "Answer:",
   ].join("\n");
 }
 
-function extractReply(data: GeminiGenerateResponse): {
-  reply: string;
-  raw: string;
-} {
+function extractReply(data: GeminiGenerateResponse) {
   const parts = data.candidates?.[0]?.content?.parts ?? [];
 
-  const rawReply = parts
-    .map((part) => part.text ?? "")
-    .join("")
-    .trim();
+  const rawReply =
+    parts
+      .map((part) => part.text ?? "")
+      .join("")
+      .trim() || "No response generated.";
 
   const reply = rawReply
     .replace(/^ZWIRK:\s*/i, "")
@@ -159,17 +147,19 @@ function extractReply(data: GeminiGenerateResponse): {
     .trim();
 
   return {
-    reply: reply || "No response generated.",
+    reply,
     raw: rawReply,
   };
 }
 
-function detectAssumptions(text: string): string[] {
-  if (!text) return [];
+function detectAssumptions(text: string) {
+  if (!text) {
+    return [];
+  }
 
   const matches =
     text.match(
-      /[^.!?]*\b(?:assumed|assuming|assumes)\b[^.!?]*[.!?]?/gi
+      /[^.!?]*\bassum(?:ed|ing|es|e)?\b[^.!?]*[.!?]?/gi
     ) ?? [];
 
   const normalized = matches
@@ -177,100 +167,6 @@ function detectAssumptions(text: string): string[] {
     .filter(Boolean);
 
   return Array.from(new Set(normalized)).slice(0, 4);
-}
-
-async function callGemini(
-  prompt: string,
-  apiKey: string,
-  model: string,
-  timeoutMs: number,
-  maxOutputTokens: number
-): Promise<{
-  res: Response;
-  endpoint: string;
-}> {
-  const modelName = model.replace(/^models\//, "");
-
-  const payload = {
-    contents: [
-      {
-        role: "user",
-        parts: [
-          {
-            text: prompt,
-          },
-        ],
-      },
-    ],
-    generationConfig: {
-      maxOutputTokens,
-      temperature: 0.4,
-    },
-  };
-
-  const versions = ["v1beta", "v1"];
-
-  let lastResponse: Response | null = null;
-  let lastEndpoint = "";
-
-  for (const version of versions) {
-    const endpoint =
-      `https://generativelanguage.googleapis.com/${version}` +
-      `/models/${modelName}:generateContent?key=${apiKey}`;
-
-    const controller = new AbortController();
-
-    const timeout = setTimeout(() => {
-      controller.abort();
-    }, timeoutMs);
-
-    try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-
-      lastResponse = response;
-      lastEndpoint = endpoint;
-
-      if (response.ok) {
-        return {
-          res: response,
-          endpoint,
-        };
-      }
-
-      // Try the second API version only for 404.
-      if (response.status !== 404) {
-        break;
-      }
-    } catch (error) {
-      clearTimeout(timeout);
-
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new Error(
-          `Gemini request timed out after ${timeoutMs}ms`
-        );
-      }
-
-      throw error;
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  if (!lastResponse) {
-    throw new Error("Unable to connect to Gemini API.");
-  }
-
-  return {
-    res: lastResponse,
-    endpoint: lastEndpoint,
-  };
 }
 
 export async function POST(request: Request) {
@@ -313,11 +209,6 @@ export async function POST(request: Request) {
       ? body.messages
       : [];
 
-    const contextValue =
-      typeof body.context === "string"
-        ? body.context
-        : undefined;
-
     const competitorContext =
       typeof body.competitorContext === "string"
         ? body.competitorContext
@@ -359,28 +250,13 @@ export async function POST(request: Request) {
     // 4. Gemini configuration
     // --------------------------------------------------
 
-    const apiKey = process.env.GEMINI_API_KEY?.trim();
+    const apiKey = process.env.GEMINI_API_KEY?.trim() || "";
+    const rawModel = process.env.GEMINI_MODEL?.trim() || "";
 
-    /*
-     * Keep the model configurable through Vercel.
-     *
-     * If GEMINI_MODEL is missing, use the model currently
-     * configured for your application.
-     */
-    const rawModel =
-      process.env.GEMINI_MODEL?.trim() || "gemini-3.6-flash";
-
-    const model = rawModel.replace(/^models\//, "");
-
-    const timeoutMs = Number(
-      process.env.GEMINI_TIMEOUT_MS || 25000
-    );
-
-    if (!apiKey) {
+    if (!apiKey || !rawModel) {
       return NextResponse.json(
         {
           error: "LLM not configured",
-          detail: "GEMINI_API_KEY is missing.",
         },
         {
           status: 500,
@@ -388,9 +264,20 @@ export async function POST(request: Request) {
       );
     }
 
+    const modelName = rawModel.replace(/^models\//, "");
+
+    const timeoutMs = Number(
+      process.env.GEMINI_TIMEOUT_MS || 25000
+    );
+
     // --------------------------------------------------
     // 5. Build prompt
     // --------------------------------------------------
+
+    const contextValue =
+      typeof body.context === "string"
+        ? body.context
+        : undefined;
 
     const prompt = buildPrompt(
       messages,
@@ -404,8 +291,9 @@ export async function POST(request: Request) {
     // --------------------------------------------------
 
     const proofContext =
-      contextValue?.trim() ||
-      "No dashboard context provided.";
+      contextValue?.trim()
+        ? contextValue.trim()
+        : "No dashboard context provided.";
 
     const proofBrandVault = brandVault
       ? formatBrandVault(brandVault)
@@ -413,13 +301,11 @@ export async function POST(request: Request) {
 
     const proofAssumptions: string[] = [];
 
-    if (!contextValue?.trim()) {
+    if (!contextValue || !contextValue.trim()) {
       proofAssumptions.push(
-        "Dashboard context was missing."
+        "Dashboard context was missing, so ZWIRK did not use dashboard-specific metrics."
       );
-    }
-
-    if (/n\/a/i.test(proofContext)) {
+    } else if (/n\/a/i.test(proofContext)) {
       proofAssumptions.push(
         "Some dashboard metrics were unavailable (n/a)."
       );
@@ -427,24 +313,89 @@ export async function POST(request: Request) {
 
     if (!brandVault) {
       proofAssumptions.push(
-        "Brand Vault is empty, so a neutral brand voice was used."
+        "Brand Vault is empty, so a neutral voice was used."
       );
     }
 
     // --------------------------------------------------
-    // 7. Primary Gemini request
+    // 7. Gemini API
     // --------------------------------------------------
 
-    let { res, endpoint } = await callGemini(
-      prompt,
-      apiKey,
-      model,
-      timeoutMs,
-      1200
-    );
+    const baseUrl =
+      "https://generativelanguage.googleapis.com";
+
+    const callGemini = async (
+      maxOutputTokens: number
+    ) => {
+      const controller = new AbortController();
+
+      const timeout = setTimeout(() => {
+        controller.abort();
+      }, timeoutMs);
+
+      const payload = {
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: prompt,
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          maxOutputTokens,
+        },
+      };
+
+      try {
+        const endpoints = [
+          `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1/models/${modelName}:generateContent?key=${apiKey}`,
+        ];
+
+        let response: Response | null = null;
+        let endpointUsed = endpoints[0];
+
+        for (const endpoint of endpoints) {
+          endpointUsed = endpoint;
+
+          response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+
+          if (response.ok || response.status !== 404) {
+            break;
+          }
+        }
+
+        if (!response) {
+          throw new Error("No response received from Gemini.");
+        }
+
+        return {
+          res: response,
+          endpoint: endpointUsed,
+        };
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
 
     // --------------------------------------------------
-    // 8. Handle Gemini error
+    // 8. Primary Gemini request
+    // --------------------------------------------------
+
+    let { res, endpoint } = await callGemini(1200);
+
+    // --------------------------------------------------
+    // 9. Handle Gemini error
     // --------------------------------------------------
 
     if (!res.ok) {
@@ -452,7 +403,6 @@ export async function POST(request: Request) {
 
       console.error("[api/zwirk] Gemini error:", {
         status: res.status,
-        model,
         endpoint,
         detail: errorText,
       });
@@ -463,7 +413,7 @@ export async function POST(request: Request) {
           status: res.status,
           detail:
             errorText || "No error body returned.",
-          model,
+          model: modelName,
           endpoint,
         },
         {
@@ -473,7 +423,7 @@ export async function POST(request: Request) {
     }
 
     // --------------------------------------------------
-    // 9. Parse response
+    // 10. Parse Gemini response
     // --------------------------------------------------
 
     let data =
@@ -485,17 +435,11 @@ export async function POST(request: Request) {
     let rawText = result.raw;
 
     // --------------------------------------------------
-    // 10. Retry if response is too short
+    // 11. Retry if response is too short
     // --------------------------------------------------
 
     if (reply.length < 400) {
-      const retry = await callGemini(
-        prompt,
-        apiKey,
-        model,
-        timeoutMs,
-        1500
-      );
+      const retry = await callGemini(1500);
 
       if (retry.res.ok) {
         endpoint = retry.endpoint;
@@ -511,7 +455,7 @@ export async function POST(request: Request) {
     }
 
     // --------------------------------------------------
-    // 11. Detect assumptions
+    // 12. Detect assumptions
     // --------------------------------------------------
 
     detectAssumptions(rawText).forEach((sentence) => {
@@ -524,7 +468,7 @@ export async function POST(request: Request) {
     });
 
     // --------------------------------------------------
-    // 12. Build proof
+    // 13. Build proof
     // --------------------------------------------------
 
     const proof: ProofOfWork = {
@@ -532,11 +476,13 @@ export async function POST(request: Request) {
       brandVault: proofBrandVault,
       assumptions: proofAssumptions,
       competitiveContext:
-        competitorContext?.trim() || undefined,
+        competitorContext?.trim()
+          ? competitorContext.trim()
+          : undefined,
     };
 
     // --------------------------------------------------
-    // 13. Return response
+    // 14. Return response
     // --------------------------------------------------
 
     return NextResponse.json({
@@ -550,7 +496,7 @@ export async function POST(request: Request) {
         ? error.message
         : "ZWIRK error";
 
-    console.error("[api/zwirk] unexpected error:", error);
+    console.error("[api/zwirk] error:", error);
 
     return NextResponse.json(
       {
