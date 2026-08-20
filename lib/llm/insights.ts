@@ -395,7 +395,8 @@ function buildGeminiPrompt(report: CalculatedReport, dx: Diagnosis, adMetrics: A
   const netRevenue = report.monthlyPnl.netRevenueMonth;
 
   // Aggregate ad metrics by platform
-  const platformStats = adMetrics.reduce((acc: any, m) => {
+  const safeAdMetrics = Array.isArray(adMetrics) ? adMetrics : [];
+  const platformStats = safeAdMetrics.reduce((acc: any, m) => {
     if (!acc[m.platform]) {
       acc[m.platform] = { spend: 0, roas: 0, count: 0, campaigns: [] };
     }

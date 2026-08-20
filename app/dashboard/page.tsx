@@ -26,6 +26,7 @@ const sectionOptions = [
   { id: "ad", label: "Ad Metrics" },
   { id: "performance", label: "Ad Performance" },
   { id: "library", label: "Ad Library" },
+  { id: "market", label: "Market Research" },
   { id: "scale", label: "Scale Planner" },
   { id: "pnl", label: "Monthly P&L" }
 ] as const;
@@ -138,6 +139,27 @@ type GoogleLibraryInfo = {
   transparencyUrl: string;
   note: string;
 } | null;
+
+type ShopifyResearch = {
+  storeUrl: string;
+  products: Array<{
+    id?: number;
+    title: string;
+    productType: string;
+    vendor: string;
+    minPrice: number | null;
+    maxPrice: number | null;
+  }>;
+  summary: {
+    productCount: number;
+    vendorCount: number;
+    vendors: string[];
+    productTypes: string[];
+    minPrice: number | null;
+    maxPrice: number | null;
+  };
+  note: string;
+};
 
 const fadeUp: Variants = {
   hidden: { opacity: 0, y: 16 },
@@ -300,6 +322,10 @@ export default function DashboardPage() {
   const [adLibraryLoading, setAdLibraryLoading] = useState(false);
   const [metaLibraryError, setMetaLibraryError] = useState("");
   const [adIntegrationSetupRequired, setAdIntegrationSetupRequired] = useState(false);
+  const [shopifyStoreUrl, setShopifyStoreUrl] = useState("");
+  const [shopifyResearch, setShopifyResearch] = useState<ShopifyResearch | null>(null);
+  const [shopifyResearchLoading, setShopifyResearchLoading] = useState(false);
+  const [shopifyResearchError, setShopifyResearchError] = useState("");
   const lastToastRef = useRef<{ text: string; at: number }>({ text: "", at: 0 });
 
   function pushToast(text: string, tone: ToastTone = "neutral") {
@@ -557,6 +583,7 @@ export default function DashboardPage() {
       ad: report.adMetrics.blendedRoas >= 3 && report.adMetrics.blendedCac <= report.unitEconomics.maxAllowableCac ? "Healthy" : "Warning",
       performance: connectedAccounts.length > 0 ? "Connected" : "Not Connected",
       library: metaLibraryAds.length > 0 || googleLibraryInfo ? "Ready" : "Not Searched",
+      market: metaLibraryAds.length > 0 || shopifyResearch ? "Ready" : "Not Searched",
       scale: report.scalePlanner.readiness === "READY TO SCALE" ? "Ready" : "Hold",
       pnl: report.monthlyPnl.netProfitMarginPct >= 0.1 ? "Healthy" : "Low Margin"
     };
@@ -673,39 +700,92 @@ export default function DashboardPage() {
     pushToast("Default assumptions loaded", "neutral");
   }
 
-  function loadSampleData() {
-    setSelectedSection("all");
-    setReportInput(DEFAULT_REPORT_INPUT);
-    const next = calculateReport(DEFAULT_REPORT_INPUT);
+  async function loadSampleData() {
+  setSelectedSection("all");
+  setReportInput(DEFAULT_REPORT_INPUT);
+
+  const next = calculateReport(DEFAULT_REPORT_INPUT);
+
+  // Show calculated sample report immediately
+  setReport(next);
+
+  setScenarios([]);
+  setSelectedScenarioId(null);
+  setDirty(false);
+  setAppliedFixes([]);
+
+  sessionStorage.setItem(
+    "reportInput",
+    JSON.stringify(DEFAULT_REPORT_INPUT)
+  );
+
+  pushToast("Sample data loaded. Generating AI insights...", "good");
+
+  setInsightsLoading(true);
+  setInsightsError(null);
+
+  try {
+    const res = await fetch("/api/insights", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(next)
+    });
+
+    if (!res.ok) {
+      const errorJson = (await res.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+
+      throw new Error(errorJson?.error || "Insights API failed");
+    }
+
+    const insights = normalizeInsightPayload(
+      (await res.json()) as Partial<CalculatedReport["insights"]>
+    );
+
     const merged = {
       ...next,
-      insights: {
-        ...pendingInsights("Sample dataset loaded. Fine-tune each section and apply changes."),
-        priorityFixes: ["Start with Unit Economics + Ad Metrics before scaling."],
-        growthLevers: [
-          "Lift AOV via bundles and threshold shipping offers.",
-          "Scale only if ROAS remains above 3x for 7 consecutive days."
-        ],
-        riskAlerts: ["Do not scale if CAC remains above max allowable CAC."],
-        channelPlan: ["Shift 10% spend from low-performing campaigns to winners."],
-        experimentBacklog: ["Test one new offer angle and one new landing page hook."],
-        cashflowActions: ["Set weekly spend cap aligned to contribution margin health."],
-        watchlistKpis: ["Track ROAS, CAC, contribution margin %, and net margin weekly."],
-        next30Days: ["Week 1-2: fix fundamentals. Week 3-4: controlled scale."],
-        source: "fallback" as const,
-        latencyMs: 0
-      }
+      insights
     };
+
     setReport(merged);
-    setScenarios([]);
-    setSelectedScenarioId(null);
-    sessionStorage.setItem("reportInput", JSON.stringify(DEFAULT_REPORT_INPUT));
-    sessionStorage.setItem("report", JSON.stringify(merged));
-    void persistWorkspaceToDatabase(DEFAULT_REPORT_INPUT, merged, [], null, monthKey);
-    setDirty(false);
+
+    sessionStorage.setItem(
+      "report",
+      JSON.stringify(merged)
+    );
+
+    void persistWorkspaceToDatabase(
+      DEFAULT_REPORT_INPUT,
+      merged,
+      [],
+      null,
+      monthKey
+    );
+
     setAppliedFixes([]);
-    pushToast("Sample data loaded", "good");
+
+    pushToast("AI insights generated", "good");
+  } catch (err) {
+    const message =
+      err instanceof Error
+        ? err.message
+        : "Unable to generate insights";
+
+    setInsightsError(message);
+
+    sessionStorage.setItem(
+      "report",
+      JSON.stringify(next)
+    );
+
+    pushToast(message, "warn");
+  } finally {
+    setInsightsLoading(false);
   }
+}
 
   function closeOnboarding() {
     setShowOnboarding(false);
@@ -852,6 +932,9 @@ export default function DashboardPage() {
       case "go-ad":
         setSelectedSection("ad");
         break;
+      case "go-zwirk":
+        router.push("/zwirk");
+        break;
       case "go-scale":
         setSelectedSection("scale");
         break;
@@ -991,6 +1074,31 @@ export default function DashboardPage() {
       ];
     }
 
+    if (id === "market") {
+      return [
+        {
+          title: "Meta Ads",
+          value: String(metaLibraryAds.length),
+          hint: "Public competitor creatives found",
+          tone: metaLibraryAds.length > 0 ? "good" : "neutral"
+        },
+        {
+          title: "Shopify Products",
+          value: String(shopifyResearch?.summary.productCount || 0),
+          hint: shopifyResearch ? "Public catalog products" : "Add a Shopify store URL",
+          tone: shopifyResearch ? "good" : "neutral"
+        },
+        {
+          title: "Observed Price Range",
+          value: shopifyResearch && shopifyResearch.summary.minPrice !== null && shopifyResearch.summary.maxPrice !== null
+            ? `${inr(shopifyResearch.summary.minPrice)} - ${inr(shopifyResearch.summary.maxPrice)}`
+            : "Not searched",
+          hint: "Public catalog benchmark",
+          tone: shopifyResearch ? "good" : "neutral"
+        }
+      ];
+    }
+
     return [
       { title: "Net Revenue", value: inr(data.monthlyPnl.netRevenueMonth), hint: "Topline after returns", tone: "neutral" },
       { title: "Retained Revenue", value: inr(data.monthlyPnl.retainedRevenueMonth), hint: "Revenue left after returns", tone: "neutral" },
@@ -1019,6 +1127,7 @@ export default function DashboardPage() {
     if (id === "ad") return reportInput.adMetricsInput;
     if (id === "performance") return { connectedAccounts, adMetricsCount: adMetrics.length };
     if (id === "library") return { adLibraryQuery, adLibraryCountry, metaLibraryCount: metaLibraryAds.length };
+    if (id === "market") return { adLibraryQuery, adLibraryCountry, shopifyStoreUrl, shopifyResearch };
     if (id === "scale") return reportInput.scalePlannerInput;
     return {
       note: "Monthly P&L is derived from other sections",
@@ -1256,6 +1365,30 @@ export default function DashboardPage() {
       pushToast(error instanceof Error ? error.message : "Unable to search ad libraries", "warn");
     } finally {
       setAdLibraryLoading(false);
+    }
+  }
+
+  async function searchShopifyStore() {
+    const store = shopifyStoreUrl.trim();
+    if (!store) {
+      pushToast("Enter a Shopify store URL", "warn");
+      return;
+    }
+
+    setShopifyResearchLoading(true);
+    setShopifyResearchError("");
+    try {
+      const response = await fetch(`/api/market-research/shopify?store=${encodeURIComponent(store)}`);
+      const data = (await response.json()) as ShopifyResearch & { error?: string };
+      if (!response.ok) throw new Error(data.error || "Shopify catalog search failed");
+      setShopifyResearch(data);
+      pushToast(`Found ${data.summary.productCount} public Shopify products`, "good");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Shopify catalog search failed";
+      setShopifyResearchError(message);
+      pushToast(message, "warn");
+    } finally {
+      setShopifyResearchLoading(false);
     }
   }
 
@@ -1561,6 +1694,79 @@ export default function DashboardPage() {
       );
     }
 
+    if (id === "market") {
+      return (
+        <div className="editor-grid">
+          <Label className="input-row">
+            <span>Meta competitor or keyword</span>
+            <Input
+              type="text"
+              placeholder="competitor brand, product, offer"
+              value={adLibraryQuery}
+              onChange={(e) => setAdLibraryQuery(e.target.value)}
+            />
+          </Label>
+          <Label className="input-row">
+            <span>Market country</span>
+            <Input
+              type="text"
+              value={adLibraryCountry}
+              onChange={(e) => setAdLibraryCountry(e.target.value.toUpperCase())}
+            />
+          </Label>
+          <div className="action-row">
+            <Button type="button" variant="secondary" onClick={searchAdLibraries} disabled={adLibraryLoading}>
+              {adLibraryLoading ? "Searching Meta..." : "Research Meta Ads"}
+            </Button>
+          </div>
+          <Label className="input-row">
+            <span>Shopify store URL</span>
+            <Input
+              type="url"
+              placeholder="https://store.example.com"
+              value={shopifyStoreUrl}
+              onChange={(e) => setShopifyStoreUrl(e.target.value)}
+            />
+          </Label>
+          <div className="action-row">
+            <Button type="button" onClick={searchShopifyStore} disabled={shopifyResearchLoading}>
+              {shopifyResearchLoading ? "Reading Catalog..." : "Research Shopify Store"}
+            </Button>
+          </div>
+          <p className="muted-text">
+            Meta competitor ads are searched in Ad Library. Shopify research uses only a store's public product catalog; private sales and customer data are unavailable.
+          </p>
+          {shopifyResearchError ? <p className="error-text">{shopifyResearchError}</p> : null}
+          {shopifyResearch ? (
+            <>
+              <div className="metrics-grid metrics-grid-tight">
+                <MetricTile item={{ title: "Products", value: String(shopifyResearch.summary.productCount), hint: "Public catalog size", tone: "good" }} />
+                <MetricTile item={{ title: "Vendors", value: String(shopifyResearch.summary.vendorCount), hint: "Observed brands/vendors", tone: "neutral" }} />
+                <MetricTile
+                  item={{
+                    title: "Price Range",
+                    value: shopifyResearch.summary.minPrice !== null && shopifyResearch.summary.maxPrice !== null ? `${inr(shopifyResearch.summary.minPrice)} - ${inr(shopifyResearch.summary.maxPrice)}` : "Unavailable",
+                    hint: "Observed public prices",
+                    tone: "neutral"
+                  }}
+                />
+              </div>
+              <p className="muted-text">{shopifyResearch.note}</p>
+              <div className="fix-grid">
+                {shopifyResearch.products.slice(0, 12).map((product) => (
+                  <article key={product.id || product.title} className="fix-card">
+                    <p className="metric-title">{product.title}</p>
+                    <p className="muted-text">{product.productType || "Product"}{product.vendor ? ` · ${product.vendor}` : ""}</p>
+                    <p>{product.minPrice !== null && product.maxPrice !== null ? `${inr(product.minPrice)} - ${inr(product.maxPrice)}` : "Price unavailable"}</p>
+                  </article>
+                ))}
+              </div>
+            </>
+          ) : <p className="muted-text">No Shopify catalog researched yet.</p>}
+        </div>
+      );
+    }
+
     return <p className="muted-text">Monthly P&L is auto-derived from the previous sections and updates when you apply changes.</p>;
   }
 
@@ -1621,6 +1827,7 @@ export default function DashboardPage() {
     { id: "go-ad", label: "Go to Ad Metrics" },
     { id: "go-performance", label: "Go to Ad Performance" },
     { id: "go-library", label: "Go to Ad Library" },
+    { id: "go-zwirk", label: "Open ZWIRK Assistant" },
     { id: "go-scale", label: "Go to Scale Planner" },
     { id: "go-pnl", label: "Go to Monthly P&L" },
     { id: "apply", label: "Apply Changes" },
@@ -1631,7 +1838,7 @@ export default function DashboardPage() {
   ];
 
   const filteredCommands = commands.filter((c) => c.label.toLowerCase().includes(paletteQuery.toLowerCase()));
-  const sectionSequence: ActiveSection[] = ["unit", "ad", "performance", "library", "scale", "pnl"];
+  const sectionSequence: ActiveSection[] = ["unit", "ad", "performance", "library", "market", "scale", "pnl"];
   const adminEmail = (process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? "").trim().toLowerCase();
   const isAdmin = !!adminEmail && userEmail.toLowerCase() === adminEmail;
   const completedSections = sectionSequence.filter((id) => statusTone(sectionStatus[id]) === "good").length;
@@ -1711,6 +1918,9 @@ export default function DashboardPage() {
             <span className="muted-text">
               {userEmail ? `Signed in as ${userName ? `${userName} (${userEmail})` : userEmail}` : "Not signed in"}
             </span>
+            <Link href="/zwirk">
+              <Button type="button">Open ZWIRK</Button>
+            </Link>
             <ThemeToggle />
             {userEmail ? (
               <SignOutButton />
