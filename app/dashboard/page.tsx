@@ -206,12 +206,18 @@ function normalizeInsightPayload(insights: Partial<CalculatedReport["insights"]>
   };
 }
 
-function inr(n: number): string {
-  return `INR ${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+function inr(n: number | null | undefined): string {
+  const value = Number(n ?? 0);
+
+  return `INR ${value.toLocaleString("en-IN", {
+    maximumFractionDigits: 2
+  })}`;
 }
 
-function pct(n: number): string {
-  return `${(n * 100).toFixed(1)}%`;
+function pct(n: number | null | undefined): string {
+  const value = Number(n ?? 0);
+
+  return `${(value * 100).toFixed(1)}%`;
 }
 
 function MetricTile({ item }: { item: MetricItem }) {
