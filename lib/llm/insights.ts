@@ -12,6 +12,18 @@ type GeminiGenerateResponse = {
 
 type ModelInsights = Partial<Omit<InsightPayload, "source" | "latencyMs">>;
 
+type AdMetricsRow = {
+  platform: "meta" | "google";
+  campaign_name: string;
+  spend: number;
+  roas: number;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  cpc: number;
+  date: string;
+};
+
 function sanitizeList(value: unknown, maxItems = 6): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -370,7 +382,7 @@ function buildDeterministicInsights(
   };
 }
 
-function buildGeminiPrompt(report: CalculatedReport, dx: Diagnosis): string {
+function buildGeminiPrompt(report: CalculatedReport, dx: Diagnosis, adMetrics: AdMetricsRow[] = []): string {
   const roas = report.adMetrics.blendedRoas;
   const cac = report.adMetrics.blendedCac;
   const maxCac = report.unitEconomics.maxAllowableCac;
@@ -381,6 +393,28 @@ function buildGeminiPrompt(report: CalculatedReport, dx: Diagnosis): string {
   const ctr = report.adMetrics.blendedCtr ?? 0;
   const cvr = report.adMetrics.blendedCvr ?? 0;
   const netRevenue = report.monthlyPnl.netRevenueMonth;
+
+  // Aggregate ad metrics by platform
+  const platformStats = adMetrics.reduce((acc: any, m) => {
+    if (!acc[m.platform]) {
+      acc[m.platform] = { spend: 0, roas: 0, count: 0, campaigns: [] };
+    }
+    acc[m.platform].spend += m.spend || 0;
+    acc[m.platform].roas += m.roas || 0;
+    acc[m.platform].count++;
+    acc[m.platform].campaigns.push(`${m.campaign_name} (${fmt(m.roas)}x)`);
+    return acc;
+  }, {});
+
+  const platformContext =
+    Object.entries(platformStats).length > 0
+      ? Object.entries(platformStats)
+          .map(
+            ([platform, stats]: [string, any]) =>
+              `\n${platform.toUpperCase()}:\n- Spend: INR ${Math.round(stats.spend).toLocaleString("en-IN")}\n- Avg ROAS: ${fmt(stats.roas / stats.count)}x\n- Campaigns: ${stats.campaigns.slice(0, 3).join(", ")}`
+          )
+          .join("\n")
+      : "No connected ad accounts yet";
 
   return `You are a senior D2C growth operator and performance marketing strategist with 10+ years running paid media for Indian DTC brands on Meta and Google. You have managed brands from INR 10L to INR 10Cr monthly revenue. You think in unit economics, not vanity metrics.
 
@@ -407,15 +441,19 @@ Cost/Click:           INR ${fmt(dx.effectiveCostPerClick)}
 Scale Readiness:      ${report.scalePlanner.readiness}
 \`\`\`
 
+## CONNECTED AD PLATFORM PERFORMANCE
+${platformContext}
+
 ## YOUR TASK
-Generate insights that feel like a personal advisor reviewing their numbers, not a template.
+Generate insights that feel like a personal advisor reviewing their numbers, not a template. Consider connected ad account performance and recommend platform-specific optimizations.
 
 Rules:
 1. Every bullet must reference at least one actual number from the data above
 2. Prioritize by business impact - what moves the needle most FIRST
 3. Be direct about what is broken. Do not soften critical issues.
 4. Prescribe exact actions (pause X, test Y at INR Z budget, set alert at N%)
-5. Each list: 4-6 bullets, operator-ready, 1-2 sentences max per bullet
+5. Include platform-specific recommendations if ad accounts are connected
+6. Each list: 4-6 bullets, operator-ready, 1-2 sentences max per bullet
 
 Return ONLY strict JSON matching this exact shape (no markdown, no extra keys):
 ${JSON.stringify({
@@ -520,7 +558,7 @@ async function callGemini(apiKey: string, model: string, prompt: string, timeout
   }
 }
 
-export async function generateInsights(report: CalculatedReport): Promise<InsightPayload> {
+export async function generateInsights(report: CalculatedReport, adMetrics: AdMetricsRow[] = []): Promise<InsightPayload> {
   const startedAt = Date.now();
   const apiKey = process.env.GEMINI_API_KEY || "";
   const rawModel = process.env.GEMINI_MODEL || "";
@@ -530,7 +568,7 @@ export async function generateInsights(report: CalculatedReport): Promise<Insigh
   const dx = diagnose(report);
   const deterministic = buildDeterministicInsights(report, dx);
 
-  const prompt = buildGeminiPrompt(report, dx);
+  const prompt = buildGeminiPrompt(report, dx, adMetrics);
   if (!apiKey || !rawModel) {
     return {
       ...deterministic,

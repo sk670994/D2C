@@ -2,8 +2,8 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Zooptrack Growth Intelligence Command Center",
-  description: "Zooptrack is a high-performance command center with dynamic cards, live economics, and AI insight loops"
+  title: "Zooptrack — Profitability OS for Indian D2C Brands",
+  description: "Know your true profit after COD, returns, and shipping. Track campaign profitability and scale safely."
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -15,16 +15,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="site-footer-inner">
             <div className="footer-brand">
               <p className="eyebrow">Zooptrack</p>
-              <h3>Growth intelligence for D2C operators.</h3>
-              <p className="muted-text">Track unit economics, plan scale, and run AI-guided actions in one workspace.</p>
+              <h3>Profitability OS for Indian D2C brands.</h3>
+              <p className="muted-text">Know your true profit after COD, returns, shipping and fees. Scale safely.</p>
             </div>
             <div className="footer-columns">
               <div className="footer-column">
                 <p className="footer-title">Product</p>
                 <ul className="footer-list">
                   <li><a href="/dashboard">Dashboard</a></li>
-                  <li><a href="/brand-vault">Brand Vault</a></li>
-                  <li><a href="/zwirk">ZWIRK Assistant</a></li>
+                  <li><a href="/login">Get Started</a></li>
                 </ul>
               </div>
               <div className="footer-column">

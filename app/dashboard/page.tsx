@@ -9,7 +9,10 @@ import type { CalculatedReport, ParsedReport } from "@/lib/types/domain";
 import { calculateReport } from "@/lib/calc/report";
 import { DEFAULT_REPORT_INPUT } from "@/lib/constants/defaultInput";
 import { createClient } from "@/lib/supabase/client";
+import { generateDecisions, generateMoneyAlerts } from "@/lib/llm/decision-engine";
+import type { OpportunityScan, MoneyAlert } from "@/lib/llm/decision-engine";
 import { SignOutButton } from "@/components/auth/SignOutButton";
+import { ActionPanel, AlertPanel } from "@/components/dashboard/InsightPanel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -21,6 +24,8 @@ const sectionOptions = [
   { id: "all", label: "All" },
   { id: "unit", label: "Unit Economics" },
   { id: "ad", label: "Ad Metrics" },
+  { id: "performance", label: "Ad Performance" },
+  { id: "library", label: "Ad Library" },
   { id: "scale", label: "Scale Planner" },
   { id: "pnl", label: "Monthly P&L" }
 ] as const;
@@ -91,6 +96,48 @@ type AdminUserRow = {
   active_month_key: string | null;
   scenario_count: number;
 };
+
+type ConnectedAdAccount = {
+  id: string;
+  platform: "meta" | "google";
+  account_id: string;
+  account_name?: string | null;
+};
+
+type AdMetricRow = {
+  id?: string;
+  platform: "meta" | "google";
+  ad_id?: string | null;
+  ad_name?: string | null;
+  adset_id?: string | null;
+  adset_name?: string | null;
+  campaign_id: string;
+  campaign_name: string | null;
+  date: string;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  ctr: number;
+  cpc: number;
+  roas: number;
+};
+
+type LibraryAd = {
+  id?: string;
+  platform: "meta";
+  pageName?: string;
+  body?: string;
+  title?: string;
+  caption?: string;
+  startedAt?: string;
+  snapshotUrl?: string;
+  publisherPlatforms?: string[];
+};
+
+type GoogleLibraryInfo = {
+  transparencyUrl: string;
+  note: string;
+} | null;
 
 const fadeUp: Variants = {
   hidden: { opacity: 0, y: 16 },
@@ -241,7 +288,18 @@ export default function DashboardPage() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [workspaceSyncing, setWorkspaceSyncing] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
-  const [brandVaultStatus, setBrandVaultStatus] = useState<"loading" | "complete" | "incomplete">("loading");
+  const [adMetrics, setAdMetrics] = useState<AdMetricRow[]>([]);
+  const [adMetricsLoading, setAdMetricsLoading] = useState(false);
+  const [decisions, setDecisions] = useState<OpportunityScan | null>(null);
+  const [moneyAlerts, setMoneyAlerts] = useState<MoneyAlert[]>([]);
+  const [connectedAccounts, setConnectedAccounts] = useState<ConnectedAdAccount[]>([]);
+  const [adLibraryQuery, setAdLibraryQuery] = useState("");
+  const [adLibraryCountry, setAdLibraryCountry] = useState("IN");
+  const [metaLibraryAds, setMetaLibraryAds] = useState<LibraryAd[]>([]);
+  const [googleLibraryInfo, setGoogleLibraryInfo] = useState<GoogleLibraryInfo>(null);
+  const [adLibraryLoading, setAdLibraryLoading] = useState(false);
+  const [metaLibraryError, setMetaLibraryError] = useState("");
+  const [adIntegrationSetupRequired, setAdIntegrationSetupRequired] = useState(false);
   const lastToastRef = useRef<{ text: string; at: number }>({ text: "", at: 0 });
 
   function pushToast(text: string, tone: ToastTone = "neutral") {
@@ -452,30 +510,6 @@ export default function DashboardPage() {
   }, [authChecked, userId, router]);
 
   useEffect(() => {
-    if (!userId) return;
-    let active = true;
-    async function loadBrandVault() {
-      try {
-        const res = await fetch("/api/brand-vault");
-        if (!res.ok) throw new Error("Failed to load Brand Vault");
-        const data = (await res.json()) as { brandVault?: { brandName?: string; tone?: string; audience?: string; heroProduct?: string } };
-        if (!active) return;
-        const vault = data.brandVault;
-        const hasData = !!vault && [vault.brandName, vault.tone, vault.audience, vault.heroProduct].some((value) =>
-          typeof value === "string" && value.trim().length > 0
-        );
-        setBrandVaultStatus(hasData ? "complete" : "incomplete");
-      } catch {
-        if (active) setBrandVaultStatus("incomplete");
-      }
-    }
-    void loadBrandVault();
-    return () => {
-      active = false;
-    };
-  }, [userId]);
-
-  useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
@@ -503,6 +537,12 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, userEmail, adminTargetEmail]);
 
+  useEffect(() => {
+    if (!userId) return;
+    void loadAdMetrics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
   const allocationTotal = useMemo(
     () =>
       reportInput.scalePlannerInput.allocationMetaPct +
@@ -515,40 +555,40 @@ export default function DashboardPage() {
     return {
       unit: report.unitEconomics.contributionMarginPct >= 0.3 ? "Healthy" : "Warning",
       ad: report.adMetrics.blendedRoas >= 3 && report.adMetrics.blendedCac <= report.unitEconomics.maxAllowableCac ? "Healthy" : "Warning",
+      performance: connectedAccounts.length > 0 ? "Connected" : "Not Connected",
+      library: metaLibraryAds.length > 0 || googleLibraryInfo ? "Ready" : "Not Searched",
       scale: report.scalePlanner.readiness === "READY TO SCALE" ? "Ready" : "Hold",
       pnl: report.monthlyPnl.netProfitMarginPct >= 0.1 ? "Healthy" : "Low Margin"
     };
-  }, [report]);
+  }, [report, connectedAccounts.length, metaLibraryAds.length, googleLibraryInfo]);
 
   const heroKpis = useMemo(
     () => [
       {
         title: "Contribution Margin",
         value: pct(report.unitEconomics.contributionMarginPct),
-        hint: report.unitEconomics.contributionMarginPct >= 0.3 ? "Strong unit economics" : "Needs cost correction",
+        hint: report.unitEconomics.contributionMarginPct >= 0.3 ? "Healthy unit economics" : "Focus on margin leak points",
         tone: report.unitEconomics.contributionMarginPct >= 0.3 ? "good" : "warn",
-        benchmark: "Target > 30% for healthy scale"
+        benchmark: "Target > 30% contribution margin"
       },
       {
-        title: "Blended ROAS",
-        value: `${report.adMetrics.blendedRoas.toFixed(2)}x`,
-        hint: report.adMetrics.blendedRoas >= 3 ? "Ad engine efficient" : "Under target",
-        tone: report.adMetrics.blendedRoas >= 3 ? "good" : "warn",
-        benchmark: "Target >= 3x blended ROAS"
+        title: "Retained Revenue",
+        value: inr(report.monthlyPnl.retainedRevenueMonth),
+        hint: "Revenue after returns and fees",
+        tone: "neutral"
       },
       {
-        title: "Net Profit Margin",
-        value: pct(report.monthlyPnl.netProfitMarginPct),
-        hint: report.monthlyPnl.netProfitMarginPct >= 0.1 ? "Healthy monthly profile" : "Profit pressure",
-        tone: report.monthlyPnl.netProfitMarginPct >= 0.1 ? "good" : "warn",
-        benchmark: "Target > 10% net margin"
+        title: "Profit Leak",
+        value: inr(report.monthlyPnl.profitLeakMonth),
+        hint: report.monthlyPnl.profitLeakMonth > 0 ? "Current ad spend exceeds contribution" : "Marketing is covered by contribution",
+        tone: report.monthlyPnl.profitLeakMonth > 0 ? "warn" : "good"
       },
       {
         title: "Scale Verdict",
         value: report.scalePlanner.readiness,
         hint: dirty ? "Draft not applied" : "Based on latest applied plan",
         tone: report.scalePlanner.readiness === "READY TO SCALE" ? "good" : "neutral",
-        benchmark: "Needs ROAS + CAC + margin alignment"
+        benchmark: "Clear only when economics and CAC match"
       }
     ],
     [report, dirty]
@@ -593,6 +633,13 @@ export default function DashboardPage() {
         insights: pendingInsights()
       };
       setReport(merged);
+      
+      // Generate decisions and alerts automatically
+      const newDecisions = generateDecisions(next);
+      const newAlerts = generateMoneyAlerts(next);
+      setDecisions(newDecisions);
+      setMoneyAlerts(newAlerts);
+      
       sessionStorage.setItem("reportInput", JSON.stringify(inputToUse));
       sessionStorage.setItem("report", JSON.stringify(merged));
       void persistWorkspaceToDatabase(inputToUse, merged, scenarios, selectedScenarioId, monthKey);
@@ -901,12 +948,56 @@ export default function DashboardPage() {
       ];
     }
 
+    if (id === "performance") {
+      const platforms = adMetrics.reduce<Record<string, AdMetricRow[]>>((acc, m) => {
+        if (!acc[m.platform]) acc[m.platform] = [];
+        acc[m.platform].push(m);
+        return acc;
+      }, {});
+
+      const stats = Object.entries(platforms).map(([platform, metrics]) => {
+        const totalSpend = metrics.reduce((sum, m) => sum + (m.spend || 0), 0);
+        const totalRoas = metrics.reduce((sum, m) => sum + (m.roas || 0), 0) / metrics.length;
+        const totalImpressions = metrics.reduce((sum, m) => sum + (m.impressions || 0), 0);
+        const tone: MetricTone = totalRoas >= 3 ? "good" : totalRoas >= 2 ? "warn" : "neutral";
+
+        return {
+          title: `${platform.toUpperCase()}: Total Spend`,
+          value: inr(totalSpend),
+          hint: `${metrics.length} campaigns, ${totalImpressions} impressions`,
+          tone
+        };
+      });
+
+      return stats.length > 0 ? stats : [
+        { title: "No Data", value: "—", hint: "Connect ad accounts to see performance", tone: "neutral" }
+      ];
+    }
+
+    if (id === "library") {
+      return [
+        {
+          title: "Meta Library Ads",
+          value: String(metaLibraryAds.length),
+          hint: metaLibraryAds.length > 0 ? "Public Meta ads found" : "Search a brand or keyword",
+          tone: metaLibraryAds.length > 0 ? "good" : "neutral"
+        },
+        {
+          title: "Google Transparency",
+          value: googleLibraryInfo ? "Link Ready" : "Not Searched",
+          hint: "Google public competitor discovery opens in Transparency Center",
+          tone: googleLibraryInfo ? "good" : "neutral"
+        }
+      ];
+    }
+
     return [
-      { title: "Net Revenue", value: inr(data.monthlyPnl.netRevenueMonth), hint: "Monthly net topline", tone: "neutral" },
-      { title: "COGS", value: inr(data.monthlyPnl.cogsMonth), hint: "Product cost load", tone: "neutral" },
-      { title: "Fulfillment", value: inr(data.monthlyPnl.fulfillmentMonth), hint: "Ops + logistics", tone: "neutral" },
-      { title: "Contribution", value: inr(data.monthlyPnl.contributionMonth), hint: "Margin before fixed costs", tone: "neutral" },
-      { title: "Marketing Cost", value: inr(data.monthlyPnl.marketingMonth), hint: "Media + acquisition spend", tone: "neutral" },
+      { title: "Net Revenue", value: inr(data.monthlyPnl.netRevenueMonth), hint: "Topline after returns", tone: "neutral" },
+      { title: "Retained Revenue", value: inr(data.monthlyPnl.retainedRevenueMonth), hint: "Revenue left after returns", tone: "neutral" },
+      { title: "Return Loss", value: inr(data.monthlyPnl.returnLossMonth), hint: "Revenue lost to returns", tone: data.monthlyPnl.returnLossMonth > 0 ? "warn" : "neutral" },
+      { title: "Contribution", value: inr(data.monthlyPnl.contributionMonth), hint: "What remains before marketing", tone: "neutral" },
+      { title: "Marketing Cost", value: inr(data.monthlyPnl.marketingMonth), hint: "Media spend for the period", tone: "neutral" },
+      { title: "Profit Leak", value: inr(data.monthlyPnl.profitLeakMonth), hint: "Amount marketing exceeds contribution", tone: data.monthlyPnl.profitLeakMonth > 0 ? "warn" : "good" },
       {
         title: "Net Profit",
         value: inr(data.monthlyPnl.netProfitMonth),
@@ -926,6 +1017,8 @@ export default function DashboardPage() {
   function getSectionInputSnapshot(id: ActiveSection) {
     if (id === "unit") return reportInput.unitEconomicsInput;
     if (id === "ad") return reportInput.adMetricsInput;
+    if (id === "performance") return { connectedAccounts, adMetricsCount: adMetrics.length };
+    if (id === "library") return { adLibraryQuery, adLibraryCountry, metaLibraryCount: metaLibraryAds.length };
     if (id === "scale") return reportInput.scalePlannerInput;
     return {
       note: "Monthly P&L is derived from other sections",
@@ -1016,6 +1109,153 @@ export default function DashboardPage() {
       setAdminUsersError(err instanceof Error ? err.message : "Failed to load users");
     } finally {
       setAdminUsersLoading(false);
+    }
+  }
+
+  async function loadAdMetrics() {
+    if (!userId) return;
+
+    setAdMetricsLoading(true);
+    try {
+      // Load connected accounts
+      const accountsRes = await fetch("/api/integrations/meta-ads/accounts");
+      const googleAccountsRes = await fetch("/api/integrations/google-ads/accounts");
+
+      const [metaAccounts, googleAccounts] = await Promise.all([
+        accountsRes.ok ? accountsRes.json() : { accounts: [] },
+        googleAccountsRes.ok ? googleAccountsRes.json() : { accounts: [] }
+      ]);
+
+      setAdIntegrationSetupRequired(Boolean(metaAccounts.setupRequired || googleAccounts.setupRequired));
+      setConnectedAccounts([...(metaAccounts.accounts || []), ...(googleAccounts.accounts || [])]);
+
+      // Load recent metrics (last 30 days)
+      const supabase = createClient();
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const { data: metrics, error } = await supabase
+        .from("ad_metrics")
+        .select("*")
+        .eq("user_id", userId)
+        .gte("date", thirtyDaysAgo.toISOString().split('T')[0])
+        .order("date", { ascending: false })
+        .limit(100);
+
+      if (error) throw error;
+      setAdMetrics(metrics || []);
+    } catch (error) {
+      console.error("Failed to load ad metrics:", error);
+      pushToast(error instanceof Error ? error.message : "Failed to load ad metrics", "warn");
+    } finally {
+      setAdMetricsLoading(false);
+    }
+  }
+
+  async function connectMetaAds() {
+    try {
+      const response = await fetch("/api/integrations/meta-ads", { method: "POST" });
+      const data = await response.json();
+      if (!response.ok || !data.oauth_url) {
+        throw new Error(data.error || "Unable to start Meta connection");
+      }
+      window.location.href = data.oauth_url;
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : "Unable to connect Meta Ads", "warn");
+    }
+  }
+
+  async function connectGoogleAds() {
+    try {
+      const response = await fetch("/api/integrations/google-ads", { method: "POST" });
+      const data = await response.json();
+      if (!response.ok || !data.oauth_url) {
+        throw new Error(data.error || "Unable to start Google connection");
+      }
+      window.location.href = data.oauth_url;
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : "Unable to connect Google Ads", "warn");
+    }
+  }
+
+  async function fetchMetaAccountMetrics(accountId: string) {
+    setAdMetricsLoading(true);
+    try {
+      const response = await fetch("/api/integrations/meta-ads/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId, datePreset: "last_30d" })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to fetch Meta metrics");
+      }
+      pushToast(`Fetched ${data.metricsCount || 0} Meta ad rows`, "good");
+      await loadAdMetrics();
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : "Unable to fetch Meta metrics", "warn");
+    } finally {
+      setAdMetricsLoading(false);
+    }
+  }
+
+  async function fetchGoogleAccountMetrics(accountId: string) {
+    setAdMetricsLoading(true);
+    try {
+      const response = await fetch("/api/integrations/google-ads/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId, dateRange: "LAST_30_DAYS" })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to fetch Google metrics");
+      }
+      pushToast(`Fetched ${data.metricsCount || 0} Google ad rows`, "good");
+      await loadAdMetrics();
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : "Unable to fetch Google metrics", "warn");
+    } finally {
+      setAdMetricsLoading(false);
+    }
+  }
+
+  async function searchAdLibraries() {
+    const query = adLibraryQuery.trim();
+    if (!query) {
+      pushToast("Enter a brand or keyword to search", "warn");
+      return;
+    }
+
+    setAdLibraryLoading(true);
+    try {
+      const params = new URLSearchParams({ q: query, country: adLibraryCountry || "IN" });
+      const [metaResponse, googleResponse] = await Promise.all([
+        fetch(`/api/ad-library/meta?${params.toString()}`),
+        fetch(`/api/ad-library/google?${params.toString()}`)
+      ]);
+
+      const googleData = await googleResponse.json();
+      setGoogleLibraryInfo({
+        transparencyUrl: googleData.transparencyUrl,
+        note: googleData.note
+      });
+
+      const metaData = await metaResponse.json();
+      if (!metaResponse.ok) {
+        setMetaLibraryAds([]);
+        const message = metaData.error || "Meta library search failed";
+        setMetaLibraryError(message);
+        pushToast(message, "warn");
+      } else {
+        setMetaLibraryError("");
+        setMetaLibraryAds(metaData.ads || []);
+        pushToast(`Found ${(metaData.ads || []).length} Meta library ads`, "good");
+      }
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : "Unable to search ad libraries", "warn");
+    } finally {
+      setAdLibraryLoading(false);
     }
   }
 
@@ -1150,11 +1390,182 @@ export default function DashboardPage() {
       );
     }
 
+    if (id === "performance") {
+      return (
+        <div className="editor-grid">
+          {connectedAccounts.length === 0 ? (
+            <div>
+              <p className="muted-text">
+                {adIntegrationSetupRequired
+                  ? "Ad tables are not created yet. Run supabase-ad-integrations-migration.sql in Supabase, then refresh."
+                  : "No ad accounts connected. Connect Meta or Google to show customer ad spend, clicks, impressions, and ROAS here."}
+              </p>
+              <div className="action-row" style={{ marginTop: 12 }}>
+                <Button type="button" variant="secondary" onClick={connectMetaAds}>
+                  Connect Meta Ads
+                </Button>
+                <Button type="button" variant="secondary" onClick={connectGoogleAds}>
+                  Connect Google Ads
+                </Button>
+                <Button type="button" variant="secondary" onClick={loadAdMetrics} disabled={adMetricsLoading}>
+                  {adMetricsLoading ? "Refreshing..." : "Refresh"}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div>
+                <h4>Connected Accounts</h4>
+                <ul style={{ fontSize: "0.9em", marginTop: 8 }}>
+                  {connectedAccounts.map((acc) => (
+                    <li key={acc.id}>
+                      {acc.platform}: {acc.account_name || acc.account_id}
+                      {acc.platform === "meta" ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => fetchMetaAccountMetrics(acc.account_id)}
+                          disabled={adMetricsLoading}
+                          style={{ marginLeft: 8 }}
+                        >
+                          Fetch Metrics
+                        </Button>
+                      ) : null}
+                      {acc.platform === "google" ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => fetchGoogleAccountMetrics(acc.account_id)}
+                          disabled={adMetricsLoading}
+                          style={{ marginLeft: 8 }}
+                        >
+                          Fetch Metrics
+                        </Button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+                <div className="action-row" style={{ marginTop: 12 }}>
+                  <Button type="button" variant="secondary" onClick={connectMetaAds}>
+                    Connect Another Meta Account
+                  </Button>
+                  <Button type="button" variant="secondary" onClick={connectGoogleAds}>
+                    Connect Google Ads
+                  </Button>
+                  <Button type="button" variant="secondary" onClick={loadAdMetrics} disabled={adMetricsLoading}>
+                    {adMetricsLoading ? "Refreshing..." : "Refresh Dashboard"}
+                  </Button>
+                </div>
+              </div>
+              <div>
+                <h4>Recent Ad Metrics</h4>
+                {adMetricsLoading ? (
+                  <p className="muted-text">Loading metrics...</p>
+                ) : adMetrics.length === 0 ? (
+                  <p className="muted-text">No metrics data yet. Click Fetch Metrics beside a connected Meta account.</p>
+                ) : (
+                  <table style={{ width: "100%", fontSize: "0.85em", marginTop: 8 }}>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Ad</th>
+                        <th>Campaign</th>
+                        <th>Spend</th>
+                        <th>Clicks</th>
+                        <th>CTR</th>
+                        <th>ROAS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adMetrics.slice(0, 10).map((m) => (
+                        <tr key={`${m.platform}-${m.ad_id || m.campaign_id}-${m.date}`}>
+                          <td>{m.date}</td>
+                          <td>{m.ad_name || m.ad_id || "Campaign row"}</td>
+                          <td>{m.campaign_name}</td>
+                          <td>INR {m.spend?.toFixed(0)}</td>
+                          <td>{m.clicks}</td>
+                          <td>{m.ctr?.toFixed(2)}%</td>
+                          <td>{m.roas?.toFixed(2)}x</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      );
+    }
+
+    if (id === "library") {
+      return (
+        <div className="editor-grid">
+          <Label className="input-row">
+            <span>Brand or keyword</span>
+            <Input
+              type="text"
+              placeholder="competitor brand, product, offer"
+              value={adLibraryQuery}
+              onChange={(e) => setAdLibraryQuery(e.target.value)}
+            />
+          </Label>
+          <Label className="input-row">
+            <span>Country</span>
+            <Input
+              type="text"
+              value={adLibraryCountry}
+              onChange={(e) => setAdLibraryCountry(e.target.value.toUpperCase())}
+            />
+          </Label>
+          <div className="action-row">
+            <Button type="button" onClick={searchAdLibraries} disabled={adLibraryLoading}>
+              {adLibraryLoading ? "Searching..." : "Search Ad Libraries"}
+            </Button>
+            {googleLibraryInfo ? (
+              <Button type="button" variant="secondary" onClick={() => window.open(googleLibraryInfo.transparencyUrl, "_blank", "noopener,noreferrer")}>
+                Open Google Transparency
+              </Button>
+            ) : null}
+          </div>
+          {googleLibraryInfo ? <p className="muted-text">{googleLibraryInfo.note}</p> : null}
+          {metaLibraryError ? <p className="error-text">{metaLibraryError}</p> : null}
+          <div>
+            <h4>Meta Ad Library Results</h4>
+            {metaLibraryAds.length === 0 ? (
+              <p className="muted-text">No Meta library results yet. Search a competitor brand or keyword.</p>
+            ) : (
+              <div className="fix-grid">
+                {metaLibraryAds.slice(0, 12).map((ad) => (
+                  <article key={ad.id || ad.snapshotUrl} className="fix-card">
+                    <p className="metric-title">{ad.pageName || "Meta advertiser"}</p>
+                    <p>{ad.title || ad.body || "Creative text unavailable"}</p>
+                    {ad.caption ? <p className="muted-text">{ad.caption}</p> : null}
+                    <div className="insight-meta-row">
+                      <Badge variant="secondary">{ad.startedAt || "Active"}</Badge>
+                      {ad.publisherPlatforms?.slice(0, 3).map((platform) => (
+                        <Badge key={`${ad.id}-${platform}`} variant="secondary">{platform}</Badge>
+                      ))}
+                    </div>
+                    {ad.snapshotUrl ? (
+                      <Button type="button" variant="secondary" onClick={() => window.open(ad.snapshotUrl, "_blank", "noopener,noreferrer")}>
+                        View Ad
+                      </Button>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     return <p className="muted-text">Monthly P&L is auto-derived from the previous sections and updates when you apply changes.</p>;
   }
 
   function statusTone(status: string): MetricTone {
-    if (status === "Healthy" || status === "Ready") return "good";
+    if (status === "Healthy" || status === "Ready" || status === "Connected") return "good";
     if (status === "Warning" || status === "Low Margin" || status === "Hold") return "warn";
     return "neutral";
   }
@@ -1208,17 +1619,19 @@ export default function DashboardPage() {
     { id: "go-all", label: "Go to All Sections" },
     { id: "go-unit", label: "Go to Unit Economics" },
     { id: "go-ad", label: "Go to Ad Metrics" },
+    { id: "go-performance", label: "Go to Ad Performance" },
+    { id: "go-library", label: "Go to Ad Library" },
     { id: "go-scale", label: "Go to Scale Planner" },
     { id: "go-pnl", label: "Go to Monthly P&L" },
     { id: "apply", label: "Apply Changes" },
     { id: "reset", label: "Reset Defaults" },
     { id: "sample", label: "Load Sample Data" },
     { id: "scenario", label: "Save Scenario Snapshot" },
-    { id: "insights", label: "Generate AI Insights" }
+    { id: "insights", label: "Generate Profit Report" }
   ];
 
   const filteredCommands = commands.filter((c) => c.label.toLowerCase().includes(paletteQuery.toLowerCase()));
-  const sectionSequence: ActiveSection[] = ["unit", "ad", "scale", "pnl"];
+  const sectionSequence: ActiveSection[] = ["unit", "ad", "performance", "library", "scale", "pnl"];
   const adminEmail = (process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? "").trim().toLowerCase();
   const isAdmin = !!adminEmail && userEmail.toLowerCase() === adminEmail;
   const completedSections = sectionSequence.filter((id) => statusTone(sectionStatus[id]) === "good").length;
@@ -1226,11 +1639,8 @@ export default function DashboardPage() {
     { label: "Unit Economics Healthy", done: sectionStatus.unit === "Healthy" },
     { label: "Ad Metrics Healthy", done: sectionStatus.ad === "Healthy" },
     { label: "Scale Planner Ready", done: sectionStatus.scale === "Ready" },
-    { label: "Monthly Margin Healthy", done: sectionStatus.pnl === "Healthy" },
-    { label: "Insights Generated", done: report.insights.source !== "pending" }
+    { label: "Monthly Margin Healthy", done: sectionStatus.pnl === "Healthy" }
   ];
-  const brandVaultLabel = brandVaultStatus === "complete" ? "Complete" : brandVaultStatus === "loading" ? "Checking" : "Incomplete";
-  const brandVaultVariant = brandVaultStatus === "complete" ? "success" : brandVaultStatus === "loading" ? "secondary" : "warning";
   const tally = useMemo(() => {
     return monthlyRecords.reduce(
       (acc, row) => {
@@ -1269,20 +1679,6 @@ export default function DashboardPage() {
           })}
         </div>
         <div className="rail-controls">
-          <Link href="/zwirk">
-            <Button type="button" className="zwirk-cta">
-              <span className="zwirk-cta-text">
-                <span className="zwirk-cta-title">ZWIRK</span>
-                <span className="zwirk-cta-sub">assistant</span>
-                <span className="zwirk-cta-arrow">{" >"}</span>
-              </span>
-            </Button>
-          </Link>
-          <Link href="/brand-vault">
-            <Button type="button" variant="secondary" title="Set your brand DNA so ZWIRK sounds like you.">
-              Brand Vault
-            </Button>
-          </Link>
           <Button type="button" variant="secondary" onClick={() => setPaletteOpen(true)}>
             Open Command Palette
           </Button>
@@ -1292,12 +1688,6 @@ export default function DashboardPage() {
           <Button type="button" variant="secondary" onClick={saveScenario}>
             Save Scenario
           </Button>
-          <Badge variant={brandVaultVariant}>Brand Vault: {brandVaultLabel}</Badge>
-          {brandVaultStatus !== "complete" ? (
-            <Link href="/brand-vault">
-              <Button type="button">Complete your Brand Vault</Button>
-            </Link>
-          ) : null}
           <Badge variant="secondary">{completedSections}/{sectionSequence.length} sections healthy</Badge>
           <Badge variant={dirty ? "warning" : "success"}>{dirty ? "Unsaved Draft" : "All Saved"}</Badge>
           <Badge variant={workspaceSyncing ? "warning" : "secondary"}>{workspaceSyncing ? "Syncing cloud data..." : "Cloud sync ready"}</Badge>
@@ -1313,9 +1703,9 @@ export default function DashboardPage() {
       <main className="dashboard-content-grid">
         <motion.section className="surface hero-surface" variants={fadeUp}>
           <div>
-            <p className="eyebrow">Zooptrack Operating System</p>
-            <h1>Zooptrack Growth Intelligence Command Center</h1>
-            <p className="hero-copy">Fast signal loops for unit economics, paid media, scale readiness, and actionable AI guidance.</p>
+            <p className="eyebrow">Profitability Command Center</p>
+            <h1>Turn ad spend into real profit, not just clicks.</h1>
+            <p className="hero-copy">Measure true retained revenue, find hidden campaign losses, and only scale when the math is solid.</p>
           </div>
           <div className="hero-meta">
             <span className="muted-text">
@@ -1341,7 +1731,7 @@ export default function DashboardPage() {
         <motion.section className="surface action-surface" variants={fadeUp}>
           <div className="section-head">
             <h3>Execution Controls</h3>
-            <p>Apply edits instantly, reset assumptions, and trigger AI insight generation.</p>
+            <p>Apply changes, reset assumptions, and keep the profit story simple.</p>
           </div>
           <div className="action-row">
             <Button type="button" onClick={() => applyChanges()} disabled={recalcLoading}>
@@ -1350,11 +1740,22 @@ export default function DashboardPage() {
             <Button type="button" variant="secondary" onClick={resetToDefaults}>
               Reset Defaults
             </Button>
-            <Button type="button" variant="secondary" onClick={generateInsights} disabled={insightsLoading}>
-              {insightsLoading ? "Generating..." : "Generate AI Insights"}
-            </Button>
           </div>
         </motion.section>
+
+        {/* Decision Engine Panels */}
+        {decisions && (
+          <motion.section className="surface" variants={fadeUp}>
+            <ActionPanel decisions={decisions} isLoading={recalcLoading} />
+          </motion.section>
+        )}
+
+        {moneyAlerts.length > 0 && (
+          <motion.section className="surface" variants={fadeUp}>
+            <AlertPanel alerts={moneyAlerts} isLoading={recalcLoading} />
+          </motion.section>
+        )}
+
         <motion.section className="surface checklist-surface" variants={fadeUp}>
           <div className="section-head">
             <h3>Launch Checklist</h3>
@@ -1596,7 +1997,7 @@ export default function DashboardPage() {
             <ol>
               <li>Load sample data to see a full working model.</li>
               <li>Edit inputs section-by-section and apply changes.</li>
-              <li>Generate AI insights and use Apply Draft on priority fixes.</li>
+              <li>Review profit leak signals and save the scenario that makes sense.</li>
             </ol>
             <div className="action-row">
               <Button type="button" onClick={() => { loadSampleData(); closeOnboarding(); }}>Load Sample + Start</Button>

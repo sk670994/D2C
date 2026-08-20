@@ -80,10 +80,13 @@ export type CalculatedReport = {
   };
   monthlyPnl: {
     netRevenueMonth: number;
+    retainedRevenueMonth: number;
+    returnLossMonth: number;
     cogsMonth: number;
     fulfillmentMonth: number;
     contributionMonth: number;
     marketingMonth: number;
+    profitLeakMonth: number;
     netProfitMonth: number;
     netProfitMarginPct: number;
   };
