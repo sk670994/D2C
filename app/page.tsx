@@ -8,11 +8,10 @@ export default function HomePage() {
     <main className="main marketing-page">
       <header className="marketing-hero">
         <div>
-          <p className="eyebrow">Zooptrack Intelligence Platform</p>
-          <h1>Turn unit economics into scale decisions, faster.</h1>
+          <p className="eyebrow">Profitability OS for Indian D2C brands</p>
+          <h1>Know which ads actually make money.</h1>
           <p className="hero-copy">
-            Real-time unit economics, media efficiency, scale planning, and AI-backed priority fixes with scenario comparison
-            for modern D2C operators.
+            Track true profit after COD, returns, shipping and payment fees. Find hidden loss points, recover margin, and scale with confidence.
           </p>
           <div className="hero-actions">
             <Link href="/login">
@@ -23,17 +22,17 @@ export default function HomePage() {
             </Link>
           </div>
           <div className="hero-meta-row">
-            <span className="tag tag-good">Weekly KPI Health Checks</span>
-            <span className="tag">Scenario Lab Included</span>
-            <span className="tag">AI Insights Ready</span>
+            <span className="tag tag-good">COD & returns adjusted profit</span>
+            <span className="tag">Daily loss alerts</span>
+            <span className="tag">India D2C margin guardrails</span>
           </div>
         </div>
         <Card className="hero-card">
           <CardHeader>
             <div className="hero-card-header">
               <div>
-                <CardTitle>Growth Readiness Snapshot</CardTitle>
-                <CardDescription>Operator-grade signals you can act on now.</CardDescription>
+                <CardTitle>Daily Profit Pulse</CardTitle>
+                <CardDescription>Clear financial signals, not just charts.</CardDescription>
               </div>
               <ThemeToggle />
             </div>
@@ -45,12 +44,12 @@ export default function HomePage() {
                 <strong>39.9%</strong>
               </div>
               <div className="hero-kpi">
-                <span>Blended ROAS</span>
-                <strong>8.02x</strong>
+                <span>Retained Revenue</span>
+                <strong>INR 31.2K</strong>
               </div>
               <div className="hero-kpi">
                 <span>Scale Verdict</span>
-                <strong>Ready to Scale</strong>
+                <strong>Ready with guardrails</strong>
               </div>
             </div>
             <Button type="button">See Full Breakdown</Button>
@@ -70,20 +69,20 @@ export default function HomePage() {
       <section className="marketing-grid">
         {[
           {
-            title: "Unit Economics Engine",
-            body: "Calculate contribution margin, CAC guardrails, and profitability in seconds."
+            title: "True Profit Visibility",
+            body: "Stop relying on vanity ROAS. See profit after COD, returns, shipping, and fees."
           },
           {
-            title: "Media Efficiency Tracking",
-            body: "Blend ROAS, CAC, and budget allocation into one operator view."
+            title: "Hidden Loss Detection",
+            body: "Identify the campaigns, channels and checkout leaks that are draining cash."
           },
           {
-            title: "Scale Planner",
-            body: "Know when to scale and when to pause with readiness gates."
+            title: "Scale with Margin Guardrails",
+            body: "Only increase spend when your unit economics and break-even math are healthy."
           },
           {
-            title: "AI Priority Fixes",
-            body: "Instantly surface the top 3 actions with clear next-step guidance."
+            title: "Transparent Calculations",
+            body: "Every number is traceable so founders can trust the output and explain it to their team."
           }
         ].map((item) => (
           <article key={item.title} className="marketing-card">
@@ -95,26 +94,26 @@ export default function HomePage() {
 
       <section className="pathway-section">
         <div className="section-head">
-          <h2>Pathway to confident scale decisions</h2>
-          <p className="muted-text">A clear, repeatable flow built for D2C teams moving fast.</p>
+          <h2>From raw spend to real profit</h2>
+          <p className="muted-text">A simple workflow designed for brands that need clarity fast.</p>
         </div>
         <div className="pathway-grid">
           {[
             {
-              title: "Connect your data",
-              body: "Import orders, ad spend, and COGS to normalize signals."
+              title: "Connect ad, order and cost data",
+              body: "Bring ad spend, store orders, COD and product costs together in one place."
             },
             {
-              title: "Model scenarios",
-              body: "Compare pricing, CAC, and retention changes in minutes."
+              title: "Measure your true margin",
+              body: "See what cash you actually keep after returns, COD, shipping and fees."
             },
             {
-              title: "Act on AI priorities",
-              body: "Get the top fixes ranked by margin impact and effort."
+              title: "Spot the worst leaks",
+              body: "Identify exactly where campaigns and channels are losing money."
             },
             {
-              title: "Scale with guardrails",
-              body: "Receive automated readiness alerts before budget increases."
+              title: "Scale only when it pays",
+              body: "Use simple guardrails to increase spend safely and avoid blind growth."
             }
           ].map((step, index) => (
             <div key={step.title} className="pathway-step">
@@ -167,37 +166,37 @@ export default function HomePage() {
 
       <section className="pricing-section">
         <div className="section-head">
-          <h2>Pricing that scales with you</h2>
-          <p className="muted-text">Start free, then upgrade when you need deeper collaboration and export power.</p>
+          <h2>Pricing built for Indian D2C operators</h2>
+          <p className="muted-text">Start free, then upgrade when you need agency-grade reporting and multi-brand control.</p>
         </div>
         <div className="pricing-grid">
           <article className="pricing-card">
             <h3>Starter</h3>
             <p className="pricing-price">Free</p>
             <ul>
-              <li>Core calculator + scenario lab</li>
-              <li>Up to 3 saved scenarios</li>
-              <li>Basic AI insights</li>
+              <li>Core profit calculator + weekly summary</li>
+              <li>Connect one store</li>
+              <li>Basic loss alerts</li>
             </ul>
             <Button type="button" variant="secondary">Get Started</Button>
           </article>
           <article className="pricing-card featured">
             <h3>Growth</h3>
-            <p className="pricing-price">$39 / month</p>
+            <p className="pricing-price">₹999 / month</p>
             <ul>
-              <li>Unlimited scenarios + monthly vault</li>
-              <li>Team workspace + admin visibility</li>
-              <li>Advanced AI insights + exports</li>
+              <li>Profit leak reports + channel profitability</li>
+              <li>WhatsApp & email summaries</li>
+              <li>Scale guardrails + export-ready numbers</li>
             </ul>
             <Button type="button">Start 14-day Trial</Button>
           </article>
           <article className="pricing-card">
             <h3>Agency</h3>
-            <p className="pricing-price">Custom</p>
+            <p className="pricing-price">₹4999+ / month</p>
             <ul>
-              <li>Multi-brand portfolios</li>
-              <li>Dedicated onboarding</li>
-              <li>Priority support + roadmap input</li>
+              <li>Multi-brand reporting</li>
+              <li>Client-ready profitability dashboards</li>
+              <li>Dedicated onboarding and support</li>
             </ul>
             <Button type="button" variant="secondary">Talk to Sales</Button>
           </article>

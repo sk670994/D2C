@@ -16,7 +16,8 @@ export function calculateReport(input: ParsedReport): CalculatedReport {
   const pgFee = netRevenueExGst * u.paymentGatewayPct;
   const returnCost = u.returnsRate * u.returnShipping;
   const fulfillmentCost = u.shipping + u.codFee + pgFee + returnCost + u.warehouse;
-  const contributionMargin = grossMargin - fulfillmentCost;
+  const returnRevenueLoss = netRevenueExGst * u.returnsRate;
+  const contributionMargin = grossMargin - fulfillmentCost - returnRevenueLoss;
   const contributionMarginPct = netRevenueExGst > 0 ? contributionMargin / netRevenueExGst : 0;
   const maxAllowableCac = contributionMargin * 0.8;
 
@@ -44,11 +45,16 @@ export function calculateReport(input: ParsedReport): CalculatedReport {
   const isReadyToScale = blendedRoas >= 3 && blendedCac <= maxAllowableCac && contributionMarginPct >= 0.3 && Math.abs(allocationTotalPct - 1) < 0.01;
   const readiness = isReadyToScale ? "READY TO SCALE" : "FIX FUNDAMENTALS FIRST";
 
-  const netRevenueMonth = netRevenueExGst * a.orders;
+  const retainedRevenuePerOrder = netRevenueExGst * (1 - u.returnsRate);
+  const retainedOrders = a.orders * (1 - u.returnsRate);
+
+  const netRevenueMonth = retainedRevenuePerOrder * a.orders;
+  const returnLossMonth = returnRevenueLoss * a.orders;
   const cogsMonth = totalCogs * a.orders;
   const fulfillmentMonth = fulfillmentCost * a.orders;
   const contributionMonth = contributionMargin * a.orders;
   const marketingMonth = a.totalAdSpend;
+  const profitLeakMonth = Math.max(0, marketingMonth - contributionMonth);
   const netProfitMonth = contributionMonth - marketingMonth;
   const netProfitMarginPct = netRevenueMonth > 0 ? netProfitMonth / netRevenueMonth : 0;
 
@@ -89,10 +95,13 @@ export function calculateReport(input: ParsedReport): CalculatedReport {
     },
     monthlyPnl: {
       netRevenueMonth,
+      retainedRevenueMonth: netRevenueMonth,
+      returnLossMonth,
       cogsMonth,
       fulfillmentMonth,
       contributionMonth,
       marketingMonth,
+      profitLeakMonth,
       netProfitMonth,
       netProfitMarginPct
     },

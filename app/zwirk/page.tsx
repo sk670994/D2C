@@ -2,11 +2,19 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+
 import type { CalculatedReport } from "@/lib/types/domain";
 import { buildCompetitiveNarrative } from "@/lib/competitive/signals";
+
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -14,10 +22,10 @@ type ChatMessage = {
 };
 
 const starterPrompts = [
-  "Diagnose my unit economics with a 2.6 ROAS and 28% margin.",
+  "Analyze my current marketing performance and tell me the biggest problem.",
   "What should I fix first if CAC is rising 20% MoM?",
   "Give me a 30-day scale plan for Meta and Google.",
-  "Summarize the top 3 profit levers for DTC brands."
+  "Summarize the top 3 profit levers for my DTC brand.",
 ];
 
 type ZwirkContext = {
@@ -32,431 +40,637 @@ type ProofOfWork = {
   competitiveContext?: string;
 };
 
-type BrandVaultStatus = "loading" | "complete" | "incomplete";
+type BrandVaultStatus =
+  | "loading"
+  | "complete"
+  | "incomplete";
 
 export default function ZwirkPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
-      content: "I'm ZWIRK. Tell me your current ROAS, CAC, margin, and order volume, and I'll map the fastest path to profit."
-    }
+      content:
+        "I'm ZWIRK. Ask me about your marketing performance, profitability, CAC, ROAS, or scaling strategy.",
+    },
   ]);
+
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [context, setContext] = useState<ZwirkContext | null>(null);
-  const [competitorSignals, setCompetitorSignals] = useState<string[]>([]);
-  const [proof, setProof] = useState<ProofOfWork | null>(null);
-  const [brandVaultStatus, setBrandVaultStatus] = useState<BrandVaultStatus>("loading");
+
+  const [context, setContext] =
+    useState<ZwirkContext | null>(null);
+
+  const [competitorSignals, setCompetitorSignals] =
+    useState<string[]>([]);
+
+  const [proof, setProof] =
+    useState<ProofOfWork | null>(null);
+
+  const [brandVaultStatus] =
+    useState<BrandVaultStatus>("loading");
+
   const [useContext, setUseContext] = useState(true);
-  const [actionToasts, setActionToasts] = useState<Record<string, string>>({});
 
-  const canSend = input.trim().length > 0 && !loading;
+  const [actionToasts, setActionToasts] =
+    useState<Record<string, string>>({});
 
-  const chatBody = useMemo(() => messages.filter((msg) => msg.content.trim().length > 0), [messages]);
+  const canSend =
+    input.trim().length > 0 && !loading;
+
+  const chatBody = useMemo(
+    () =>
+      messages.filter(
+        (msg) => msg.content.trim().length > 0
+      ),
+    [messages]
+  );
+
+  // --------------------------------------------------
+  // Load saved chat
+  // --------------------------------------------------
 
   useEffect(() => {
-    const saved = localStorage.getItem("zwirkChat");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved) as ChatMessage[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setMessages(parsed);
-        }
-      } catch {
-        // no-op
+    const saved =
+      localStorage.getItem("zwirkChat");
+
+    if (!saved) return;
+
+    try {
+      const parsed =
+        JSON.parse(saved) as ChatMessage[];
+
+      if (
+        Array.isArray(parsed) &&
+        parsed.length > 0
+      ) {
+        setMessages(parsed);
       }
+    } catch {
+      // Ignore invalid saved chat.
     }
   }, []);
 
+  // --------------------------------------------------
+  // Save chat
+  // --------------------------------------------------
+
   useEffect(() => {
-    localStorage.setItem("zwirkChat", JSON.stringify(messages));
+    localStorage.setItem(
+      "zwirkChat",
+      JSON.stringify(messages)
+    );
   }, [messages]);
 
+  // --------------------------------------------------
+  // Load dashboard context
+  // --------------------------------------------------
+
   useEffect(() => {
-    const stored = sessionStorage.getItem("report");
+    const stored =
+      sessionStorage.getItem("report");
+
     if (!stored) return;
+
     try {
-      const report = JSON.parse(stored) as CalculatedReport;
+      const report =
+        JSON.parse(stored) as CalculatedReport;
+
       const summaryLines = [
-        `Contribution margin: ${pct(report.unitEconomics.contributionMarginPct)}`,
-        `Blended ROAS: ${fmt(report.adMetrics.blendedRoas)}x`,
-        `Blended CAC: ${fmt(report.adMetrics.blendedCac)}`,
-        `Max allowable CAC: ${fmt(report.unitEconomics.maxAllowableCac)}`,
-        `Net profit margin: ${pct(report.monthlyPnl.netProfitMarginPct)}`,
-        `Net revenue (month): ${fmt(report.monthlyPnl.netRevenueMonth)}`,
-        `Net profit (month): ${fmt(report.monthlyPnl.netProfitMonth)}`,
-        `Scale verdict: ${report.scalePlanner.readiness}`
+        `Contribution margin: ${pct(
+          report.unitEconomics
+            .contributionMarginPct
+        )}`,
+
+        `Blended ROAS: ${fmt(
+          report.adMetrics.blendedRoas
+        )}x`,
+
+        `Blended CAC: ${fmt(
+          report.adMetrics.blendedCac
+        )}`,
+
+        `Max allowable CAC: ${fmt(
+          report.unitEconomics.maxAllowableCac
+        )}`,
+
+        `Net profit margin: ${pct(
+          report.monthlyPnl
+            .netProfitMarginPct
+        )}`,
+
+        `Net revenue (month): ${fmt(
+          report.monthlyPnl
+            .netRevenueMonth
+        )}`,
+
+        `Net profit (month): ${fmt(
+          report.monthlyPnl
+            .netProfitMonth
+        )}`,
+
+        `Scale verdict: ${report.scalePlanner.readiness}`,
       ];
-      const competitorNarrative = buildCompetitiveNarrative(report);
-      const summary = competitorNarrative.length
-        ? [...summaryLines, "", "Competitive radar:", ...competitorNarrative].join("\n")
-        : summaryLines.join("\n");
-      setContext({ label: "Dashboard context loaded", summary });
-      setCompetitorSignals(competitorNarrative);
+
+      const competitorNarrative =
+        buildCompetitiveNarrative(report);
+
+      const summary =
+        competitorNarrative.length > 0
+          ? [
+              ...summaryLines,
+              "",
+              "Competitive radar:",
+              ...competitorNarrative,
+            ].join("\n")
+          : summaryLines.join("\n");
+
+      setContext({
+        label: "Dashboard context loaded",
+        summary,
+      });
+
+      setCompetitorSignals(
+        competitorNarrative
+      );
     } catch {
-      // no-op
+      // Ignore malformed dashboard data.
     }
   }, []);
 
-  function fmt(value?: number, suffix = "") {
-    if (typeof value !== "number" || Number.isNaN(value)) return "n/a";
-    return `${value.toLocaleString("en-IN", { maximumFractionDigits: 2 })}${suffix}`;
+  // --------------------------------------------------
+  // Formatting helpers
+  // --------------------------------------------------
+
+  function fmt(
+    value?: number,
+    suffix = ""
+  ) {
+    if (
+      typeof value !== "number" ||
+      Number.isNaN(value)
+    ) {
+      return "n/a";
+    }
+
+    return `${value.toLocaleString(
+      "en-IN",
+      {
+        maximumFractionDigits: 2,
+      }
+    )}${suffix}`;
   }
 
   function pct(value?: number) {
-    if (typeof value !== "number" || Number.isNaN(value)) return "n/a";
+    if (
+      typeof value !== "number" ||
+      Number.isNaN(value)
+    ) {
+      return "n/a";
+    }
+
     return `${(value * 100).toFixed(1)}%`;
   }
+
+  // --------------------------------------------------
+  // Reset chat
+  // --------------------------------------------------
 
   function resetChat() {
     const initial: ChatMessage[] = [
       {
         role: "assistant",
-        content: "I'm ZWIRK. Tell me your current ROAS, CAC, margin, and order volume, and I'll map the fastest path to profit."
-      }
+        content:
+          "I'm ZWIRK. Ask me about your marketing performance, profitability, CAC, ROAS, or scaling strategy.",
+      },
     ];
+
     setMessages(initial);
     setError(null);
+    setProof(null);
+
     localStorage.removeItem("zwirkChat");
   }
+
+  // --------------------------------------------------
+  // Copy
+  // --------------------------------------------------
 
   async function copyMessage(text: string) {
     try {
       await navigator.clipboard.writeText(text);
     } catch {
-      // no-op
+      // Ignore clipboard errors.
     }
   }
 
-  function showActionToast(key: string, label: string) {
-    setActionToasts((prev) => ({ ...prev, [key]: label }));
+  // --------------------------------------------------
+  // Action toast
+  // --------------------------------------------------
+
+  function showActionToast(
+    key: string,
+    label: string
+  ) {
+    setActionToasts((prev) => ({
+      ...prev,
+      [key]: label,
+    }));
+
     window.setTimeout(() => {
       setActionToasts((prev) => {
         const next = { ...prev };
+
         delete next[key];
+
         return next;
       });
     }, 1400);
   }
 
+  // --------------------------------------------------
+  // Download response
+  // --------------------------------------------------
+
   function downloadMessage(text: string) {
-    const blob = new Blob([text], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
+    const blob = new Blob([text], {
+      type: "text/plain",
+    });
+
+    const url =
+      URL.createObjectURL(blob);
+
+    const link =
+      document.createElement("a");
+
     link.href = url;
-    link.download = `zwirk-response-${new Date().toISOString().slice(0, 10)}.txt`;
+
+    link.download =
+      `zwirk-response-${new Date()
+        .toISOString()
+        .slice(0, 10)}.txt`;
+
     document.body.appendChild(link);
+
     link.click();
+
     link.remove();
+
     URL.revokeObjectURL(url);
   }
 
+  // --------------------------------------------------
+  // Retry
+  // --------------------------------------------------
+
   function retryLastPrompt() {
-    const lastUser = [...messages].reverse().find((msg) => msg.role === "user");
+    const lastUser =
+      [...messages]
+        .reverse()
+        .find(
+          (msg) =>
+            msg.role === "user"
+        );
+
     if (!lastUser) return;
-    void sendMessage(lastUser.content);
+
+    void sendMessage(
+      lastUser.content
+    );
   }
 
-  function tooltipFor(index: number, action: string, label: string) {
-    return actionToasts[`${index}:${action}`] ?? label;
+  // --------------------------------------------------
+  // Tooltip
+  // --------------------------------------------------
+
+  function tooltipFor(
+    index: number,
+    action: string,
+    label: string
+  ) {
+    return (
+      actionToasts[
+        `${index}:${action}`
+      ] ?? label
+    );
   }
 
-  async function sendMessage(message: string) {
+  // --------------------------------------------------
+  // Send message
+  // --------------------------------------------------
+
+  async function sendMessage(
+    message: string
+  ) {
+    const trimmedMessage =
+      message.trim();
+
+    if (!trimmedMessage || loading) {
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setProof(null);
-    const nextMessages: ChatMessage[] = [...messages, { role: "user", content: message }];
+
+    const nextMessages: ChatMessage[] = [
+      ...messages,
+      {
+        role: "user",
+        content: trimmedMessage,
+      },
+    ];
+
     setMessages(nextMessages);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- 
-    
     setInput("");
 
     try {
-      const payload: { messages: ChatMessage[]; context?: string; competitorContext?: string } = { messages: nextMessages };
-      if (useContext && context?.summary) payload.context = context.summary;
-      if (competitorSignals.length > 0) payload.competitorContext = competitorSignals.join("\n");
-      const res = await fetch("/api/zwirk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
+      const payload: {
+        messages: ChatMessage[];
+        context?: string;
+        competitorContext?: string;
+      } = {
+        messages: nextMessages,
+      };
 
-      if (!res.ok) {
-        const detail = await res.json().catch(() => ({}));
-        throw new Error(detail?.error || "Unable to reach ZWIRK");
+      if (
+        useContext &&
+        context?.summary
+      ) {
+        payload.context =
+          context.summary;
       }
 
-      const data = (await res.json()) as { reply?: string; proof?: ProofOfWork | null };
-      const reply = data.reply || "I could not generate a response.";
-      setProof(data.proof ?? null);
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      if (
+        competitorSignals.length > 0
+      ) {
+        payload.competitorContext =
+          competitorSignals.join("\n");
+      }
+
+      const res = await fetch(
+        "/api/zwirk",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify(
+            payload
+          ),
+        }
+      );
+
+      const data = await res
+        .json()
+        .catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(
+          data?.detail ||
+            data?.error ||
+            "Unable to reach ZWIRK."
+        );
+      }
+
+      const responseData =
+        data as {
+          reply?: string;
+          proof?:
+            | ProofOfWork
+            | null;
+        };
+
+      const reply =
+        responseData.reply ||
+        "I could not generate a response.";
+
+      setProof(
+        responseData.proof ?? null
+      );
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: reply,
+        },
+      ]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "ZWIRK is unavailable right now.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "ZWIRK is unavailable right now."
+      );
+
       setProof(null);
     } finally {
       setLoading(false);
     }
   }
 
+  // --------------------------------------------------
+  // Render
+  // --------------------------------------------------
+
   return (
     <main className="main zwirk-page">
       <header className="zwirk-hero">
         <div>
-          <p className="eyebrow">Zooptrack AI Assistant</p>
+          <p className="eyebrow">
+            ZWIRK Profit Diagnostic
+          </p>
+
           <h1>
             <span>ZWIRK</span>
-            <span className="zwirk-title-beta">BETA version</span>
-            -- your on-demand growth operator
+
+            <span className="zwirk-title-beta">
+              BETA version
+            </span>
+
+            -- a quick profit check
+            for D2C teams
           </h1>
+
           <p className="muted-text">
-            Ask profit questions, scenario ideas, and growth diagnostics. ZWIRK responds with actionable next steps.
+            Ask focused profit and
+            scale questions, then get
+            clear, actionable next
+            steps.
           </p>
+
           <div className="zwirk-hero-actions">
             <Link href="/dashboard">
-              <Button type="button" variant="secondary">Back to Dashboard</Button>
+              <Button
+                type="button"
+                variant="secondary"
+              >
+                Back to Dashboard
+              </Button>
             </Link>
+
             <Link href="/">
-              <Button type="button" variant="secondary">Home</Button>
+              <Button
+                type="button"
+                variant="secondary"
+              >
+                Home
+              </Button>
             </Link>
-            <Button type="button" variant="secondary" onClick={resetChat}>
+
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={resetChat}
+            >
               Clear Chat
             </Button>
           </div>
+
           {context ? (
             <label className="zwirk-context-toggle">
-              <input type="checkbox" checked={useContext} onChange={(e) => setUseContext(e.target.checked)} />
-              <span>{context.label}</span>
+              <input
+                type="checkbox"
+                checked={useContext}
+                onChange={(event) =>
+                  setUseContext(
+                    event.target.checked
+                  )
+                }
+              />
+
+              <span>
+                {context.label}
+              </span>
             </label>
           ) : (
-            <p className="muted-text zwirk-context-note">Connect your dashboard to unlock context-aware answers.</p>
+            <p className="muted-text zwirk-context-note">
+              Connect your dashboard
+              to unlock context-aware
+              answers.
+            </p>
           )}
-          {competitorSignals.length > 0 ? (
+
+          {competitorSignals.length >
+          0 ? (
             <div className="zwirk-competitive-summary">
-              <h4>Competitor radar</h4>
+              <h4>
+                Competitor radar
+              </h4>
+
               <ul>
-                {competitorSignals.map((signal) => (
-                  <li key={signal}>{signal}</li>
-                ))}
+                {competitorSignals.map(
+                  (signal) => (
+                    <li key={signal}>
+                      {signal}
+                    </li>
+                  )
+                )}
               </ul>
             </div>
           ) : null}
-          {brandVaultStatus !== "complete" ? (
+
+          {brandVaultStatus !==
+          "complete" ? (
             <div className="zwirk-vault-cta">
-              <p className="muted-text">Complete your Brand Vault to make ZWIRK sound like your brand.</p>
+              <p className="muted-text">
+                Complete your Brand
+                Vault to make ZWIRK
+                sound like your brand.
+              </p>
+
               <Link href="/brand-vault">
-                <Button type="button" variant="secondary">Complete Brand Vault</Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                >
+                  Complete Brand Vault
+                </Button>
               </Link>
             </div>
           ) : null}
         </div>
+
         <Card className="zwirk-hero-card">
           <CardHeader>
-            <CardTitle>Starter prompts</CardTitle>
-            <CardDescription>Pick one to launch a fast diagnostic.</CardDescription>
+            <CardTitle>
+              Starter prompts
+            </CardTitle>
+
+            <CardDescription>
+              Pick one to launch a
+              fast diagnostic.
+            </CardDescription>
           </CardHeader>
+
           <CardContent className="zwirk-prompt-grid">
-            {starterPrompts.map((prompt) => (
-              <button key={prompt} type="button" className="zwirk-prompt" onClick={() => sendMessage(prompt)}>
-                {prompt}
-              </button>
-            ))}
+            {starterPrompts.map(
+              (prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  className="zwirk-prompt"
+                  onClick={() =>
+                    void sendMessage(
+                      prompt
+                    )
+                  }
+                  disabled={loading}
+                >
+                  {prompt}
+                </button>
+              )
+            )}
           </CardContent>
         </Card>
+
         <Card className="zwirk-hero-card zwirk-capabilities">
           <CardHeader>
-            <CardTitle>What ZWIRK does best</CardTitle>
-            <CardDescription>Fast, tactical answers in plain English.</CardDescription>
+            <CardTitle>
+              What ZWIRK does best
+            </CardTitle>
+
+            <CardDescription>
+              Fast, tactical answers
+              in plain English.
+            </CardDescription>
           </CardHeader>
+
           <CardContent className="zwirk-capability-list">
             <div>
-              <h4>Profit diagnostics</h4>
-              <p className="muted-text">Identify margin, CAC, and ROAS bottlenecks in seconds.</p>
+              <h4>
+                Profit diagnostics
+              </h4>
+
+              <p className="muted-text">
+                Identify margin, CAC,
+                and ROAS bottlenecks
+                quickly.
+              </p>
             </div>
+
             <div>
-              <h4>Scale guidance</h4>
-              <p className="muted-text">Turn numbers into "scale / hold / fix" calls.</p>
+              <h4>
+                Scale guidance
+              </h4>
+
+              <p className="muted-text">
+                Turn numbers into
+                scale / hold / fix
+                decisions.
+              </p>
             </div>
+
             <div>
-              <h4>Scenario planning</h4>
-              <p className="muted-text">Compare changes in AOV, returns, or CAC quickly.</p>
+              <h4>
+                Scenario planning
+              </h4>
+
+              <p className="muted-text">
+                Compare changes in
+                AOV, returns, or CAC.
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -465,105 +679,222 @@ export default function ZwirkPage() {
       <section className="zwirk-chat surface">
         <div className="zwirk-chat-header">
           <h2>Conversation</h2>
+
           <span
             className="proof-badge"
             style={{
-              backgroundColor: proof ? (proof.assumptions.length > 0 ? "#e7f8ec" : "#fdf2d6") : "#f4f4f4",
-              color: proof ? (proof.assumptions.length > 0 ? "#0f6b30" : "#805500") : "#666",
+              backgroundColor: proof
+                ? proof.assumptions
+                    .length > 0
+                  ? "#e7f8ec"
+                  : "#fdf2d6"
+                : "#f4f4f4",
+
+              color: proof
+                ? proof.assumptions
+                    .length > 0
+                  ? "#0f6b30"
+                  : "#805500"
+                : "#666",
+
               borderRadius: 999,
               padding: "2px 10px",
               fontSize: 12,
-              marginLeft: 12
+              marginLeft: 12,
             }}
           >
-            {proof ? (proof.assumptions.length > 0 ? "Proof attached" : "Proof pending") : "Proof pending"}
+            {proof
+              ? proof.assumptions
+                  .length > 0
+                ? "Proof attached"
+                : "Proof pending"
+              : "Proof pending"}
           </span>
-          <span className={`status-dot ${loading ? "status-warn" : "status-good"}`}>
-            {loading ? "ZWIRK is thinking..." : "Ready"}
+
+          <span
+            className={`status-dot ${
+              loading
+                ? "status-warn"
+                : "status-good"
+            }`}
+          >
+            {loading
+              ? "ZWIRK is thinking..."
+              : "Ready"}
           </span>
         </div>
+
         <div className="zwirk-messages">
-          {chatBody.map((msg, index) => (
-            <div key={`${msg.role}-${index}`} className={`zwirk-message-group ${msg.role}`}>
-              <div className={`zwirk-message ${msg.role}`}>
-                <span>{msg.content}</span>
-              </div>
-              {msg.role === "assistant" ? (
-                <div className="zwirk-actions">
-                  <button
-                    type="button"
-                    className="zwirk-action"
-                    onClick={() => {
-                      void copyMessage(msg.content);
-                      showActionToast(`${index}:copy`, "Copied");
-                    }}
-                    data-tooltip={tooltipFor(index, "copy", "Copy")}
-                    aria-label="Copy response"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
-                      <rect x="9" y="9" width="10" height="10" rx="2" />
-                      <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    className="zwirk-action"
-                    onClick={() => showActionToast(`${index}:like`, "Liked")}
-                    data-tooltip={tooltipFor(index, "like", "Like")}
-                    aria-label="Like response"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
-                      <path d="M7 11V5a2 2 0 0 1 2-2h0l3 6h5a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-5l-3 6h0a2 2 0 0 1-2-2v-6z" />
-                      <path d="M5 11h2v9H5z" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    className="zwirk-action"
-                    onClick={() => showActionToast(`${index}:dislike`, "Disliked")}
-                    data-tooltip={tooltipFor(index, "dislike", "Dislike")}
-                    aria-label="Dislike response"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
-                      <path d="M7 13v6a2 2 0 0 0 2 2h0l3-6h5a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-5L9 3h0a2 2 0 0 0-2 2v6z" />
-                      <path d="M5 4h2v9H5z" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    className="zwirk-action"
-                    onClick={() => {
-                      downloadMessage(msg.content);
-                      showActionToast(`${index}:download`, "Downloaded");
-                    }}
-                    data-tooltip={tooltipFor(index, "download", "Download")}
-                    aria-label="Download response"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
-                      <path d="M12 3v10" />
-                      <path d="M8 9l4 4 4-4" />
-                      <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    className="zwirk-action"
-                    onClick={() => {
-                      retryLastPrompt();
-                      showActionToast(`${index}:retry`, "Retrying");
-                    }}
-                    data-tooltip={tooltipFor(index, "retry", "Retry")}
-                    aria-label="Retry response"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
-                      <path d="M20 12a8 8 0 1 1-2.34-5.66" />
-                      <path d="M20 4v6h-6" />
-                    </svg>
-                  </button>
+          {chatBody.map(
+            (msg, index) => (
+              <div
+                key={`${msg.role}-${index}`}
+                className={`zwirk-message-group ${msg.role}`}
+              >
+                <div
+                  className={`zwirk-message ${msg.role}`}
+                >
+                  <span>
+                    {msg.content}
+                  </span>
                 </div>
-              ) : null}
-            </div>
-          ))}
+
+                {msg.role ===
+                "assistant" ? (
+                  <div className="zwirk-actions">
+                    <button
+                      type="button"
+                      className="zwirk-action"
+                      onClick={() => {
+                        void copyMessage(
+                          msg.content
+                        );
+
+                        showActionToast(
+                          `${index}:copy`,
+                          "Copied"
+                        );
+                      }}
+                      data-tooltip={tooltipFor(
+                        index,
+                        "copy",
+                        "Copy"
+                      )}
+                      aria-label="Copy response"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                        fill="none"
+                      >
+                        <rect
+                          x="9"
+                          y="9"
+                          width="10"
+                          height="10"
+                          rx="2"
+                        />
+
+                        <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                      </svg>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="zwirk-action"
+                      onClick={() =>
+                        showActionToast(
+                          `${index}:like`,
+                          "Liked"
+                        )
+                      }
+                      data-tooltip={tooltipFor(
+                        index,
+                        "like",
+                        "Like"
+                      )}
+                      aria-label="Like response"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                        fill="none"
+                      >
+                        <path d="M7 11V5a2 2 0 0 1 2-2h0l3 6h5a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-5l-3 6h0a2 2 0 0 1-2-2v-6z" />
+                        <path d="M5 11h2v9H5z" />
+                      </svg>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="zwirk-action"
+                      onClick={() =>
+                        showActionToast(
+                          `${index}:dislike`,
+                          "Disliked"
+                        )
+                      }
+                      data-tooltip={tooltipFor(
+                        index,
+                        "dislike",
+                        "Dislike"
+                      )}
+                      aria-label="Dislike response"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                        fill="none"
+                      >
+                        <path d="M7 13v6a2 2 0 0 0 2 2h0l3-6h5a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-5L9 3h0a2 2 0 0 0-2 2v6z" />
+                        <path d="M5 4h2v9H5z" />
+                      </svg>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="zwirk-action"
+                      onClick={() => {
+                        downloadMessage(
+                          msg.content
+                        );
+
+                        showActionToast(
+                          `${index}:download`,
+                          "Downloaded"
+                        );
+                      }}
+                      data-tooltip={tooltipFor(
+                        index,
+                        "download",
+                        "Download"
+                      )}
+                      aria-label="Download response"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                        fill="none"
+                      >
+                        <path d="M12 3v10" />
+                        <path d="M8 9l4 4 4-4" />
+                        <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+                      </svg>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="zwirk-action"
+                      onClick={() => {
+                        retryLastPrompt();
+
+                        showActionToast(
+                          `${index}:retry`,
+                          "Retrying"
+                        );
+                      }}
+                      data-tooltip={tooltipFor(
+                        index,
+                        "retry",
+                        "Retry"
+                      )}
+                      aria-label="Retry response"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                        fill="none"
+                      >
+                        <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+                        <path d="M20 4v6h-6" />
+                      </svg>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            )
+          )}
+
           {loading ? (
             <div className="zwirk-message assistant zwirk-typing">
               <span className="zwirk-dot" />
@@ -572,39 +903,82 @@ export default function ZwirkPage() {
             </div>
           ) : null}
         </div>
-        {error ? <p className="error-text">{error}</p> : null}
+
+        {error ? (
+          <p className="error-text">
+            {error}
+          </p>
+        ) : null}
+
         {proof ? (
           <div className="zwirk-proof">
             <details>
-              <summary>Why this plan?</summary>
+              <summary>
+                Why this plan?
+              </summary>
+
               <div className="zwirk-proof-body">
                 <div>
-                  <h4>Inputs Used</h4>
-                  <pre>{proof.context}</pre>
+                  <h4>
+                    Inputs Used
+                  </h4>
+
+                  <pre>
+                    {proof.context}
+                  </pre>
                 </div>
+
                 <div>
-                  <h4>Brand Rules Applied</h4>
-                  <pre>{proof.brandVault}</pre>
+                  <h4>
+                    Brand Rules Applied
+                  </h4>
+
+                  <pre>
+                    {proof.brandVault}
+                  </pre>
                 </div>
+
                 {proof.competitiveContext ? (
                   <div>
-                    <h4>Competitive radar</h4>
-                    <pre>{proof.competitiveContext}</pre>
+                    <h4>
+                      Competitive radar
+                    </h4>
+
+                    <pre>
+                      {
+                        proof.competitiveContext
+                      }
+                    </pre>
                   </div>
                 ) : null}
-                {proof.assumptions.length > 0 ? (
+
+                {proof.assumptions
+                  .length > 0 ? (
                   <div>
-                    <h4>Assumptions</h4>
+                    <h4>
+                      Assumptions
+                    </h4>
+
                     <ul>
-                      {proof.assumptions.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
+                      {proof.assumptions.map(
+                        (item) => (
+                          <li key={item}>
+                            {item}
+                          </li>
+                        )
+                      )}
                     </ul>
                   </div>
                 ) : (
                   <div>
-                    <h4>Assumptions</h4>
-                    <p className="muted-text">No assumptions detected.</p>
+                    <h4>
+                      Assumptions
+                    </h4>
+
+                    <p className="muted-text">
+                      No assumptions
+                      detected.
+                    </p>
                   </div>
                 )}
               </div>
@@ -615,30 +989,42 @@ export default function ZwirkPage() {
         <div className="zwirk-input">
           <Textarea
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(event) =>
+              setInput(
+                event.target.value
+              )
+            }
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                !event.shiftKey
+              ) {
+                event.preventDefault();
+
+                if (canSend) {
+                  void sendMessage(
+                    input
+                  );
+                }
+              }
+            }}
             placeholder="Type your question for ZWIRK..."
             rows={3}
           />
-          <Button type="button" onClick={() => sendMessage(input)} disabled={!canSend}>
-            {loading ? "Sending..." : "Send to ZWIRK"}
+
+          <Button
+            type="button"
+            onClick={() =>
+              void sendMessage(input)
+            }
+            disabled={!canSend}
+          >
+            {loading
+              ? "Sending..."
+              : "Send to ZWIRK"}
           </Button>
         </div>
       </section>
     </main>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

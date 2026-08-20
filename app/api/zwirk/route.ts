@@ -14,6 +14,11 @@ type GeminiGenerateResponse = {
       }>;
     };
   }>;
+  error?: {
+    code?: number;
+    message?: string;
+    status?: string;
+  };
 };
 
 type ProofOfWork = {
@@ -22,7 +27,6 @@ type ProofOfWork = {
   assumptions: string[];
   competitiveContext?: string;
 };
-
 
 type BrandVaultRow = {
   brand_name: string | null;
@@ -35,7 +39,7 @@ type BrandVaultRow = {
   competitor_focus: string | null;
 };
 
-function formatBrandVault(row: BrandVaultRow) {
+function formatBrandVault(row: BrandVaultRow): string {
   const items = [
     row.brand_name ? `Brand name: ${row.brand_name}` : null,
     row.website_url ? `Website: ${row.website_url}` : null,
@@ -43,26 +47,58 @@ function formatBrandVault(row: BrandVaultRow) {
     row.audience ? `Audience: ${row.audience}` : null,
     row.do_not_say ? `Do-not-say: ${row.do_not_say}` : null,
     row.hero_product ? `Hero product: ${row.hero_product}` : null,
-    row.main_objection ? `Main objection: ${row.main_objection}` : null,
-    row.competitor_focus ? `Competitor focus: ${row.competitor_focus}` : null
-  ].filter(Boolean);
-  return items.length ? items.join("\n") : "No brand vault data provided.";
+    row.main_objection
+      ? `Main objection: ${row.main_objection}`
+      : null,
+    row.competitor_focus
+      ? `Competitor focus: ${row.competitor_focus}`
+      : null,
+  ].filter(Boolean) as string[];
+
+  return items.length > 0
+    ? items.join("\n")
+    : "No brand vault data provided.";
 }
 
-function buildPrompt(messages: ChatMessage[], context?: string, competitorContext?: string, brandVault?: BrandVaultRow) {
-  const trimmed = messages.slice(-12).map((msg) => {
+function buildPrompt(
+  messages: ChatMessage[],
+  context?: string,
+  competitorContext?: string,
+  brandVault?: BrandVaultRow
+): string {
+  const trimmedMessages = messages.slice(-12).map((msg) => {
     const role = msg.role === "assistant" ? "ZWIRK" : "User";
     return `${role}: ${msg.content.trim()}`;
   });
-  const lockedContext = context && context.trim().length > 0 ? context.trim() : "No dashboard context provided.";
-  const lockedVault = brandVault ? formatBrandVault(brandVault) : "No brand vault data provided.";
-  const lockedCompetitors = brandVault?.competitor_focus?.trim().length ? brandVault.competitor_focus.trim() : "No competitor focus provided.";
+
+  const lockedContext =
+    context && context.trim().length > 0
+      ? context.trim()
+      : "No dashboard context provided.";
+
+  const lockedVault = brandVault
+    ? formatBrandVault(brandVault)
+    : "No brand vault data provided.";
+
+  const lockedCompetitors =
+    brandVault?.competitor_focus?.trim().length
+      ? brandVault.competitor_focus.trim()
+      : "No competitor focus provided.";
+
   return [
     "You are ZWIRK, a sharp virtual assistant for DTC operators.",
-    "Goal: Provide outcome-focused, specific, and practical guidance a founder can implement.",
-    "If key metrics are missing for the request (ROAS, CAC, AOV, margin, order volume), ask for them first and do not give a plan yet.",
-    "Use the Context block as facts. Do not contradict it.",
-    "Respond with the answer only. Do not include role labels like 'ZWIRK:' or 'User:'.",
+    "",
+    "Goal:",
+    "Provide outcome-focused, specific, practical guidance that a DTC founder can implement.",
+    "",
+    "IMPORTANT:",
+    "Use the Context block as facts.",
+    "Do not contradict dashboard data.",
+    "Do not invent metrics that are not present.",
+    "If metrics are missing and they are necessary for the question, clearly state which metrics are missing.",
+    "If enough context exists, analyze it directly instead of asking the user to repeat information already present in Context.",
+    "Respond with the answer only.",
+    "Do not include role labels such as 'ZWIRK:' or 'User:'.",
     "If you are unsure, say so.",
     "",
     "Context (locked):",
@@ -75,192 +111,460 @@ function buildPrompt(messages: ChatMessage[], context?: string, competitorContex
     lockedCompetitors,
     "",
     "Competitive radar (locked):",
-    competitorContext ?? "No competitor radar data provided.",
+    competitorContext?.trim() || "No competitor radar data provided.",
+    "",
+    "Conversation:",
+    ...trimmedMessages,
     "",
     "Required output format:",
+    "",
     "Summary:",
-    "- 2-3 bullet points with the main diagnosis",
+    "- Give the biggest problem first.",
+    "- Give 2-3 concise supporting points.",
     "",
     "30-Day Plan:",
     "Week 1:",
-    "- bullet steps",
+    "- Concrete actions.",
+    "",
     "Week 2:",
-    "- bullet steps",
+    "- Concrete actions.",
+    "",
     "Week 3:",
-    "- bullet steps",
+    "- Concrete actions.",
+    "",
     "Week 4:",
-    "- bullet steps",
+    "- Concrete actions.",
     "",
     "Metrics to Monitor:",
-    "- 4-6 bullets",
+    "- 4-6 metrics.",
     "",
-    ...trimmed,
-    "Answer:"
+    "Answer:",
   ].join("\n");
 }
 
-function extractReply(data: GeminiGenerateResponse) {
+function extractReply(data: GeminiGenerateResponse): {
+  reply: string;
+  raw: string;
+} {
   const parts = data.candidates?.[0]?.content?.parts ?? [];
-  const rawReply = parts.map((part) => part.text ?? "").join("").trim() || "No response generated.";
+
+  const rawReply = parts
+    .map((part) => part.text ?? "")
+    .join("")
+    .trim();
+
+  const reply = rawReply
+    .replace(/^ZWIRK:\s*/i, "")
+    .replace(/\nUser:\s*[\s\S]*$/i, "")
+    .trim();
+
   return {
-    reply: rawReply.replace(/^ZWIRK:\s*/i, "").replace(/\nUser:.*$/s, "").trim(),
-    raw: rawReply
+    reply: reply || "No response generated.",
+    raw: rawReply,
   };
 }
 
-
-function detectAssumptions(text: string) {
+function detectAssumptions(text: string): string[] {
   if (!text) return [];
-  const matches = text.match(/[^.!?]*\bassum(?:ed|ing|es)?\b[^.!?]*[.!?]?/gi) ?? [];
-  const normalized = matches.map((m) => m.replace(/\s+/g, " ").trim()).filter(Boolean);
+
+  const matches =
+    text.match(
+      /[^.!?]*\b(?:assumed|assuming|assumes)\b[^.!?]*[.!?]?/gi
+    ) ?? [];
+
+  const normalized = matches
+    .map((match) => match.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+
   return Array.from(new Set(normalized)).slice(0, 4);
 }
 
+async function callGemini(
+  prompt: string,
+  apiKey: string,
+  model: string,
+  timeoutMs: number,
+  maxOutputTokens: number
+): Promise<{
+  res: Response;
+  endpoint: string;
+}> {
+  const modelName = model.replace(/^models\//, "");
 
+  const payload = {
+    contents: [
+      {
+        role: "user",
+        parts: [
+          {
+            text: prompt,
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      maxOutputTokens,
+      temperature: 0.4,
+    },
+  };
+
+  const versions = ["v1beta", "v1"];
+
+  let lastResponse: Response | null = null;
+  let lastEndpoint = "";
+
+  for (const version of versions) {
+    const endpoint =
+      `https://generativelanguage.googleapis.com/${version}` +
+      `/models/${modelName}:generateContent?key=${apiKey}`;
+
+    const controller = new AbortController();
+
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
+
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      lastResponse = response;
+      lastEndpoint = endpoint;
+
+      if (response.ok) {
+        return {
+          res: response,
+          endpoint,
+        };
+      }
+
+      // Try the second API version only for 404.
+      if (response.status !== 404) {
+        break;
+      }
+    } catch (error) {
+      clearTimeout(timeout);
+
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error(
+          `Gemini request timed out after ${timeoutMs}ms`
+        );
+      }
+
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  if (!lastResponse) {
+    throw new Error("Unable to connect to Gemini API.");
+  }
+
+  return {
+    res: lastResponse,
+    endpoint: lastEndpoint,
+  };
+}
 
 export async function POST(request: Request) {
   const startedAt = Date.now();
+
   try {
+    // --------------------------------------------------
+    // 1. Authenticate user
+    // --------------------------------------------------
+
     const authClient = await createServerAuthClient();
+
     const {
       data: { user },
-      error: userError
+      error: userError,
     } = await authClient.auth.getUser();
 
     if (userError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        {
+          error: "Unauthorized",
+        },
+        {
+          status: 401,
+        }
+      );
     }
 
-    const body = (await request.json()) as { messages?: ChatMessage[]; context?: string; competitorContext?: string };
-    const messages = Array.isArray(body.messages) ? body.messages : [];
-    const competitorContext = typeof body.competitorContext === "string" ? body.competitorContext : undefined;
+    // --------------------------------------------------
+    // 2. Read request body
+    // --------------------------------------------------
+
+    const body = (await request.json()) as {
+      messages?: ChatMessage[];
+      context?: string;
+      competitorContext?: string;
+    };
+
+    const messages = Array.isArray(body.messages)
+      ? body.messages
+      : [];
+
+    const contextValue =
+      typeof body.context === "string"
+        ? body.context
+        : undefined;
+
+    const competitorContext =
+      typeof body.competitorContext === "string"
+        ? body.competitorContext
+        : undefined;
+
     if (messages.length === 0) {
-      return NextResponse.json({ error: "No messages provided" }, { status: 400 });
+      return NextResponse.json(
+        {
+          error: "No messages provided",
+        },
+        {
+          status: 400,
+        }
+      );
     }
 
-    const { data: brandVault, error: brandVaultError } = await authClient
+    // --------------------------------------------------
+    // 3. Load Brand Vault
+    // --------------------------------------------------
+
+    const {
+      data: brandVault,
+      error: brandVaultError,
+    } = await authClient
       .from("brand_vaults")
-      .select("brand_name,website_url,tone,audience,do_not_say,hero_product,main_objection,competitor_focus")
+      .select(
+        "brand_name,website_url,tone,audience,do_not_say,hero_product,main_objection,competitor_focus"
+      )
       .eq("user_id", user.id)
       .maybeSingle();
 
     if (brandVaultError) {
-      console.warn(`[api/zwirk] brand_vault lookup failed: ${brandVaultError.message}`);
+      console.warn(
+        `[api/zwirk] brand_vault lookup failed: ${brandVaultError.message}`
+      );
     }
 
-    const apiKey = process.env.GEMINI_API_KEY || "";
-    const rawModel = process.env.GEMINI_MODEL || "";
-    const model = rawModel.startsWith("models/") ? rawModel : `models/${rawModel}`;
-    const timeoutMs = Number(process.env.GEMINI_TIMEOUT_MS || 25000);
+    // --------------------------------------------------
+    // 4. Gemini configuration
+    // --------------------------------------------------
 
-    if (!apiKey || !rawModel) {
-      return NextResponse.json({ error: "LLM not configured" }, { status: 500 });
+    const apiKey = process.env.GEMINI_API_KEY?.trim();
+
+    /*
+     * Keep the model configurable through Vercel.
+     *
+     * If GEMINI_MODEL is missing, use the model currently
+     * configured for your application.
+     */
+    const rawModel =
+      process.env.GEMINI_MODEL?.trim() || "gemini-3.6-flash";
+
+    const model = rawModel.replace(/^models\//, "");
+
+    const timeoutMs = Number(
+      process.env.GEMINI_TIMEOUT_MS || 25000
+    );
+
+    if (!apiKey) {
+      return NextResponse.json(
+        {
+          error: "LLM not configured",
+          detail: "GEMINI_API_KEY is missing.",
+        },
+        {
+          status: 500,
+        }
+      );
     }
 
-    const contextValue = typeof body.context === "string" ? body.context : undefined;
-    const prompt = buildPrompt(messages, contextValue, competitorContext, brandVault ?? undefined);
-    const proofContext = contextValue?.trim() ? contextValue.trim() : "No dashboard context provided.";
-    const proofBrandVault = brandVault ? formatBrandVault(brandVault) : "No brand vault data provided.";
+    // --------------------------------------------------
+    // 5. Build prompt
+    // --------------------------------------------------
+
+    const prompt = buildPrompt(
+      messages,
+      contextValue,
+      competitorContext,
+      brandVault ?? undefined
+    );
+
+    // --------------------------------------------------
+    // 6. Proof-of-work context
+    // --------------------------------------------------
+
+    const proofContext =
+      contextValue?.trim() ||
+      "No dashboard context provided.";
+
+    const proofBrandVault = brandVault
+      ? formatBrandVault(brandVault)
+      : "No brand vault data provided.";
+
     const proofAssumptions: string[] = [];
-    if (!contextValue || !contextValue.trim()) {
-      proofAssumptions.push("Dashboard context was missing, so default D2C benchmarks were used.");
-    } else if (/n\/a/i.test(proofContext)) {
-      proofAssumptions.push("Some dashboard metrics were unavailable (n/a), so healthy benchmarks were assumed.");
+
+    if (!contextValue?.trim()) {
+      proofAssumptions.push(
+        "Dashboard context was missing."
+      );
     }
+
+    if (/n\/a/i.test(proofContext)) {
+      proofAssumptions.push(
+        "Some dashboard metrics were unavailable (n/a)."
+      );
+    }
+
     if (!brandVault) {
-      proofAssumptions.push("Brand Vault is empty, so a neutral voice was assumed.");
+      proofAssumptions.push(
+        "Brand Vault is empty, so a neutral brand voice was used."
+      );
     }
-    const baseUrl = "https://generativelanguage.googleapis.com";
-    const modelPath = `/models/${model.replace(/^models\//, "")}:generateContent?key=${apiKey}`;
 
-    const callGemini = async (generationConfig: { temperature: number; maxOutputTokens: number }) => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), timeoutMs);
-      const payload = {
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig
-      };
+    // --------------------------------------------------
+    // 7. Primary Gemini request
+    // --------------------------------------------------
 
-      let endpoint = `${baseUrl}/v1beta${modelPath}`;
-      let res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      });
+    let { res, endpoint } = await callGemini(
+      prompt,
+      apiKey,
+      model,
+      timeoutMs,
+      1200
+    );
 
-      if (!res.ok && res.status === 404) {
-        endpoint = `${baseUrl}/v1${modelPath}`;
-        res = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: controller.signal
-        });
-      }
-
-      clearTimeout(timeout);
-      return { res, endpoint };
-    };
-
-    const primaryConfig = { temperature: 0.35, maxOutputTokens: 1200 };
-    let { res, endpoint } = await callGemini(primaryConfig);
+    // --------------------------------------------------
+    // 8. Handle Gemini error
+    // --------------------------------------------------
 
     if (!res.ok) {
       const errorText = await res.text();
+
+      console.error("[api/zwirk] Gemini error:", {
+        status: res.status,
+        model,
+        endpoint,
+        detail: errorText,
+      });
+
       return NextResponse.json(
         {
           error: "LLM error",
           status: res.status,
-          detail: errorText || "No error body returned",
+          detail:
+            errorText || "No error body returned.",
           model,
-          endpoint
+          endpoint,
         },
-        { status: res.status }
+        {
+          status: res.status,
+        }
       );
     }
 
-    let data = (await res.json()) as GeminiGenerateResponse;
+    // --------------------------------------------------
+    // 9. Parse response
+    // --------------------------------------------------
+
+    let data =
+      (await res.json()) as GeminiGenerateResponse;
+
     let result = extractReply(data);
+
     let reply = result.reply;
     let rawText = result.raw;
 
+    // --------------------------------------------------
+    // 10. Retry if response is too short
+    // --------------------------------------------------
+
     if (reply.length < 400) {
-      const retryConfig = { temperature: 0.2, maxOutputTokens: 1500 };
-      const retry = await callGemini(retryConfig);
+      const retry = await callGemini(
+        prompt,
+        apiKey,
+        model,
+        timeoutMs,
+        1500
+      );
+
       if (retry.res.ok) {
         endpoint = retry.endpoint;
-        data = (await retry.res.json()) as GeminiGenerateResponse;
+
+        data =
+          (await retry.res.json()) as GeminiGenerateResponse;
+
         result = extractReply(data);
+
         reply = result.reply;
         rawText = result.raw;
       }
     }
 
+    // --------------------------------------------------
+    // 11. Detect assumptions
+    // --------------------------------------------------
+
     detectAssumptions(rawText).forEach((sentence) => {
-      if (sentence && !proofAssumptions.includes(sentence)) proofAssumptions.push(sentence);
+      if (
+        sentence &&
+        !proofAssumptions.includes(sentence)
+      ) {
+        proofAssumptions.push(sentence);
+      }
     });
+
+    // --------------------------------------------------
+    // 12. Build proof
+    // --------------------------------------------------
 
     const proof: ProofOfWork = {
       context: proofContext,
       brandVault: proofBrandVault,
       assumptions: proofAssumptions,
-      competitiveContext: competitorContext?.trim() ? competitorContext.trim() : undefined
+      competitiveContext:
+        competitorContext?.trim() || undefined,
     };
-    return NextResponse.json({ reply, latencyMs: Date.now() - startedAt, proof });
+
+    // --------------------------------------------------
+    // 13. Return response
+    // --------------------------------------------------
+
+    return NextResponse.json({
+      reply,
+      latencyMs: Date.now() - startedAt,
+      proof,
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "ZWIRK error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const message =
+      error instanceof Error
+        ? error.message
+        : "ZWIRK error";
+
+    console.error("[api/zwirk] unexpected error:", error);
+
+    return NextResponse.json(
+      {
+        error: message,
+      },
+      {
+        status: 500,
+      }
+    );
   } finally {
-    console.info(`[api/zwirk] completed in ${Date.now() - startedAt}ms`);
+    console.info(
+      `[api/zwirk] completed in ${
+        Date.now() - startedAt
+      }ms`
+    );
   }
 }
-
-
-
-
-
-
-
-
-

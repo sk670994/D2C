@@ -6,8 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "validate:formulas": "cross-env \"NODE_OPTIONS=--preserve-symlinks-main --preserve-symlinks\" ts-node --transpile-only scripts/validate-formulas.ts"
+    "lint": "next lint --dir app --dir components --dir lib --dir scripts",
+    "validate:formulas": "npx tsx scripts/validate-formulas.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.9.0",
