@@ -56,8 +56,11 @@ export async function GET(request: NextRequest) {
     });
 
     if (!response.ok) {
+      const message = response.status === 404
+        ? "This URL does not expose a public Shopify catalog at /products.json"
+        : "Shopify public catalog is unavailable";
       return NextResponse.json(
-        { error: "Shopify public catalog is unavailable", status: response.status },
+        { error: message, status: response.status },
         { status: response.status === 404 ? 404 : 502 }
       );
     }

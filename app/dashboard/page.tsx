@@ -12,7 +12,6 @@ import { createClient } from "@/lib/supabase/client";
 import { generateDecisions, generateMoneyAlerts } from "@/lib/llm/decision-engine";
 import type { OpportunityScan, MoneyAlert } from "@/lib/llm/decision-engine";
 import { SignOutButton } from "@/components/auth/SignOutButton";
-import { ActionPanel, AlertPanel } from "@/components/dashboard/InsightPanel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -654,33 +653,58 @@ export default function DashboardPage() {
   }
 
   function applyChanges(scopeLabel = "All", nextInput?: ParsedReport) {
-    setRecalcLoading(true);
-    try {
-      const inputToUse = nextInput ?? reportInput;
-      if (nextInput) {
-        setReportInput(nextInput);
+   setRecalcLoading(true);
+
+try {
+  const inputToUse = nextInput ?? reportInput;
+
+  if (nextInput) {
+    setReportInput(nextInput);
+  }
+
+  const next = calculateReport(inputToUse);
+
+
+// Preserve the previously generated AI insights.
+// They are still valid for the previous calculation and should
+// remain visible until the user explicitly regenerates them.
+const merged = {
+  ...next,
+  insights: report.insights
+    ? {
+        ...report.insights,
+        // Keep the existing source/latency and mark that these
+        // insights were generated from the previous calculation.
       }
-      const next = calculateReport(inputToUse);
-      const merged = {
-        ...next,
-        insights: pendingInsights()
-      };
-      setReport(merged);
-      
-      // Generate decisions and alerts automatically
-      const newDecisions = generateDecisions(next);
-      const newAlerts = generateMoneyAlerts(next);
-      setDecisions(newDecisions);
-      setMoneyAlerts(newAlerts);
-      
-      sessionStorage.setItem("reportInput", JSON.stringify(inputToUse));
-      sessionStorage.setItem("report", JSON.stringify(merged));
-      void persistWorkspaceToDatabase(inputToUse, merged, scenarios, selectedScenarioId, monthKey);
-      setDirty(false);
-      pushToast(`${scopeLabel} changes applied`, "good");
-    } finally {
-      setRecalcLoading(false);
-    }
+    : pendingInsights()
+};
+
+setReport(merged);
+
+  // Generate decisions and alerts automatically
+  const newDecisions = generateDecisions(next);
+  const newAlerts = generateMoneyAlerts(next);
+
+  setDecisions(newDecisions);
+  setMoneyAlerts(newAlerts);
+
+  sessionStorage.setItem("reportInput", JSON.stringify(inputToUse));
+  sessionStorage.setItem("report", JSON.stringify(merged));
+
+  void persistWorkspaceToDatabase(
+    inputToUse,
+    merged,
+    scenarios,
+    selectedScenarioId,
+    monthKey
+  );
+
+  setDirty(false);
+
+  pushToast(`${scopeLabel} changes applied`, "good");
+} finally {
+  setRecalcLoading(false);
+}
   }
 
   function applySectionChanges(id: ActiveSection) {
@@ -689,31 +713,65 @@ export default function DashboardPage() {
     applyChanges(sectionLabel);
   }
 
-  function resetToDefaults() {
-    setReportInput(DEFAULT_REPORT_INPUT);
-    const next = calculateReport(DEFAULT_REPORT_INPUT);
-    const merged = {
-      ...next,
-      insights: pendingInsights()
-    };
-    setReport(merged);
-    setScenarios([]);
-    setSelectedScenarioId(null);
-    sessionStorage.setItem("reportInput", JSON.stringify(DEFAULT_REPORT_INPUT));
-    sessionStorage.setItem("report", JSON.stringify(merged));
-    void persistWorkspaceToDatabase(DEFAULT_REPORT_INPUT, merged, [], null, monthKey);
-    setDirty(false);
-    pushToast("Default assumptions loaded", "neutral");
-  }
+ function resetToDefaults() {
+  setReportInput(DEFAULT_REPORT_INPUT);
 
-  async function loadSampleData() {
+  const next = calculateReport(DEFAULT_REPORT_INPUT);
+
+  const previousInsights = report.insights;
+
+  const merged: CalculatedReport = {
+    ...next,
+
+    insights:
+      previousInsights?.source === "gemini"
+        ? {
+            ...previousInsights,
+            basedOnPreviousCalculation: true,
+          }
+        : previousInsights?.source === "fallback"
+          ? {
+              ...previousInsights,
+              basedOnPreviousCalculation: true,
+            }
+          : pendingInsights(),
+  };
+
+  setReport(merged);
+
+  setScenarios([]);
+  setSelectedScenarioId(null);
+
+  sessionStorage.setItem(
+    "reportInput",
+    JSON.stringify(DEFAULT_REPORT_INPUT)
+  );
+
+  sessionStorage.setItem(
+    "report",
+    JSON.stringify(merged)
+  );
+
+  void persistWorkspaceToDatabase(
+    DEFAULT_REPORT_INPUT,
+    merged,
+    [],
+    null,
+    monthKey
+  );
+
+  setDirty(false);
+
+  pushToast("Default assumptions loaded", "neutral");
+}
+
+  function loadSampleData() {
   setSelectedSection("all");
   setReportInput(DEFAULT_REPORT_INPUT);
 
   const next = calculateReport(DEFAULT_REPORT_INPUT);
 
-  // Show calculated sample report immediately
-  setReport(next);
+  setReport({ ...next, insights: pendingInsights() });
 
   setScenarios([]);
   setSelectedScenarioId(null);
@@ -725,72 +783,11 @@ export default function DashboardPage() {
     JSON.stringify(DEFAULT_REPORT_INPUT)
   );
 
-  pushToast("Sample data loaded. Generating AI insights...", "good");
-
-  setInsightsLoading(true);
+  sessionStorage.setItem("report", JSON.stringify({ ...next, insights: pendingInsights() }));
+  void persistWorkspaceToDatabase(DEFAULT_REPORT_INPUT, { ...next, insights: pendingInsights() }, [], null, monthKey);
   setInsightsError(null);
-
-  try {
-    const res = await fetch("/api/insights", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(next)
-    });
-
-    if (!res.ok) {
-      const errorJson = (await res.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-
-      throw new Error(errorJson?.error || "Insights API failed");
-    }
-
-    const insights = normalizeInsightPayload(
-      (await res.json()) as Partial<CalculatedReport["insights"]>
-    );
-
-    const merged = {
-      ...next,
-      insights
-    };
-
-    setReport(merged);
-
-    sessionStorage.setItem(
-      "report",
-      JSON.stringify(merged)
-    );
-
-    void persistWorkspaceToDatabase(
-      DEFAULT_REPORT_INPUT,
-      merged,
-      [],
-      null,
-      monthKey
-    );
-
-    setAppliedFixes([]);
-
-    pushToast("AI insights generated", "good");
-  } catch (err) {
-    const message =
-      err instanceof Error
-        ? err.message
-        : "Unable to generate insights";
-
-    setInsightsError(message);
-
-    sessionStorage.setItem(
-      "report",
-      JSON.stringify(next)
-    );
-
-    pushToast(message, "warn");
-  } finally {
-    setInsightsLoading(false);
-  }
+  setAppliedFixes([]);
+  pushToast("Sample data loaded. Click Get AI Insights when ready.", "good");
 }
 
   function closeOnboarding() {
@@ -1359,7 +1356,8 @@ export default function DashboardPage() {
       const metaData = await metaResponse.json();
       if (!metaResponse.ok) {
         setMetaLibraryAds([]);
-        const message = metaData.error || "Meta library search failed";
+        const providerDetails = [metaData.providerCode, metaData.providerType].filter(Boolean).join(" / ");
+        const message = `${metaData.error || "Meta library search failed"}${providerDetails ? ` (${providerDetails})` : ""}`;
         setMetaLibraryError(message);
         pushToast(message, "warn");
       } else {
@@ -1953,24 +1951,14 @@ export default function DashboardPage() {
             <Button type="button" onClick={() => applyChanges()} disabled={recalcLoading}>
               {recalcLoading ? "Applying..." : "Apply All Changes"}
             </Button>
+            <Button type="button" variant="secondary" onClick={generateInsights} disabled={insightsLoading}>
+              {insightsLoading ? "Generating..." : "Get AI Insights"}
+            </Button>
             <Button type="button" variant="secondary" onClick={resetToDefaults}>
               Reset Defaults
             </Button>
           </div>
         </motion.section>
-
-        {/* Decision Engine Panels */}
-        {decisions && (
-          <motion.section className="surface" variants={fadeUp}>
-            <ActionPanel decisions={decisions} isLoading={recalcLoading} />
-          </motion.section>
-        )}
-
-        {moneyAlerts.length > 0 && (
-          <motion.section className="surface" variants={fadeUp}>
-            <AlertPanel alerts={moneyAlerts} isLoading={recalcLoading} />
-          </motion.section>
-        )}
 
         <motion.section className="surface checklist-surface" variants={fadeUp}>
           <div className="section-head">
@@ -2131,13 +2119,45 @@ export default function DashboardPage() {
           <div className="section-head">
             <h3>AI Insights</h3>
             <p>Operator-grade insights for profitability, scaling, and execution.</p>
+            <Button type="button" onClick={generateInsights} disabled={insightsLoading}>
+              {insightsLoading ? "Generating..." : "Get AI Insights"}
+            </Button>
           </div>
-          <div className="insight-meta-row">
-            <Badge variant="secondary">Source: {report.insights.source}</Badge>
-            <Badge variant="secondary">Latency: {report.insights.latencyMs}ms</Badge>
-            <Badge variant={insightsLoading ? "warning" : "success"}>{insightsLoading ? "Generating" : "Ready"}</Badge>
-            <Badge variant="secondary">Confidence: {report.insights.source === "gemini" ? "High" : "Medium"}</Badge>
-          </div>
+        <div className="insight-meta-row">
+  <Badge variant="secondary">
+    Source: {report.insights.source}
+  </Badge>
+
+  <Badge variant="secondary">
+    Latency: {report.insights.latencyMs}ms
+  </Badge>
+
+  <Badge variant={insightsLoading ? "warning" : "success"}>
+    {insightsLoading
+      ? "Generating"
+      : report.insights.basedOnPreviousCalculation
+        ? "Needs Refresh"
+        : "Ready"}
+  </Badge>
+
+  <Badge variant="secondary">
+    Confidence: {report.insights.source === "gemini" ? "High" : "Medium"}
+  </Badge>
+</div>
+
+{report.insights.source !== "pending" && (
+  <div className="mt-2 text-sm text-muted-foreground">
+    {report.insights.basedOnPreviousCalculation ? (
+      <>
+        Based on last generated analysis. Your assumptions have changed.
+      </>
+    ) : (
+      <>
+        Based on current calculation.
+      </>
+    )}
+  </div>
+)}
           {insightsError ? <p className="error-text">{insightsError}</p> : null}
           {report.insights.priorityFixes.length > 0 ? (
             <div className="fix-grid">
@@ -2247,21 +2267,3 @@ export default function DashboardPage() {
     </motion.div>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
