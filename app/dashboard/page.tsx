@@ -18,10 +18,12 @@ import { DashboardInsightsSection } from "@/components/dashboard/DashboardInsigh
 import { DashboardCommandRail, DashboardExecutionControls, DashboardHero } from "@/components/dashboard/DashboardChrome";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { AdSpySection } from "@/components/dashboard/AdSpySection";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
- 
+
+
 const sectionOptions = [
   { id: "all", label: "All" },
   { id: "unit", label: "Unit Economics" },
@@ -1591,24 +1593,21 @@ setReport(merged);
       );
     }
 
-    if (id === "adspy") {
-      return (
-        <div className="adspy-stack">
-          <div>
-            <h4>Ad Performance</h4>
-            {sectionInputs("performance")}
-          </div>
-          <div>
-            <h4>Ad Library</h4>
-            {sectionInputs("library")}
-          </div>
-          <div>
-            <h4>Market Research</h4>
-            {sectionInputs("market")}
-          </div>
-        </div>
-      );
-    }
+  if (id === "adspy") {
+  return (
+    <AdSpySection
+      query={adLibraryQuery}
+      country={adLibraryCountry}
+      onQueryChange={setAdLibraryQuery}
+      onCountryChange={setAdLibraryCountry}
+   onResultCountChange={(count: number) => {
+        if (count === 0) {
+          setMetaLibraryError("");
+        }
+      }}
+    />
+  );
+}
 
     if (id === "library") {
       return (

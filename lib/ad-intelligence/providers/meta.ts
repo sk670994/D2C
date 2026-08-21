@@ -1245,16 +1245,15 @@ function normalizeScrapedAd(
  * SEARCH RELEVANCE
  * ======================================================= */
 
-function normalizeSearchText(
-  value: string | null | undefined
-): string {
-  return (value ?? "")
+function normalizeQueryForMatch(value: string): string {
+  return value
     .toLowerCase()
-    .replace(
-      /[^a-z0-9]+/g,
-      " "
-    )
+    .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+function compactMatch(value: string): string {
+  return normalizeQueryForMatch(value).replace(/\s+/g, "");
 }
 
 function hostContainsQuery(
@@ -1268,19 +1267,14 @@ function hostContainsQuery(
   try {
     const parsed = new URL(url);
 
-    const host =
-      parsed.hostname
-        .replace(/^www\./i, "")
-        .toLowerCase();
+    const host = parsed.hostname
+      .replace(/^www\./i, "")
+      .toLowerCase();
 
-    const q =
-      normalizeSearchText(query);
-
-    const compactQuery =
-      q.replace(/\s+/g, "");
+    const compactQuery = compactMatch(query);
 
     return (
-      compactQuery.length > 0 &&
+      compactQuery.length >= 3 &&
       host.includes(compactQuery)
     );
   } catch {
@@ -1288,27 +1282,109 @@ function hostContainsQuery(
   }
 }
 
-function isRelevantToAdvertiser(
-  ad: CompetitorAd,
+function textContainsQuery(
+  value: string | null | undefined,
   query: string
 ): boolean {
-  const q =
-    normalizeSearchText(query);
+  if (!value) {
+    return false;
+  }
 
-  const advertiser =
-    normalizeSearchText(
-      ad.advertiserName
-    );
+  const normalizedValue =
+    normalizeQueryForMatch(value);
+
+  const normalizedQuery =
+    normalizeQueryForMatch(query);
+
+  if (!normalizedQuery) {
+    return false;
+  }
 
   if (
-    q &&
-    advertiser &&
-    advertiser !== "unknown advertiser" &&
-    advertiser.includes(q)
+    normalizedValue === normalizedQuery ||
+    normalizedValue.includes(normalizedQuery)
   ) {
     return true;
   }
 
+  return compactMatch(value).includes(
+    compactMatch(query)
+  );
+}
+
+function isRelevantToAdvertiser(
+  ad: CompetitorAd,
+  query: string
+): boolean {
+  const normalizedQuery =
+    normalizeQueryForMatch(query);
+
+  if (!normalizedQuery) {
+    return false;
+  }
+
+  /*
+   * Strongest signal:
+   * advertiser name.
+   */
+  if (
+    textContainsQuery(
+      ad.advertiserName,
+      query
+    )
+  ) {
+    return true;
+  }
+
+  /*
+   * Second strongest:
+   * creator + advertiser partnership.
+   */
+  if (
+    ad.partnershipType === "creator" &&
+    textContainsQuery(
+      ad.creatorName,
+      query
+    )
+  ) {
+    return true;
+  }
+
+  /*
+   * Third:
+   * product/headline/copy only count when
+   * they explicitly mention the searched brand.
+   */
+  if (
+    textContainsQuery(
+      ad.productName,
+      query
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    textContainsQuery(
+      ad.headline,
+      query
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    textContainsQuery(
+      ad.primaryText,
+      query
+    )
+  ) {
+    return true;
+  }
+
+  /*
+   * Landing-domain fallback.
+   */
   if (
     hostContainsQuery(
       ad.landingPage,
@@ -2309,15 +2385,72 @@ export async function scrapeMetaAdLibraryForTest(
 }
 
 /* =========================================================
- * PROVIDER
+ * PROVIDER CACHE
  * ======================================================= */
+
+type MetaProviderCacheEntry = {
+  ads: CompetitorAd[];
+  createdAt: number;
+};
+
+const META_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const metaProviderCache =
+  new Map<string, MetaProviderCacheEntry>();
+
+function getMetaCacheKey(
+  query: string,
+  country: string,
+  mode: string
+): string {
+  return [
+    "meta",
+    country.trim().toUpperCase(),
+    mode,
+    query.trim().toLowerCase(),
+  ].join(":");
+}
+
+function getCachedMetaAds(
+  key: string
+): CompetitorAd[] | null {
+  const cached = metaProviderCache.get(key);
+
+  if (!cached) {
+    return null;
+  }
+
+  const age = Date.now() - cached.createdAt;
+
+  if (age > META_CACHE_TTL_MS) {
+    metaProviderCache.delete(key);
+    return null;
+  }
+
+  return cached.ads;
+}
+
+function setCachedMetaAds(
+  key: string,
+  ads: CompetitorAd[]
+): void {
+  metaProviderCache.set(key, {
+    ads,
+    createdAt: Date.now(),
+  });
+}
+/* =========================================================
+ * PROVIDER CACHE
+ * ======================================================= */
+
 export const metaProvider: AdProvider = {
   platform: "meta",
 
   async search(
     input: AdSearchInput
   ): Promise<ProviderResult> {
-    const query = input.query?.trim();
+    const query =
+      input.query?.trim();
 
     if (!query) {
       return {
@@ -2329,14 +2462,58 @@ export const metaProvider: AdProvider = {
       input.country?.trim().toUpperCase() ||
       DEFAULT_COUNTRY;
 
-    const mode = input.mode ?? "advertiser";
+    const mode =
+      input.mode ?? "advertiser";
 
-    const scraped = await scrapeMetaAdLibrary(
-      query,
-      country
+    const cacheKey =
+      getMetaCacheKey(
+        query,
+        country,
+        mode
+      );
+
+    let ads =
+      getCachedMetaAds(cacheKey);
+
+    /* -----------------------------------------------------
+     * CACHE HIT
+     * --------------------------------------------------- */
+
+    if (ads) {
+      console.log(
+        "[MetaProvider] Cache hit:",
+        query,
+        "total:",
+        ads.length
+      );
+
+      /*
+       * Return the COMPLETE cached result set.
+       *
+       * Do not paginate here.
+       * route.ts is responsible for pagination.
+       */
+      return {
+        ads,
+      };
+    }
+
+    /* -----------------------------------------------------
+     * CACHE MISS
+     * --------------------------------------------------- */
+
+    console.log(
+      "[MetaProvider] Cache miss:",
+      query
     );
 
-    let ads = scraped.map((ad) =>
+    const scraped =
+      await scrapeMetaAdLibrary(
+        query,
+        country
+      );
+
+    ads = scraped.map((ad) =>
       normalizeScrapedAd(
         ad,
         query,
@@ -2344,33 +2521,25 @@ export const metaProvider: AdProvider = {
       )
     );
 
-    /*
-     * Advertiser mode:
-     * Prefer ads belonging to the searched advertiser.
-     *
-     * We intentionally do NOT force the result to zero
-     * when Meta's HTML extraction is incomplete.
-     */
-    if (mode === "advertiser") {
-      const relevant = ads.filter((ad) =>
-        isRelevantToAdvertiser(
-          ad,
-          query
-        )
-      );
+    /* -----------------------------------------------------
+     * ADVERTISER RELEVANCE
+     * --------------------------------------------------- */
 
-      if (relevant.length > 0) {
-        ads = relevant;
-      }
-    }
+   if (mode === "advertiser") {
+  ads = ads.filter((ad) =>
+    isRelevantToAdvertiser(ad, query)
+  );
+}
 
-    /*
-     * Deduplicate by actual Meta Library ID.
-     */
-    const unique = new Map<
-      string,
-      CompetitorAd
-    >();
+    /* -----------------------------------------------------
+     * DEDUPLICATION
+     * --------------------------------------------------- */
+
+    const unique =
+      new Map<
+        string,
+        CompetitorAd
+      >();
 
     for (const ad of ads) {
       unique.set(
@@ -2383,11 +2552,10 @@ export const metaProvider: AdProvider = {
       unique.values()
     );
 
-    /*
-     * Sort the COMPLETE result set first.
-     *
-     * Pagination must happen after this.
-     */
+    /* -----------------------------------------------------
+     * SORT COMPLETE RESULT SET
+     * --------------------------------------------------- */
+
     ads.sort((a, b) => {
       const aScore =
         (a.creativeScore ?? 0) +
@@ -2402,26 +2570,43 @@ export const metaProvider: AdProvider = {
       return bScore - aScore;
     });
 
-    /*
-     * IMPORTANT:
-     * Do NOT slice here.
+    /* -----------------------------------------------------
+     * CACHE COMPLETE RESULT SET
+     * --------------------------------------------------- */
+
+    setCachedMetaAds(
+      cacheKey,
+      ads
+    );
+
+    console.log(
+      "[MetaProvider] Cached normalized ads:",
+      ads.length
+    );
+
+    /* -----------------------------------------------------
+     * IMPORTANT
+     * ---------------------------------------------------
+
+     * DO NOT DO THIS HERE:
+     *
+     * const page = ...
+     * const start = ...
+     * const end = ...
+     * ads = ads.slice(start, end)
      *
      * The API route owns pagination.
      *
-     * Returning the complete normalized result allows
-     * the route to correctly calculate:
+     * Provider:
+     *   scrape -> normalize -> filter -> dedupe -> sort
      *
-     *   total
-     *   totalPages
-     *   hasNextPage
-     *   hasPreviousPage
-     *
-     * and then slice the correct page.
-     */
+     * Route:
+     *   enrich -> summary -> paginate -> response
+     * --------------------------------------------------- */
+
     console.log(
-      "[MetaProvider] Normalized ads:",
-      ads.length,
-      "total"
+      "[MetaProvider] Returning full result set:",
+      ads.length
     );
 
     return {

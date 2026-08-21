@@ -179,14 +179,12 @@ export async function GET(
     // This keeps totalAdsFound and pagination accurate.
     // ------------------------------------------------------------
 
-    const searchInput: AdSearchInput = {
-      query,
-      country,
-      platform: "meta",
-      mode,
-      limit,
-      page: 1,
-    };
+  const searchInput: AdSearchInput = {
+  query,
+  country,
+  platform: "meta",
+  mode,
+};
 
     const providerResult =
       await provider.search(
