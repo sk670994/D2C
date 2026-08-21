@@ -1,0 +1,2433 @@
+import type {
+  AdProvider,
+  AdSearchInput,
+  ProviderResult,
+} from "../provider";
+
+import type {
+  AdCreativeType,
+  CompetitorAd,
+} from "../types";
+
+const META_LIB_EN_BASE_URL =
+  "https://www.facebook.com/ads/library/";
+
+const DEFAULT_COUNTRY = "IN";
+
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
+
+const CTA_VALUES = [
+  "Shop Now",
+  "Learn More",
+  "Sign Up",
+  "Buy Now",
+  "Install Now",
+  "Book Now",
+  "Contact Us",
+  "Get Offer",
+  "Apply Now",
+  "Download",
+  "Subscribe",
+  "Order Now",
+  "Message Now",
+  "Send Message",
+  "Get Directions",
+  "Call Now",
+  "Watch More",
+  "Listen Now",
+  "Play Game",
+  "Use App",
+  "अभी खरीदें",
+  "और जानें",
+  "साइन अप करें",
+  "अभी इंस्टॉल करें",
+  "संदेश भेजें",
+];
+
+type PartnershipType =
+  | "direct"
+  | "creator"
+  | "unknown";
+
+type ScrapedMetaAd = {
+  id: string;
+
+  advertiserName?: string | null;
+  creatorName?: string | null;
+  partnershipType?: PartnershipType;
+
+  primaryText?: string | null;
+  headline?: string | null;
+  description?: string | null;
+  callToAction?: string | null;
+
+  firstSeen?: string | null;
+  lastSeen?: string | null;
+
+  landingPage?: string | null;
+
+  isActive?: boolean;
+
+  publisherPlatforms?: string[];
+
+  productName?: string | null;
+  productPrice?: number | null;
+  offer?: string | null;
+
+  creativeType?: AdCreativeType;
+
+  imageUrl?: string | null;
+  videoUrl?: string | null;
+  thumbnailUrl?: string | null;
+
+  hasVideo?: boolean;
+  hasImage?: boolean;
+  hasCarousel?: boolean;
+
+  videoDurationSeconds?: number | null;
+
+  rawLines: string[];
+};
+
+function cleanText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const cleaned = value
+    .replace(/\u200B/g, "")
+    .replace(/\u200C/g, "")
+    .replace(/\u200D/g, "")
+    .replace(/\uFEFF/g, "")
+    .replace(/\u00A0/g, " ")
+    .replace(/\r/g, " ")
+    .replace(/\n/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+/**
+ * Some Meta pages currently return mojibake such as:
+ * "à¤®à¤¾..." instead of Hindi.
+ *
+ * The string may have been decoded as UTF-8 bytes using
+ * Latin-1/Windows-1252. This function attempts a conservative
+ * repair and leaves normal text untouched.
+ */
+function repairMojibake(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  if (
+    !/[ÃÂà¤à¥]/.test(value) &&
+    !value.includes("�")
+  ) {
+    return value;
+  }
+
+  try {
+    const bytes = Uint8Array.from(
+      Array.from(value, (character) =>
+        character.charCodeAt(0) & 0xff
+      )
+    );
+
+    const repaired = new TextDecoder("utf-8", {
+      fatal: false,
+    }).decode(bytes);
+
+    if (
+      repaired &&
+      repaired !== value &&
+      !repaired.includes("�")
+    ) {
+      return repaired;
+    }
+  } catch {
+    // Preserve original text.
+  }
+
+  return value;
+}
+
+function normalizeExtractedText(
+  value: unknown
+): string | null {
+  return repairMojibake(
+    cleanText(value)
+  );
+}
+
+/* =========================================================
+ * URL
+ * ======================================================= */
+
+function unwrapFacebookRedirect(
+  value: string | null
+): string | null {
+  const text = normalizeExtractedText(value);
+
+  if (!text) {
+    return null;
+  }
+
+  try {
+    const url = new URL(text);
+
+    if (
+      url.hostname === "l.facebook.com" &&
+      url.pathname === "/l.php"
+    ) {
+      const destination =
+        url.searchParams.get("u");
+
+      if (destination) {
+        try {
+          return decodeURIComponent(destination);
+        } catch {
+          return destination;
+        }
+      }
+    }
+
+    return url.toString();
+  } catch {
+    return text;
+  }
+}
+
+function normalizeUrl(
+  value: unknown
+): string | null {
+  const text =
+    normalizeExtractedText(value);
+
+  if (!text) {
+    return null;
+  }
+
+  const unwrapped =
+    unwrapFacebookRedirect(text);
+
+  if (!unwrapped) {
+    return null;
+  }
+
+  try {
+    return new URL(unwrapped).toString();
+  } catch {
+    return null;
+  }
+}
+
+/* =========================================================
+ * PRICE
+ * ======================================================= */
+
+function parsePrice(
+  value: unknown
+): number | null {
+  const text =
+    normalizeExtractedText(value);
+
+  if (!text) {
+    return null;
+  }
+
+  const match = text.match(
+    /(?:₹|INR|Rs\.?)\s*([\d,]+(?:\.\d+)?)/i
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const number = Number(
+    match[1].replace(/,/g, "")
+  );
+
+  return Number.isFinite(number)
+    ? number
+    : null;
+}
+
+/* =========================================================
+ * DATES
+ * ======================================================= */
+
+const MONTHS: Record<string, number> = {
+  jan: 0,
+  january: 0,
+  feb: 1,
+  february: 1,
+  mar: 2,
+  march: 2,
+  apr: 3,
+  april: 3,
+  may: 4,
+  jun: 5,
+  june: 5,
+  jul: 6,
+  july: 6,
+  aug: 7,
+  august: 7,
+  sep: 8,
+  sept: 8,
+  september: 8,
+  oct: 9,
+  october: 9,
+  nov: 10,
+  november: 10,
+  dec: 11,
+  december: 11,
+};
+
+const HINDI_MONTHS: Record<string, number> = {
+  जनवरी: 0,
+  फरवरी: 1,
+  मार्च: 2,
+  अप्रैल: 3,
+  मई: 4,
+  जून: 5,
+  जुलाई: 6,
+  अगस्त: 7,
+  सितंबर: 8,
+  सितम्बर: 8,
+  अक्टूबर: 9,
+  नवंबर: 10,
+  नवम्बर: 10,
+  दिसंबर: 11,
+  दिसम्बर: 11,
+};
+
+const HINDI_MONTHS_MOJIBAKE: Record<
+  string,
+  number
+> = {
+  "à¤œà¤¨à¤µà¤°à¥€": 0,
+  "à¤«à¤¼à¤°à¤µà¤°à¥€": 1,
+  "à¤®à¤¾à¤°à¥à¤š": 2,
+  "à¤…à¤ªà¥à¤°à¥ˆà¤²": 3,
+  "à¤®à¤ˆ": 4,
+  "à¤œà¥‚à¤¨": 5,
+  "à¤œà¥‚à¤²à¤¾à¤ˆ": 6,
+  "à¤…à¤—à¤¸à¥à¤¤": 7,
+  "à¤¸à¤¿à¤¤à¤‚à¤¬à¤°": 8,
+  "à¤¸à¤¿à¤¤à¤®à¥à¤¬à¤°": 8,
+  "à¤…à¤•à¥à¤¤à¥‚à¤¬à¤°": 9,
+  "à¤¨à¤µà¤‚à¤¬à¤°": 10,
+  "à¤¨à¤µà¤®à¥à¤¬à¤°": 10,
+  "à¤¦à¤¿à¤¸à¤‚à¤¬à¤°": 11,
+  "à¤¦à¤¿à¤¸à¤®à¥à¤¬à¤°": 11,
+};
+
+function createValidDate(
+  year: number,
+  month: number,
+  day: number
+): Date | null {
+  const date = new Date(
+    year,
+    month,
+    day
+  );
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+}
+
+function parseDate(
+  value: string | null | undefined
+): Date | null {
+  const cleaned =
+    normalizeExtractedText(value);
+
+  if (!cleaned) {
+    return null;
+  }
+
+  let match = cleaned.match(
+    /^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/i
+  );
+
+  if (match) {
+    const month =
+      MONTHS[match[2].toLowerCase()];
+
+    if (month !== undefined) {
+      return createValidDate(
+        Number(match[3]),
+        month,
+        Number(match[1])
+      );
+    }
+  }
+
+  match = cleaned.match(
+    /^(\d{1,2})\s+([^\d\s]+)\s+(\d{4})$/
+  );
+
+  if (match) {
+    const month =
+      HINDI_MONTHS[match[2]] ??
+      HINDI_MONTHS_MOJIBAKE[match[2]];
+
+    if (month !== undefined) {
+      return createValidDate(
+        Number(match[3]),
+        month,
+        Number(match[1])
+      );
+    }
+  }
+
+  const native = new Date(cleaned);
+
+  if (!Number.isNaN(native.getTime())) {
+    return native;
+  }
+
+  return null;
+}
+
+function extractDateRange(
+  lines: string[]
+): {
+  firstSeen: string | null;
+  lastSeen: string | null;
+} {
+  const englishRange =
+    /(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i;
+
+  const hindiRange =
+    /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[^\d\s]+\s+\d{4})/;
+
+  const englishStarted =
+    /Started running on\s+(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i;
+
+  const hindiStarted =
+    /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s+को\s+चलना\s+शुरू\s+हुआ/;
+
+  for (const rawLine of lines) {
+    const line =
+      normalizeExtractedText(rawLine);
+
+    if (!line) {
+      continue;
+    }
+
+    let match = line.match(
+      englishRange
+    );
+
+    if (match) {
+      return {
+        firstSeen: match[1],
+        lastSeen: match[2],
+      };
+    }
+
+    match = line.match(
+      hindiRange
+    );
+
+    if (match) {
+      return {
+        firstSeen: match[1],
+        lastSeen: match[2],
+      };
+    }
+
+    match = line.match(
+      englishStarted
+    );
+
+    if (match) {
+      return {
+        firstSeen: match[1],
+        lastSeen: null,
+      };
+    }
+
+    match = line.match(
+      hindiStarted
+    );
+
+    if (match) {
+      return {
+        firstSeen: match[1],
+        lastSeen: null,
+      };
+    }
+  }
+
+  return {
+    firstSeen: null,
+    lastSeen: null,
+  };
+}
+
+function calculateRunningDays(
+  firstSeen: string | null | undefined,
+  lastSeen: string | null | undefined
+): number {
+  const start = parseDate(firstSeen);
+
+  if (!start) {
+    return 0;
+  }
+
+  const end =
+    parseDate(lastSeen) ??
+    new Date();
+
+  const startDay = new Date(
+    start.getFullYear(),
+    start.getMonth(),
+    start.getDate()
+  );
+
+  const endDay = new Date(
+    end.getFullYear(),
+    end.getMonth(),
+    end.getDate()
+  );
+
+  const diff =
+    endDay.getTime() -
+    startDay.getTime();
+
+  if (diff < 0) {
+    return 0;
+  }
+
+  return (
+    Math.floor(
+      diff / (1000 * 60 * 60 * 24)
+    ) + 1
+  );
+}
+
+/* =========================================================
+ * STATUS
+ * ======================================================= */
+
+function extractActiveStatus(
+  lines: string[]
+): boolean {
+  const text = lines
+    .map(
+      (line) =>
+        normalizeExtractedText(line) ?? ""
+    )
+    .join(" ")
+    .toLowerCase();
+
+  if (
+    text.includes("inactive") ||
+    text.includes("निष्क्रिय")
+  ) {
+    return false;
+  }
+
+  if (
+    text.includes("active") ||
+    text.includes("सक्रिय")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/* =========================================================
+ * CTA
+ * ======================================================= */
+
+function extractCallToAction(
+  lines: string[]
+): string | null {
+  for (const line of lines) {
+    const cleaned =
+      normalizeExtractedText(line);
+
+    if (!cleaned) {
+      continue;
+    }
+
+    const found = CTA_VALUES.find(
+      (cta) =>
+        cta.toLowerCase() ===
+        cleaned.toLowerCase()
+    );
+
+    if (found) {
+      return found;
+    }
+  }
+
+  return null;
+}
+
+/* =========================================================
+ * DOMAIN
+ * ======================================================= */
+
+function isDomain(
+  value: string
+): boolean {
+  return /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(
+    value.trim()
+  );
+}
+
+/* =========================================================
+ * ADVERTISER / CREATOR
+ * ======================================================= */
+
+function extractAdvertiserIdentity(
+  lines: string[]
+): {
+  advertiserName: string | null;
+  creatorName: string | null;
+  partnershipType: PartnershipType;
+} {
+  const sponsoredIndex =
+    lines.findIndex((line) => {
+      const value =
+        normalizeExtractedText(line);
+
+      return (
+        value === "Sponsored" ||
+        value === "प्रायोजित"
+      );
+    });
+
+  if (sponsoredIndex <= 0) {
+    return {
+      advertiserName: null,
+      creatorName: null,
+      partnershipType: "unknown",
+    };
+  }
+
+  const candidate =
+    normalizeExtractedText(
+      lines[sponsoredIndex - 1]
+    );
+
+  if (!candidate) {
+    return {
+      advertiserName: null,
+      creatorName: null,
+      partnershipType: "unknown",
+    };
+  }
+
+  const creatorMatch = candidate.match(
+    /^(.+?)\s+(?:के\s+साथ|with)\s+(.+)$/i
+  );
+
+  if (creatorMatch) {
+    return {
+      advertiserName:
+        cleanText(creatorMatch[1]),
+      creatorName:
+        cleanText(creatorMatch[2]),
+      partnershipType: "creator",
+    };
+  }
+
+  return {
+    advertiserName: candidate,
+    creatorName: null,
+    partnershipType: "direct",
+  };
+}
+
+function extractAdvertiser(
+  lines: string[]
+): string | null {
+  const identity =
+    extractAdvertiserIdentity(lines);
+
+  return identity.advertiserName;
+}
+
+/* =========================================================
+ * PRIMARY TEXT
+ * ======================================================= */
+
+function extractPrimaryText(
+  lines: string[]
+): string | null {
+  const sponsoredIndex =
+    lines.findIndex((line) => {
+      const value =
+        normalizeExtractedText(line);
+
+      return (
+        value === "Sponsored" ||
+        value === "प्रायोजित"
+      );
+    });
+
+  const start =
+    sponsoredIndex >= 0
+      ? sponsoredIndex + 1
+      : 0;
+
+  for (
+    let i = start;
+    i < lines.length;
+    i++
+  ) {
+    const candidate =
+      normalizeExtractedText(lines[i]);
+
+    if (!candidate) {
+      continue;
+    }
+
+    if (isDomain(candidate)) {
+      break;
+    }
+
+    if (
+      /^(?:₹|INR|Rs\.?)\s*[\d,]+/i.test(
+        candidate
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      /^Library ID:/i.test(candidate) ||
+      /^लाइब्रेरी ID:/i.test(candidate)
+    ) {
+      continue;
+    }
+
+    if (
+      candidate === "Sponsored" ||
+      candidate === "प्रायोजित"
+    ) {
+      continue;
+    }
+
+    if (
+      /^0:00\s*\/\s*(?:0:\d{2}|\d+:\d{2})$/i.test(
+        candidate
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      CTA_VALUES.some(
+        (cta) =>
+          cta.toLowerCase() ===
+          candidate.toLowerCase()
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      candidate.length >= 8 &&
+      candidate.length <= 4000
+    ) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+/* =========================================================
+ * PRODUCT / HEADLINE
+ * ======================================================= */
+
+function extractProductName(
+  lines: string[]
+): string | null {
+  const domainIndex =
+    lines.findIndex((line) => {
+      const value =
+        normalizeExtractedText(line);
+
+      return value ? isDomain(value) : false;
+    });
+
+  if (domainIndex < 0) {
+    return null;
+  }
+
+  for (
+    let i = domainIndex + 1;
+    i < lines.length;
+    i++
+  ) {
+    const candidate =
+      normalizeExtractedText(lines[i]);
+
+    if (!candidate) {
+      continue;
+    }
+
+    if (
+      /^(?:₹|INR|Rs\.?)\s*[\d,]+/i.test(
+        candidate
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      /^Library ID:/i.test(candidate) ||
+      /^लाइब्रेरी ID:/i.test(candidate)
+    ) {
+      continue;
+    }
+
+    if (
+      CTA_VALUES.some(
+        (cta) =>
+          cta.toLowerCase() ===
+          candidate.toLowerCase()
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      candidate === "Mamaearth" ||
+      candidate === "Nykaa"
+    ) {
+      continue;
+    }
+
+    if (
+      /^0:00\s*\/\s*(?:0:\d{2}|\d+:\d{2})$/i.test(
+        candidate
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      candidate.length >= 3 &&
+      candidate.length <= 500
+    ) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+/* =========================================================
+ * OFFER
+ * ======================================================= */
+
+function extractOffer(
+  primaryText: string | null,
+  lines: string[]
+): string | null {
+  const text = [
+    primaryText ?? "",
+    ...lines,
+  ]
+    .map(
+      (value) =>
+        normalizeExtractedText(value) ?? ""
+    )
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text) {
+    return null;
+  }
+
+  const patterns = [
+    /\bflat\s+\d{1,3}%\s*off\b[^.!?\n]*/i,
+    /\bup\s*to\s+\d{1,3}%\s*off\b[^.!?\n]*/i,
+    /\bupto\s+\d{1,3}%\s*off\b[^.!?\n]*/i,
+    /\b\d{1,3}%\s*off\b[^.!?\n]*/i,
+    /\b\d{1,3}%\s*discount\b[^.!?\n]*/i,
+    /\buse\s+code[:\s]+[A-Z0-9_-]+\b/i,
+    /\bprice\s*drop\b[^.!?\n]*/i,
+    /\bsale\s+is\s+live\b[^.!?\n]*/i,
+    /\bfree\s+shipping\b[^.!?\n]*/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match =
+      text.match(pattern);
+
+    if (match) {
+      const result =
+        normalizeExtractedText(
+          match[0]
+        );
+
+      if (result) {
+        return result;
+      }
+    }
+  }
+
+  return null;
+}
+
+/* =========================================================
+ * CREATIVE TYPE
+ * ======================================================= */
+
+function inferCreativeType(
+  input: ScrapedMetaAd
+): AdCreativeType {
+  if (input.hasVideo) {
+    return "video";
+  }
+
+  if (input.hasCarousel) {
+    return "carousel";
+  }
+
+  if (input.hasImage) {
+    return "image";
+  }
+
+  const text = input.rawLines
+    .map(
+      (line) =>
+        normalizeExtractedText(line) ?? ""
+    )
+    .join(" ")
+    .toLowerCase();
+
+  if (
+    /\b0:00\s*\/\s*(?:0:\d{2}|\d+:\d{2})\b/.test(
+      text
+    )
+  ) {
+    return "video";
+  }
+
+  return "unknown";
+}
+
+/* =========================================================
+ * LANDING PAGE
+ * ======================================================= */
+
+function extractLandingPage(
+  lines: string[]
+): string | null {
+  for (const line of lines) {
+    const text =
+      normalizeExtractedText(line);
+
+    if (!text) {
+      continue;
+    }
+
+    const explicit =
+      text.match(
+        /https?:\/\/[^\s]+/i
+      );
+
+    if (explicit) {
+      const normalized =
+        normalizeUrl(explicit[0]);
+
+      if (normalized) {
+        return normalized;
+      }
+    }
+
+    if (isDomain(text)) {
+      return `https://${text.toLowerCase()}/`;
+    }
+  }
+
+  return null;
+}
+
+/* =========================================================
+ * CREATIVE SCORE
+ * ======================================================= */
+
+function calculateCreativeScore(
+  ad: ScrapedMetaAd
+): number {
+  let score = 40;
+
+  if (ad.primaryText) {
+    score += 10;
+  }
+
+  if (ad.headline) {
+    score += 10;
+  }
+
+  if (ad.callToAction) {
+    score += 5;
+  }
+
+  if (ad.productName) {
+    score += 10;
+  }
+
+  if (ad.offer) {
+    score += 10;
+  }
+
+  if (ad.landingPage) {
+    score += 5;
+  }
+
+  if (ad.hasVideo) {
+    score += 5;
+  }
+
+  return Math.min(100, score);
+}
+
+/* =========================================================
+ * NORMALIZATION
+ * ======================================================= */
+
+function normalizeScrapedAd(
+  input: ScrapedMetaAd,
+  query: string,
+  country: string
+): CompetitorAd {
+  const lines = input.rawLines ?? [];
+
+  const identity =
+    extractAdvertiserIdentity(lines);
+
+  const advertiser =
+    normalizeExtractedText(
+      input.advertiserName
+    ) ??
+    identity.advertiserName ??
+    "Unknown advertiser";
+
+  const creatorName =
+    normalizeExtractedText(
+      input.creatorName
+    ) ??
+    identity.creatorName;
+
+  const partnershipType =
+    input.partnershipType ??
+    identity.partnershipType;
+
+  const primaryText =
+    normalizeExtractedText(
+      input.primaryText
+    ) ??
+    extractPrimaryText(lines);
+
+  const headline =
+    normalizeExtractedText(
+      input.headline
+    ) ??
+    extractProductName(lines);
+
+  const productName =
+    normalizeExtractedText(
+      input.productName
+    ) ??
+    headline;
+
+  const callToAction =
+    normalizeExtractedText(
+      input.callToAction
+    ) ??
+    extractCallToAction(lines);
+
+  const dates =
+    extractDateRange(lines);
+
+  const firstSeen =
+    normalizeExtractedText(
+      input.firstSeen
+    ) ??
+    dates.firstSeen;
+
+  const lastSeen =
+    normalizeExtractedText(
+      input.lastSeen
+    ) ??
+    dates.lastSeen;
+
+  const landingPage =
+    normalizeUrl(
+      input.landingPage
+    ) ??
+    extractLandingPage(lines);
+
+  const offer =
+    normalizeExtractedText(
+      input.offer
+    ) ??
+    extractOffer(
+      primaryText,
+      lines
+    );
+
+  const productPrice =
+    typeof input.productPrice ===
+      "number"
+      ? input.productPrice
+      : parsePrice(
+          lines.find((line) =>
+            /(?:₹|INR|Rs\.?)\s*[\d,]+/i.test(
+              normalizeExtractedText(line) ?? ""
+            )
+          ) ?? null
+        );
+
+  const isActive =
+    typeof input.isActive ===
+      "boolean"
+      ? input.isActive
+      : extractActiveStatus(lines);
+
+  const creativeType =
+    input.creativeType ??
+    inferCreativeType(input);
+
+  const runningDays =
+    calculateRunningDays(
+      firstSeen,
+      lastSeen
+    );
+
+  const normalizedInput: ScrapedMetaAd =
+    {
+      ...input,
+      advertiserName: advertiser,
+      primaryText,
+      headline,
+      productName,
+      callToAction,
+      offer,
+      landingPage,
+      rawLines: lines,
+    };
+
+  return {
+    id: input.id,
+    platform: "meta",
+
+    advertiserName: advertiser,
+    advertiserId: null,
+
+    ...(creatorName
+      ? { creatorName }
+      : {}),
+
+    ...(partnershipType !== "unknown"
+      ? { partnershipType }
+      : {}),
+
+    country,
+
+    creativeType,
+
+    imageUrl:
+      input.imageUrl ?? null,
+
+    videoUrl:
+      input.videoUrl ?? null,
+
+    thumbnailUrl:
+      input.thumbnailUrl ?? null,
+
+    primaryText,
+    headline,
+
+    description:
+      normalizeExtractedText(
+        input.description
+      ),
+
+    callToAction,
+
+    firstSeen,
+    lastSeen,
+
+    isActive,
+
+    publisherPlatforms:
+      input.publisherPlatforms ?? [],
+
+    landingPage,
+
+    sourceUrl:
+      buildLibraryUrl(
+        query,
+        country
+      ),
+
+    productName,
+
+    productPrice,
+
+    currency:
+      productPrice !== null
+        ? "INR"
+        : null,
+
+    offer,
+
+    runningDays,
+
+    creativeScore:
+      calculateCreativeScore(
+        normalizedInput
+      ),
+
+    videoDurationSeconds:
+      input.videoDurationSeconds ??
+      null,
+
+    transcript: null,
+
+    transcriptStatus:
+      creativeType === "video"
+        ? "pending"
+        : "not_video",
+
+    metricSources: {
+      creativeScore: "estimated",
+      longevityScore: "derived",
+      relevanceScore: "derived",
+      engagementPotentialScore:
+        "estimated",
+      reach: "unavailable",
+      clicks: "unavailable",
+      ctr: "unavailable",
+      impressions: "unavailable",
+    },
+
+    metadata: {
+      extractionMethod:
+        "playwright-rendered-meta-library",
+
+      searchQuery: query,
+
+      country,
+
+      rawLines: lines,
+    },
+  };
+}
+
+/* =========================================================
+ * SEARCH RELEVANCE
+ * ======================================================= */
+
+function normalizeSearchText(
+  value: string | null | undefined
+): string {
+  return (value ?? "")
+    .toLowerCase()
+    .replace(
+      /[^a-z0-9]+/g,
+      " "
+    )
+    .trim();
+}
+
+function hostContainsQuery(
+  url: string | null | undefined,
+  query: string
+): boolean {
+  if (!url) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(url);
+
+    const host =
+      parsed.hostname
+        .replace(/^www\./i, "")
+        .toLowerCase();
+
+    const q =
+      normalizeSearchText(query);
+
+    const compactQuery =
+      q.replace(/\s+/g, "");
+
+    return (
+      compactQuery.length > 0 &&
+      host.includes(compactQuery)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isRelevantToAdvertiser(
+  ad: CompetitorAd,
+  query: string
+): boolean {
+  const q =
+    normalizeSearchText(query);
+
+  const advertiser =
+    normalizeSearchText(
+      ad.advertiserName
+    );
+
+  if (
+    q &&
+    advertiser &&
+    advertiser !== "unknown advertiser" &&
+    advertiser.includes(q)
+  ) {
+    return true;
+  }
+
+  if (
+    hostContainsQuery(
+      ad.landingPage,
+      query
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/* =========================================================
+ * LIBRARY URL
+ * ======================================================= */
+
+export function buildLibraryUrl(
+  query: string,
+  country: string
+): string {
+  const params =
+    new URLSearchParams({
+      active_status: "all",
+      ad_type: "all",
+      country,
+      q: query,
+    });
+
+  return `${META_LIB_EN_BASE_URL}?${params.toString()}`;
+}
+
+/* =========================================================
+ * SCRAPER
+ * ======================================================= */
+
+async function scrapeMetaAdLibrary(
+  query: string,
+  country: string,
+  maxScrolls = 30
+): Promise<ScrapedMetaAd[]> {
+  const { chromium } =
+    await import("playwright");
+
+  const browser =
+    await chromium.launch({
+      headless: true,
+    });
+
+  try {
+    const context =
+      await browser.newContext({
+        locale: "en-IN",
+
+        viewport: {
+          width: 1440,
+          height: 1000,
+        },
+
+        extraHTTPHeaders: {
+          "Accept-Language":
+            "en-IN,en;q=0.9",
+        },
+      });
+
+    const page =
+      await context.newPage();
+
+    const url =
+      buildLibraryUrl(
+        query,
+        country
+      );
+
+    console.log(
+      "[MetaProvider] Opening:",
+      url
+    );
+
+    const response =
+      await page.goto(url, {
+        waitUntil:
+          "domcontentloaded",
+        timeout: 60_000,
+      });
+
+    console.log(
+      "[MetaProvider] HTTP status:",
+      response?.status()
+    );
+
+    console.log(
+      "[MetaProvider] Page title:",
+      await page.title()
+    );
+
+    console.log(
+      "[MetaProvider] Final URL:",
+      page.url()
+    );
+
+    await page.waitForTimeout(5000);
+
+    let previousCount = 0;
+    let stableRounds = 0;
+
+    for (
+      let i = 0;
+      i < maxScrolls;
+      i++
+    ) {
+      await page.mouse.wheel(
+        0,
+        2400
+      );
+
+      await page.waitForTimeout(
+        1100
+      );
+
+      const count =
+        await page.evaluate(() => {
+          const text =
+            document.body?.innerText ??
+            "";
+
+          const matches =
+            text.match(
+              /(?:Library ID|लाइब्रेरी ID):\s*\d+/gi
+            );
+
+          return new Set(
+            matches ?? []
+          ).size;
+        });
+
+      console.log(
+        `[MetaProvider] Scroll ${
+          i + 1
+        }: ${count} library IDs`
+      );
+
+      if (
+        count === previousCount
+      ) {
+        stableRounds += 1;
+      } else {
+        stableRounds = 0;
+      }
+
+      previousCount = count;
+
+      if (stableRounds >= 3) {
+        break;
+      }
+    }
+
+    await page.waitForTimeout(2000);
+
+    /**
+     * IMPORTANT:
+     *
+     * CTA_VALUES is passed into evaluate.
+     *
+     * Variables outside page.evaluate() do NOT
+     * automatically exist inside Chromium's page context.
+     */
+    const ads =
+      await page.evaluate(
+        (ctaValues) => {
+          const isLibraryIdText =
+            (text: string): boolean =>
+              /(?:Library ID|लाइब्रेरी ID):\s*\d+/i.test(
+                text
+              );
+
+          const getLibraryId =
+            (
+              text: string
+            ): string | null => {
+              const match =
+                text.match(
+                  /(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i
+                );
+
+              return match?.[1] ?? null;
+            };
+
+          const normalizePageText =
+            (
+              value: string
+            ): string => {
+              return value
+                .replace(/\u200B/g, "")
+                .replace(/\u200C/g, "")
+                .replace(/\u200D/g, "")
+                .replace(/\uFEFF/g, "")
+                .replace(/\u00A0/g, " ")
+                .replace(/\r/g, " ")
+                .replace(/\n/g, " ")
+                .replace(/\s+/g, " ")
+                .trim();
+            };
+
+          const isDomain =
+            (
+              value: string
+            ): boolean =>
+              /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(
+                value.trim()
+              );
+
+          const isCTA =
+            (
+              value: string
+            ): boolean => {
+              const candidate =
+                value
+                  .trim()
+                  .toLowerCase();
+
+              return ctaValues.some(
+                (cta) =>
+                  cta.toLowerCase() ===
+                  candidate
+              );
+            };
+
+          const elements =
+            Array.from(
+              document.querySelectorAll(
+                "*"
+              )
+            );
+
+          const candidates =
+            elements.filter(
+              (element) => {
+                const text =
+                  element.textContent?.trim() ??
+                  "";
+
+                return (
+                  text.length >= 50 &&
+                  text.length <= 20_000 &&
+                  isLibraryIdText(text)
+                );
+              }
+            );
+
+          const unique: Element[] =
+            [];
+
+          for (
+            const element of candidates
+          ) {
+            const alreadyContained =
+              unique.some(
+                (candidate) =>
+                  candidate.contains(
+                    element
+                  )
+              );
+
+            if (
+              alreadyContained
+            ) {
+              continue;
+            }
+
+            for (
+              let i =
+                unique.length - 1;
+              i >= 0;
+              i--
+            ) {
+              if (
+                element.contains(
+                  unique[i]
+                )
+              ) {
+                unique.splice(i, 1);
+              }
+            }
+
+            unique.push(element);
+          }
+
+          const cards: Element[] =
+            [];
+
+          for (
+            const element of unique
+          ) {
+            let current:
+              | Element
+              | null = element;
+
+            for (
+              let depth = 0;
+              depth < 8 && current;
+              depth++
+            ) {
+              const text =
+                current.textContent?.trim() ??
+                "";
+
+              if (
+                isLibraryIdText(text) &&
+                text.length >= 100 &&
+                text.length <= 20_000
+              ) {
+                cards.push(current);
+                break;
+              }
+
+              current =
+                current.parentElement;
+            }
+          }
+
+          const seen =
+            new Set<string>();
+
+          const results: Array<{
+            id: string;
+
+            advertiserName: string | null;
+            creatorName: string | null;
+            partnershipType: PartnershipType;
+
+            primaryText: string | null;
+            headline: string | null;
+            productName: string | null;
+            callToAction: string | null;
+
+            firstSeen: string | null;
+            lastSeen: string | null;
+
+            landingPage: string | null;
+
+            isActive: boolean;
+
+            publisherPlatforms: string[];
+
+            hasVideo: boolean;
+            hasImage: boolean;
+            hasCarousel: boolean;
+
+            videoUrl: string | null;
+            imageUrl: string | null;
+            thumbnailUrl: string | null;
+
+            videoDurationSeconds:
+              | number
+              | null;
+
+            rawLines: string[];
+          }> = [];
+
+          for (
+            const card of cards
+          ) {
+            const rawText =
+              card.textContent?.trim() ??
+              "";
+
+            const id =
+              getLibraryId(rawText);
+
+            if (!id) {
+              continue;
+            }
+
+            if (seen.has(id)) {
+              continue;
+            }
+
+            seen.add(id);
+
+            const rawLines =
+              (
+                card as HTMLElement
+              ).innerText
+                .split(/\r?\n/)
+                .map(
+                  normalizePageText
+                )
+                .filter(Boolean);
+
+            const sponsoredIndex =
+              rawLines.findIndex(
+                (line) => {
+                  const value =
+                    line.toLowerCase();
+
+                  return (
+                    value ===
+                      "sponsored" ||
+                    value ===
+                      "प्रायोजित"
+                  );
+                }
+              );
+
+            const advertiserLine =
+              sponsoredIndex > 0
+                ? rawLines[
+                    sponsoredIndex - 1
+                  ] ?? null
+                : null;
+
+            let advertiserName =
+              advertiserLine;
+
+            let creatorName:
+              | string
+              | null = null;
+
+            let partnershipType:
+              PartnershipType =
+                "direct";
+
+            if (
+              advertiserLine
+            ) {
+              const creatorMatch =
+                advertiserLine.match(
+                  /^(.+?)\s+(?:के\s+साथ|with)\s+(.+)$/i
+                );
+
+              if (
+                creatorMatch
+              ) {
+                advertiserName =
+                  creatorMatch[1].trim();
+
+                creatorName =
+                  creatorMatch[2].trim();
+
+                partnershipType =
+                  "creator";
+              }
+            }
+
+            if (
+              !advertiserName
+            ) {
+              partnershipType =
+                "unknown";
+            }
+
+            const startIndex =
+              sponsoredIndex >= 0
+                ? sponsoredIndex + 1
+                : 0;
+
+            let primaryText:
+              | string
+              | null = null;
+
+            for (
+              let i = startIndex;
+              i < rawLines.length;
+              i++
+            ) {
+              const line =
+                rawLines[i];
+
+              if (
+                isDomain(line)
+              ) {
+                break;
+              }
+
+              if (
+                /^(?:₹|INR|Rs\.?)\s*[\d,]+/i.test(
+                  line
+                )
+              ) {
+                continue;
+              }
+
+              if (
+                /^(?:Library ID|लाइब्रेरी ID):/i.test(
+                  line
+                )
+              ) {
+                continue;
+              }
+
+              if (
+                /^0:00\s*\/\s*(?:0:\d{2}|\d+:\d{2})$/i.test(
+                  line
+                )
+              ) {
+                continue;
+              }
+
+              if (
+                isCTA(line)
+              ) {
+                continue;
+              }
+
+              if (
+                line.length >= 8 &&
+                line.length <= 4000
+              ) {
+                primaryText =
+                  primaryText
+                    ? `${primaryText} ${line}`
+                    : line;
+              }
+
+              /**
+               * Keep collecting copy until the
+               * landing-domain section begins.
+               */
+            }
+
+            const domainIndex =
+              rawLines.findIndex(
+                isDomain
+              );
+
+            let productName:
+              | string
+              | null = null;
+
+            if (
+              domainIndex >= 0
+            ) {
+              for (
+                let i =
+                  domainIndex + 1;
+                i < rawLines.length;
+                i++
+              ) {
+                const line =
+                  rawLines[i];
+
+                if (
+                  /^(?:₹|INR|Rs\.?)\s*[\d,]+/i.test(
+                    line
+                  )
+                ) {
+                  continue;
+                }
+
+                if (
+                  /^(?:Library ID|लाइब्रेरी ID):/i.test(
+                    line
+                  )
+                ) {
+                  continue;
+                }
+
+                if (
+                  isCTA(line)
+                ) {
+                  continue;
+                }
+
+                if (
+                  /^0:00\s*\/\s*(?:0:\d{2}|\d+:\d{2})$/i.test(
+                    line
+                  )
+                ) {
+                  continue;
+                }
+
+                if (
+                  line.length >= 3 &&
+                  line.length <= 500
+                ) {
+                  productName =
+                    line;
+                  break;
+                }
+              }
+            }
+
+            /**
+             * CTA detection.
+             */
+            let callToAction:
+              | string
+              | null = null;
+
+            for (
+              const line of rawLines
+            ) {
+              if (
+                isCTA(line)
+              ) {
+                callToAction =
+                  ctaValues.find(
+                    (cta) =>
+                      cta.toLowerCase() ===
+                      line.toLowerCase()
+                  ) ?? line;
+
+                break;
+              }
+            }
+
+            /**
+             * First/last dates.
+             *
+             * We keep the original visible
+             * text and let Node-side parsing
+             * normalize it later.
+             */
+            let firstSeen:
+              | string
+              | null = null;
+
+            let lastSeen:
+              | string
+              | null = null;
+
+            for (
+              const line of rawLines
+            ) {
+              const range =
+                line.match(
+                  /(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i
+                );
+
+              if (range) {
+                firstSeen =
+                  range[1];
+
+                lastSeen =
+                  range[2];
+
+                break;
+              }
+
+              const hindiRange =
+                line.match(
+                  /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[^\d\s]+\s+\d{4})/
+                );
+
+              if (
+                hindiRange
+              ) {
+                firstSeen =
+                  hindiRange[1];
+
+                lastSeen =
+                  hindiRange[2];
+
+                break;
+              }
+
+              const startedEnglish =
+                line.match(
+                  /Started running on\s+(.+)/i
+                );
+
+              if (
+                startedEnglish
+              ) {
+                firstSeen =
+                  startedEnglish[1];
+
+                break;
+              }
+
+              const startedHindi =
+                line.match(
+                  /(.+)\s+को\s+चलना\s+शुरू\s+हुआ/
+                );
+
+              if (
+                startedHindi
+              ) {
+                firstSeen =
+                  startedHindi[1];
+
+                break;
+              }
+            }
+
+            /**
+             * Landing page.
+             */
+            let landingPage:
+              | string
+              | null = null;
+
+            for (
+              const link of Array.from(
+                card.querySelectorAll(
+                  "a[href]"
+                )
+              )
+            ) {
+              const href =
+                link.getAttribute(
+                  "href"
+                );
+
+              if (!href) {
+                continue;
+              }
+
+              if (
+                href.startsWith(
+                  "javascript:"
+                )
+              ) {
+                continue;
+              }
+
+              if (
+                href.includes(
+                  "/ads/library"
+                )
+              ) {
+                continue;
+              }
+
+              try {
+                const url =
+                  new URL(
+                    href,
+                    window.location.href
+                  );
+
+                if (
+                  url.hostname.includes(
+                    "facebook.com"
+                  ) &&
+                  url.pathname ===
+                    "/"
+                ) {
+                  continue;
+                }
+
+                landingPage =
+                  url.toString();
+
+                break;
+              } catch {
+                // Ignore invalid links.
+              }
+            }
+
+            if (!landingPage) {
+              for (
+                const line of rawLines
+              ) {
+                const explicit =
+                  line.match(
+                    /https?:\/\/[^\s]+/i
+                  );
+
+                if (
+                  explicit
+                ) {
+                  landingPage =
+                    explicit[0];
+
+                  break;
+                }
+
+                if (
+                  isDomain(line)
+                ) {
+                  landingPage =
+                    `https://${line.toLowerCase()}/`;
+
+                  break;
+                }
+              }
+            }
+
+            /**
+             * Media detection.
+             */
+            const videos =
+              Array.from(
+                card.querySelectorAll(
+                  "video"
+                )
+              );
+
+            const images =
+              Array.from(
+                card.querySelectorAll(
+                  "img"
+                )
+              );
+
+            const hasVideo =
+              videos.length > 0;
+
+            const hasImage =
+              images.length > 0;
+
+            const hasCarousel =
+              Boolean(
+                card.querySelector(
+                  [
+                    '[aria-label*="carousel" i]',
+                    '[data-testid*="carousel" i]',
+                  ].join(",")
+                )
+              );
+
+            const video =
+              videos[0];
+
+            const image =
+              images[0];
+
+            const videoUrl =
+              video
+                ? video.currentSrc ||
+                  video.getAttribute(
+                    "src"
+                  )
+                : null;
+
+            const thumbnailUrl =
+              video?.getAttribute(
+                "poster"
+              ) ??
+              image?.getAttribute(
+                "src"
+              ) ??
+              null;
+
+            const imageUrl =
+              image?.getAttribute(
+                "src"
+              ) ?? null;
+
+            let videoDurationSeconds:
+              | number
+              | null = null;
+
+            if (
+              video &&
+              Number.isFinite(
+                video.duration
+              ) &&
+              video.duration > 0
+            ) {
+              videoDurationSeconds =
+                Math.round(
+                  video.duration
+                );
+            }
+
+            /**
+             * Status.
+             */
+            const joinedText =
+              rawLines
+                .join(" ")
+                .toLowerCase();
+
+            const isActive =
+              !joinedText.includes(
+                "inactive"
+              ) &&
+              !joinedText.includes(
+                "निष्क्रिय"
+              ) &&
+              (
+                joinedText.includes(
+                  "active"
+                ) ||
+                joinedText.includes(
+                  "सक्रिय"
+                )
+              );
+
+            /**
+             * Platforms.
+             *
+             * Meta sometimes renders only
+             * "Platforms", so this is intentionally
+             * conservative.
+             */
+            const publisherPlatforms:
+              string[] = [];
+
+            const platformNames = [
+              "Facebook",
+              "Instagram",
+              "Messenger",
+              "Audience Network",
+              "Threads",
+            ];
+
+            for (
+              const platform of
+              platformNames
+            ) {
+              if (
+                joinedText.includes(
+                  platform.toLowerCase()
+                )
+              ) {
+                publisherPlatforms.push(
+                  platform
+                );
+              }
+            }
+
+            results.push({
+              id,
+
+              advertiserName,
+
+              creatorName,
+
+              partnershipType,
+
+              primaryText,
+
+              headline:
+                productName,
+
+              productName,
+
+              callToAction,
+
+              firstSeen,
+
+              lastSeen,
+
+              landingPage,
+
+              isActive,
+
+              publisherPlatforms,
+
+              hasVideo,
+
+              hasImage,
+
+              hasCarousel,
+
+              videoUrl,
+
+              imageUrl,
+
+              thumbnailUrl,
+
+              videoDurationSeconds,
+
+              rawLines,
+            });
+          }
+
+          return results;
+        },
+        CTA_VALUES
+      );
+
+    console.log(
+      "[MetaProvider] Extracted ad containers:",
+      ads.length
+    );
+
+    return ads;
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
+ * Exported test helper.
+ */
+export async function scrapeMetaAdLibraryForTest(
+  query: string,
+  country = DEFAULT_COUNTRY
+): Promise<CompetitorAd[]> {
+  const scraped =
+    await scrapeMetaAdLibrary(
+      query.trim(),
+      country.trim().toUpperCase()
+    );
+
+  return scraped.map(
+    (ad) =>
+      normalizeScrapedAd(
+        ad,
+        query.trim(),
+        country.trim().toUpperCase()
+      )
+  );
+}
+
+/* =========================================================
+ * PROVIDER
+ * ======================================================= */
+export const metaProvider: AdProvider = {
+  platform: "meta",
+
+  async search(
+    input: AdSearchInput
+  ): Promise<ProviderResult> {
+    const query = input.query?.trim();
+
+    if (!query) {
+      return {
+        ads: [],
+      };
+    }
+
+    const country =
+      input.country?.trim().toUpperCase() ||
+      DEFAULT_COUNTRY;
+
+    const mode = input.mode ?? "advertiser";
+
+    const scraped = await scrapeMetaAdLibrary(
+      query,
+      country
+    );
+
+    let ads = scraped.map((ad) =>
+      normalizeScrapedAd(
+        ad,
+        query,
+        country
+      )
+    );
+
+    /*
+     * Advertiser mode:
+     * Prefer ads belonging to the searched advertiser.
+     *
+     * We intentionally do NOT force the result to zero
+     * when Meta's HTML extraction is incomplete.
+     */
+    if (mode === "advertiser") {
+      const relevant = ads.filter((ad) =>
+        isRelevantToAdvertiser(
+          ad,
+          query
+        )
+      );
+
+      if (relevant.length > 0) {
+        ads = relevant;
+      }
+    }
+
+    /*
+     * Deduplicate by actual Meta Library ID.
+     */
+    const unique = new Map<
+      string,
+      CompetitorAd
+    >();
+
+    for (const ad of ads) {
+      unique.set(
+        `${ad.platform}:${ad.id}`,
+        ad
+      );
+    }
+
+    ads = Array.from(
+      unique.values()
+    );
+
+    /*
+     * Sort the COMPLETE result set first.
+     *
+     * Pagination must happen after this.
+     */
+    ads.sort((a, b) => {
+      const aScore =
+        (a.creativeScore ?? 0) +
+        (a.runningDays ?? 0) * 0.5 +
+        (a.isActive ? 20 : 0);
+
+      const bScore =
+        (b.creativeScore ?? 0) +
+        (b.runningDays ?? 0) * 0.5 +
+        (b.isActive ? 20 : 0);
+
+      return bScore - aScore;
+    });
+
+    /*
+     * IMPORTANT:
+     * Do NOT slice here.
+     *
+     * The API route owns pagination.
+     *
+     * Returning the complete normalized result allows
+     * the route to correctly calculate:
+     *
+     *   total
+     *   totalPages
+     *   hasNextPage
+     *   hasPreviousPage
+     *
+     * and then slice the correct page.
+     */
+    console.log(
+      "[MetaProvider] Normalized ads:",
+      ads.length,
+      "total"
+    );
+
+    return {
+      ads,
+    };
+  },
+};
+
+export default metaProvider;

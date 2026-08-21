@@ -11,37 +11,30 @@ import { DEFAULT_REPORT_INPUT } from "@/lib/constants/defaultInput";
 import { createClient } from "@/lib/supabase/client";
 import { generateDecisions, generateMoneyAlerts } from "@/lib/llm/decision-engine";
 import type { OpportunityScan, MoneyAlert } from "@/lib/llm/decision-engine";
-import { SignOutButton } from "@/components/auth/SignOutButton";
+import { InsightList, MetricTile, NumberField } from "@/components/dashboard/DashboardPrimitives";
+import type { MetricItem, MetricTone } from "@/components/dashboard/DashboardPrimitives";
+import { DashboardSectionBlock } from "@/components/dashboard/DashboardSectionBlock";
+import { DashboardInsightsSection } from "@/components/dashboard/DashboardInsightsSection";
+import { DashboardCommandRail, DashboardExecutionControls, DashboardHero } from "@/components/dashboard/DashboardChrome";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
  
 const sectionOptions = [
   { id: "all", label: "All" },
   { id: "unit", label: "Unit Economics" },
   { id: "ad", label: "Ad Metrics" },
-  { id: "performance", label: "Ad Performance" },
-  { id: "library", label: "Ad Library" },
-  { id: "market", label: "Market Research" },
+  { id: "adspy", label: "AdSpy" },
   { id: "scale", label: "Scale Planner" },
   { id: "pnl", label: "Monthly P&L" }
 ] as const;
 
 type SectionId = (typeof sectionOptions)[number]["id"];
-type ActiveSection = Exclude<SectionId, "all">;
-
-type MetricTone = "good" | "warn" | "neutral";
-
-type MetricItem = {
-  title: string;
-  value: string;
-  hint: string;
-  tone: MetricTone;
-  benchmark?: string;
-};
+type LegacySectionId = "performance" | "library" | "market";
+type DashboardSectionId = SectionId | LegacySectionId;
+type ActiveSection = Exclude<DashboardSectionId, "all">;
 
 type ToastTone = "good" | "warn" | "neutral";
 
@@ -219,57 +212,6 @@ function pct(n: number | null | undefined): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-function MetricTile({ item }: { item: MetricItem }) {
-  return (
-    <article className={`metric-tile tone-${item.tone}`}>
-      <div className="metric-top">
-        <p className="metric-title">{item.title}</p>
-        {item.benchmark ? (
-          <span className="hint-wrap" tabIndex={0}>
-            i
-            <span className="hint-bubble">{item.benchmark}</span>
-          </span>
-        ) : null}
-      </div>
-      <p className="metric-value">{item.value}</p>
-      <p className="metric-hint">{item.hint}</p>
-    </article>
-  );
-}
-
-function InsightList({ title, items }: { title: string; items: string[] }) {
-  if (items.length === 0) return null;
-  return (
-    <article className="fix-card">
-      <p className="metric-title" style={{ marginBottom: 8 }}>{title}</p>
-      <ul className="insight-list">
-        {items.map((item, idx) => (
-          <li key={`${title}-${idx}`}>{item}</li>
-        ))}
-      </ul>
-    </article>
-  );
-}
-
-function NumberField({
-  label,
-  value,
-  onChange,
-  step = "1"
-}: {
-  label: string;
-  value: number;
-  onChange: (value: string) => void;
-  step?: string;
-}) {
-  return (
-    <Label className="input-row">
-      <span>{label}</span>
-      <Input type="number" step={step} value={value} onChange={(e) => onChange(e.target.value)} />
-    </Label>
-  );
-}
-
 export default function DashboardPage() {
   const router = useRouter();
   const percentPaths = new Set([
@@ -286,7 +228,7 @@ export default function DashboardPage() {
   ]);
   const [reportInput, setReportInput] = useState<ParsedReport>(DEFAULT_REPORT_INPUT);
   const [report, setReport] = useState<CalculatedReport>(() => calculateReport(DEFAULT_REPORT_INPUT));
-  const [selectedSection, setSelectedSection] = useState<SectionId>("all");
+  const [selectedSection, setSelectedSection] = useState<DashboardSectionId>("all");
   const [recalcLoading, setRecalcLoading] = useState(false);
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState<string | null>(null);
@@ -589,10 +531,11 @@ export default function DashboardPage() {
       performance: connectedAccounts.length > 0 ? "Connected" : "Not Connected",
       library: metaLibraryAds.length > 0 || googleLibraryInfo ? "Ready" : "Not Searched",
       market: metaLibraryAds.length > 0 || shopifyResearch ? "Ready" : "Not Searched",
+      adspy: connectedAccounts.length > 0 || metaLibraryAds.length > 0 || shopifyResearch ? "Ready" : "Not Searched",
       scale: report.scalePlanner.readiness === "READY TO SCALE" ? "Ready" : "Hold",
       pnl: report.monthlyPnl.netProfitMarginPct >= 0.1 ? "Healthy" : "Low Margin"
     };
-  }, [report, connectedAccounts.length, metaLibraryAds.length, googleLibraryInfo]);
+  }, [report, connectedAccounts.length, metaLibraryAds.length, googleLibraryInfo, shopifyResearch]);
 
   const heroKpis = useMemo(
     () => [
@@ -935,6 +878,9 @@ setReport(merged);
       case "go-ad":
         setSelectedSection("ad");
         break;
+      case "go-adspy":
+        setSelectedSection("adspy");
+        break;
       case "go-zwirk":
         router.push("/zwirk");
         break;
@@ -966,7 +912,7 @@ setReport(merged);
     setPaletteQuery("");
   }
 
-  function getSectionMetrics(id: SectionId, data: CalculatedReport): MetricItem[] {
+  function getSectionMetrics(id: DashboardSectionId, data: CalculatedReport): MetricItem[] {
     if (id === "unit") {
       return [
         { title: "Net Revenue / Order", value: inr(data.unitEconomics.netRevenueExGst), hint: "Post GST adjustment", tone: "neutral" },
@@ -1060,6 +1006,14 @@ setReport(merged);
       ];
     }
 
+    if (id === "adspy") {
+      return [
+        ...getSectionMetrics("performance", data),
+        ...getSectionMetrics("library", data),
+        ...getSectionMetrics("market", data)
+      ];
+    }
+
     if (id === "library") {
       return [
         {
@@ -1131,6 +1085,7 @@ setReport(merged);
     if (id === "performance") return { connectedAccounts, adMetricsCount: adMetrics.length };
     if (id === "library") return { adLibraryQuery, adLibraryCountry, metaLibraryCount: metaLibraryAds.length };
     if (id === "market") return { adLibraryQuery, adLibraryCountry, shopifyStoreUrl, shopifyResearch };
+    if (id === "adspy") return { connectedAccounts, adMetricsCount: adMetrics.length, adLibraryQuery, adLibraryCountry, metaLibraryCount: metaLibraryAds.length, shopifyStoreUrl, shopifyResearch };
     if (id === "scale") return reportInput.scalePlannerInput;
     return {
       note: "Monthly P&L is derived from other sections",
@@ -1357,7 +1312,8 @@ setReport(merged);
       if (!metaResponse.ok) {
         setMetaLibraryAds([]);
         const providerDetails = [metaData.providerCode, metaData.providerType].filter(Boolean).join(" / ");
-        const message = `${metaData.error || "Meta library search failed"}${providerDetails ? ` (${providerDetails})` : ""}`;
+          const action = typeof metaData.action === "string" ? ` ${metaData.action}` : "";
+          const message = `${metaData.error || "Meta library search failed"}${providerDetails ? ` (${providerDetails})` : ""}${action}`;
         setMetaLibraryError(message);
         pushToast(message, "warn");
       } else {
@@ -1635,6 +1591,25 @@ setReport(merged);
       );
     }
 
+    if (id === "adspy") {
+      return (
+        <div className="adspy-stack">
+          <div>
+            <h4>Ad Performance</h4>
+            {sectionInputs("performance")}
+          </div>
+          <div>
+            <h4>Ad Library</h4>
+            {sectionInputs("library")}
+          </div>
+          <div>
+            <h4>Market Research</h4>
+            {sectionInputs("market")}
+          </div>
+        </div>
+      );
+    }
+
     if (id === "library") {
       return (
         <div className="editor-grid">
@@ -1780,7 +1755,7 @@ setReport(merged);
     return "neutral";
   }
 
-  function goToSection(id: SectionId) {
+  function goToSection(id: DashboardSectionId) {
     setSelectedSection(id);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -1788,40 +1763,22 @@ setReport(merged);
   function renderSectionBlock(id: ActiveSection) {
     const sectionHealth = sectionStatus[id];
     const tone = statusTone(sectionHealth);
+    const sectionTitle = sectionOptions.find((opt) => opt.id === id)?.label ?? id;
 
     return (
-      <motion.section
-        className={`surface section-surface section-block tone-${tone}`}
+      <DashboardSectionBlock
         key={id}
-        variants={fadeUp}
+        title={sectionTitle}
+        status={sectionHealth}
+        tone={tone}
+        inputLabel={id === "pnl" ? "Input Dependencies" : "Section Inputs"}
+        metrics={getSectionMetrics(id, report)}
+        applying={recalcLoading}
+        onApply={() => applySectionChanges(id)}
+        onSave={() => saveSectionSheet(id)}
       >
-        <div className="section-head section-head-rich">
-          <h3>{sectionOptions.find((opt) => opt.id === id)?.label ?? id}</h3>
-          <span className={`status-dot status-${tone}`}>{sectionHealth}</span>
-        </div>
-        <div className="section-block-grid">
-          <article className="input-cluster">
-            <h4>{id === "pnl" ? "Input Dependencies" : "Section Inputs"}</h4>
-            {sectionInputs(id)}
-            <div className="section-actions">
-              <Button type="button" onClick={() => applySectionChanges(id)} disabled={recalcLoading}>
-                {recalcLoading ? "Applying..." : `Apply ${sectionOptions.find((opt) => opt.id === id)?.label} Changes`}
-              </Button>
-              <Button type="button" variant="secondary" onClick={() => saveSectionSheet(id)}>
-                Save Sheet
-              </Button>
-            </div>
-          </article>
-          <article className="output-cluster">
-            <h4>Section Output</h4>
-            <div className="metrics-grid metrics-grid-tight">
-              {getSectionMetrics(id, report).map((item) => (
-                <MetricTile key={`${id}-${item.title}`} item={item} />
-              ))}
-            </div>
-          </article>
-        </div>
-      </motion.section>
+        {sectionInputs(id)}
+      </DashboardSectionBlock>
     );
   }
 
@@ -1829,8 +1786,7 @@ setReport(merged);
     { id: "go-all", label: "Go to All Sections" },
     { id: "go-unit", label: "Go to Unit Economics" },
     { id: "go-ad", label: "Go to Ad Metrics" },
-    { id: "go-performance", label: "Go to Ad Performance" },
-    { id: "go-library", label: "Go to Ad Library" },
+    { id: "go-adspy", label: "Go to AdSpy" },
     { id: "go-zwirk", label: "Open ZWIRK Assistant" },
     { id: "go-scale", label: "Go to Scale Planner" },
     { id: "go-pnl", label: "Go to Monthly P&L" },
@@ -1842,7 +1798,7 @@ setReport(merged);
   ];
 
   const filteredCommands = commands.filter((c) => c.label.toLowerCase().includes(paletteQuery.toLowerCase()));
-  const sectionSequence: ActiveSection[] = ["unit", "ad", "performance", "library", "market", "scale", "pnl"];
+  const sectionSequence: ActiveSection[] = ["unit", "ad", "adspy", "scale", "pnl"];
   const adminEmail = (process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? "").trim().toLowerCase();
   const isAdmin = !!adminEmail && userEmail.toLowerCase() === adminEmail;
   const completedSections = sectionSequence.filter((id) => statusTone(sectionStatus[id]) === "good").length;
@@ -1865,76 +1821,27 @@ setReport(merged);
 
   return (
     <motion.div className="dashboard-shell" initial="hidden" animate="visible" variants={stagger}>
-      <aside className="command-rail surface">
-        <div className="rail-top">
-          <p className="eyebrow">Control</p>
-          <h3>Sections</h3>
-        </div>
-        <div className="section-list">
-          {sectionOptions.map((opt) => {
-            const key = opt.id === "all" ? "unit" : opt.id;
-            const status = opt.id === "all" ? (dirty ? "Unsaved" : "Synced") : sectionStatus[key as "unit" | "ad" | "scale" | "pnl"];
-            const tone = opt.id === "all" ? (dirty ? "warn" : "good") : statusTone(status);
-
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                className={`section-chip ${selectedSection === opt.id ? "active" : ""}`}
-                onClick={() => goToSection(opt.id)}
-              >
-                <span>{opt.label}</span>
-                <small className={`rail-status rail-${tone}`}>{status}</small>
-              </button>
-            );
-          })}
-        </div>
-        <div className="rail-controls">
-          <Button type="button" variant="secondary" onClick={() => setPaletteOpen(true)}>
-            Open Command Palette
-          </Button>
-          <Button type="button" variant="secondary" onClick={loadSampleData}>
-            Load Sample Data
-          </Button>
-          <Button type="button" variant="secondary" onClick={saveScenario}>
-            Save Scenario
-          </Button>
-          <Badge variant="secondary">{completedSections}/{sectionSequence.length} sections healthy</Badge>
-          <Badge variant={dirty ? "warning" : "success"}>{dirty ? "Unsaved Draft" : "All Saved"}</Badge>
-          <Badge variant={workspaceSyncing ? "warning" : "secondary"}>{workspaceSyncing ? "Syncing cloud data..." : "Cloud sync ready"}</Badge>
-        </div>
-        <div className="rail-shortcuts">
-          <p>Command Palette</p>
-          <kbd>Ctrl</kbd>
-          <span>+</span>
-          <kbd>K</kbd>
-        </div>
-      </aside>
+      <DashboardCommandRail
+        items={sectionOptions}
+        selected={selectedSection}
+        statuses={Object.fromEntries(
+          sectionOptions.map((option) => {
+            const status = option.id === "all" ? (dirty ? "Unsaved" : "Synced") : sectionStatus[option.id as keyof typeof sectionStatus];
+            return [option.id, { label: status, tone: option.id === "all" ? (dirty ? "warn" : "good") : statusTone(status) }];
+          })
+        )}
+        onSelect={(id) => goToSection(id as DashboardSectionId)}
+        onOpenPalette={() => setPaletteOpen(true)}
+        onLoadSample={loadSampleData}
+        onSaveScenario={saveScenario}
+        completed={completedSections}
+        total={sectionSequence.length}
+        dirty={dirty}
+        syncing={workspaceSyncing}
+      />
 
       <main className="dashboard-content-grid">
-        <motion.section className="surface hero-surface" variants={fadeUp}>
-          <div>
-            <p className="eyebrow">Profitability Command Center</p>
-            <h1>Turn ad spend into real profit, not just clicks.</h1>
-            <p className="hero-copy">Measure true retained revenue, find hidden campaign losses, and only scale when the math is solid.</p>
-          </div>
-          <div className="hero-meta">
-            <span className="muted-text">
-              {userEmail ? `Signed in as ${userName ? `${userName} (${userEmail})` : userEmail}` : "Not signed in"}
-            </span>
-            <Link href="/zwirk">
-              <Button type="button">Open ZWIRK</Button>
-            </Link>
-            <ThemeToggle />
-            {userEmail ? (
-              <SignOutButton />
-            ) : (
-              <Link href="/login">
-                <Button type="button" variant="secondary">Sign In</Button>
-              </Link>
-            )}
-          </div>
-        </motion.section>
+        <DashboardHero userEmail={userEmail} userName={userName} />
 
         <motion.section className="hero-kpi-grid" variants={fadeUp}>
           {heroKpis.map((item) => (
@@ -1942,23 +1849,13 @@ setReport(merged);
           ))}
         </motion.section>
 
-        <motion.section className="surface action-surface" variants={fadeUp}>
-          <div className="section-head">
-            <h3>Execution Controls</h3>
-            <p>Apply changes, reset assumptions, and keep the profit story simple.</p>
-          </div>
-          <div className="action-row">
-            <Button type="button" onClick={() => applyChanges()} disabled={recalcLoading}>
-              {recalcLoading ? "Applying..." : "Apply All Changes"}
-            </Button>
-            <Button type="button" variant="secondary" onClick={generateInsights} disabled={insightsLoading}>
-              {insightsLoading ? "Generating..." : "Get AI Insights"}
-            </Button>
-            <Button type="button" variant="secondary" onClick={resetToDefaults}>
-              Reset Defaults
-            </Button>
-          </div>
-        </motion.section>
+        <DashboardExecutionControls
+          recalculating={recalcLoading}
+          generating={insightsLoading}
+          onApply={() => applyChanges()}
+          onGenerate={generateInsights}
+          onReset={resetToDefaults}
+        />
 
         <motion.section className="surface checklist-surface" variants={fadeUp}>
           <div className="section-head">
@@ -2115,80 +2012,15 @@ setReport(merged);
           </div>
         </motion.section>
 
-        <motion.section className="surface section-surface insights-surface" variants={fadeUp}>
-          <div className="section-head">
-            <h3>AI Insights</h3>
-            <p>Operator-grade insights for profitability, scaling, and execution.</p>
-            <Button type="button" onClick={generateInsights} disabled={insightsLoading}>
-              {insightsLoading ? "Generating..." : "Get AI Insights"}
-            </Button>
-          </div>
-        <div className="insight-meta-row">
-  <Badge variant="secondary">
-    Source: {report.insights.source}
-  </Badge>
-
-  <Badge variant="secondary">
-    Latency: {report.insights.latencyMs}ms
-  </Badge>
-
-  <Badge variant={insightsLoading ? "warning" : "success"}>
-    {insightsLoading
-      ? "Generating"
-      : report.insights.basedOnPreviousCalculation
-        ? "Needs Refresh"
-        : "Ready"}
-  </Badge>
-
-  <Badge variant="secondary">
-    Confidence: {report.insights.source === "gemini" ? "High" : "Medium"}
-  </Badge>
-</div>
-
-{report.insights.source !== "pending" && (
-  <div className="mt-2 text-sm text-muted-foreground">
-    {report.insights.basedOnPreviousCalculation ? (
-      <>
-        Based on last generated analysis. Your assumptions have changed.
-      </>
-    ) : (
-      <>
-        Based on current calculation.
-      </>
-    )}
-  </div>
-)}
-          {insightsError ? <p className="error-text">{insightsError}</p> : null}
-          {report.insights.priorityFixes.length > 0 ? (
-            <div className="fix-grid">
-              {report.insights.priorityFixes.map((fix, index) => (
-                <article key={`${fix}-${index}`} className="fix-card">
-                  <p>{fix}</p>
-                  <div className="fix-actions">
-                    <Button type="button" onClick={() => applyPriorityFix(index)} disabled={appliedFixes.includes(index)}>
-                      {appliedFixes.includes(index) ? "Applied" : "Apply Draft"}
-                    </Button>
-                    <Button type="button" variant="secondary" onClick={() => dismissPriorityFix(index)}>Dismiss</Button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : null}
-          <article className="fix-card">
-            <p className="metric-title">Executive Summary</p>
-            <p className="muted-text">{report.insights.summary}</p>
-          </article>
-          <div className="fix-grid">
-            <InsightList title="Growth Levers" items={report.insights.growthLevers} />
-            <InsightList title="Risk Alerts" items={report.insights.riskAlerts} />
-            <InsightList title="Channel Plan" items={report.insights.channelPlan} />
-            <InsightList title="Experiment Backlog" items={report.insights.experimentBacklog} />
-            <InsightList title="Cashflow Actions" items={report.insights.cashflowActions} />
-            <InsightList title="KPI Watchlist" items={report.insights.watchlistKpis} />
-            <InsightList title="Next 30 Days" items={report.insights.next30Days} />
-          </div>
-          <Textarea readOnly value={report.insights.summary} />
-        </motion.section>
+        <DashboardInsightsSection
+          report={report}
+          loading={insightsLoading}
+          error={insightsError}
+          appliedFixes={appliedFixes}
+          onGenerate={generateInsights}
+          onApplyFix={applyPriorityFix}
+          onDismissFix={dismissPriorityFix}
+        />
       </main>
 
       {toasts.length > 0 ? (
