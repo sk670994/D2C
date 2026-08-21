@@ -15,6 +15,7 @@
     "framer-motion": "^12.36.0",
     "motion-utils": "^12.36.0",
     "next": "^16.1.6",
+    "playwright": "^1.62.1",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "xlsx": "0.18.5"
@@ -24,8 +25,8 @@
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
     "baseline-browser-mapping": "^2.10.0",
-    "typescript": "5.8.3",
+    "cross-env": "7.0.3",
     "ts-node": "10.9.1",
-    "cross-env": "7.0.3"
+    "typescript": "5.8.3"
   }
 }

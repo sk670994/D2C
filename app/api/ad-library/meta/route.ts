@@ -30,6 +30,16 @@ type MetaLibraryAd = {
   publisher_platforms?: string[];
 };
 
+type MetaSearchCacheEntry = {
+  expiresAt: number;
+  response: Record<string, unknown>;
+  status: number;
+};
+
+const searchCache = new Map<string, MetaSearchCacheEntry>();
+const SUCCESS_CACHE_MS = 5 * 60 * 1000;
+const ERROR_CACHE_MS = 60 * 1000;
+
 function getMetaLibraryToken() {
   if (process.env.META_AD_LIBRARY_ACCESS_TOKEN) return process.env.META_AD_LIBRARY_ACCESS_TOKEN;
   if (process.env.META_APP_ID && process.env.META_APP_SECRET) {
@@ -69,6 +79,12 @@ export async function GET(request: NextRequest) {
     limit: String(limit),
     access_token: accessToken
   });
+  const cacheKey = `${query.toLowerCase()}|${country}|${limit}`;
+  const cached = searchCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return NextResponse.json(cached.response, { status: cached.status });
+  }
+  searchCache.delete(cacheKey);
 
   try {
     const response = await fetch(`https://graph.facebook.com/${META_GRAPH_VERSION}/ads_archive?${params.toString()}`, {
@@ -79,15 +95,22 @@ export async function GET(request: NextRequest) {
 
     if (!response.ok) {
       const providerError = data?.error;
-      return NextResponse.json(
-        {
-          error: providerError?.message || "Failed to search Meta Ad Library",
-          provider: "meta",
-          providerCode: providerError?.code ?? null,
-          providerType: providerError?.type ?? null
-        },
-        { status: response.status }
-      );
+      const errorResponse = {
+        error: providerError?.message || "Failed to search Meta Ad Library",
+        provider: "meta",
+        providerCode: providerError?.code ?? null,
+        providerType: providerError?.type ?? null,
+        retryable: providerError?.code !== 190,
+        action: providerError?.code === 190
+          ? "Generate a new Meta Ad Library access token and update META_AD_LIBRARY_ACCESS_TOKEN."
+          : "Check Meta app permissions and try again."
+      };
+      searchCache.set(cacheKey, {
+        expiresAt: Date.now() + ERROR_CACHE_MS,
+        response: errorResponse,
+        status: providerError?.code === 190 ? 401 : response.status
+      });
+      return NextResponse.json(errorResponse, { status: providerError?.code === 190 ? 401 : response.status });
     }
 
     const ads = ((data.data || []) as MetaLibraryAd[]).map((ad) => ({
@@ -104,13 +127,19 @@ export async function GET(request: NextRequest) {
     publisherPlatforms: ad.publisher_platforms || []
   }));
 
-    return NextResponse.json({
+    const successResponse = {
       provider: "meta",
       query,
       country,
       ads,
       paging: data.paging || null
+    };
+    searchCache.set(cacheKey, {
+      expiresAt: Date.now() + SUCCESS_CACHE_MS,
+      response: successResponse,
+      status: 200
     });
+    return NextResponse.json(successResponse);
   } catch (error) {
     console.error("Meta Ad Library request failed:", error);
     return NextResponse.json(
