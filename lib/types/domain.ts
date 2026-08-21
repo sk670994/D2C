@@ -41,6 +41,10 @@ export type InsightPayload = {
   next30Days: string[];
   source: "pending" | "gemini" | "fallback";
   latencyMs: number;
+
+  // True when the current report has changed after
+  // the AI insights were generated.
+  basedOnPreviousCalculation?: boolean;
 };
 
 export type CalculatedReport = {
