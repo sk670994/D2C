@@ -7,7 +7,7 @@ import {
   type BrowserContext,
 } from "playwright-core";
 
-import chromium from "@sparticuz/chromium";
+import chromium from "@sparticuz/chromium-min";
 
 import type {
   AdProvider,
@@ -80,11 +80,24 @@ type ScrapedMetaAd = {
 const META_LIB_EN_BASE_URL =
   "https://www.facebook.com/ads/library/";
 
+/**
+ * Production:
+ * Set this in Vercel Environment Variables.
+ *
+ * IMPORTANT:
+ * The Chromium pack version MUST match the installed
+ * @sparticuz/chromium-min version.
+ *
+ * Example for chromium-min 147.0.2:
+ * https://github.com/Sparticuz/chromium/releases/download/v147.0.2/chromium-v147.0.2-pack.x64.tar
+ */
+const CHROMIUM_PACK_URL =
+  process.env.CHROMIUM_PACK_URL?.trim() || "";
+
 const DEFAULT_COUNTRY = "IN";
 const DEFAULT_MAX_SCROLLS = 14;
 const TARGET_LIBRARY_IDS = 80;
 const META_CACHE_TTL_MS = 5 * 60 * 1000;
-
 const CTA_VALUES = [
   "Shop Now",
   "Learn More",
@@ -228,16 +241,54 @@ async function getMetaBrowser(): Promise<Browser> {
         launchArgs = [
           "--disable-blink-features=AutomationControlled",
           "--disable-dev-shm-usage",
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
         ];
       } else {
+        /*
+         * @sparticuz/chromium-min does NOT bundle the
+         * Chromium Brotli files.
+         *
+         * Therefore production MUST provide either:
+         *
+         * 1. CHROMIUM_PACK_URL
+         * 2. a local Brotli directory
+         *
+         * For Vercel, use CHROMIUM_PACK_URL.
+         */
+        if (!CHROMIUM_PACK_URL) {
+          throw new Error(
+            [
+              "CHROMIUM_PACK_URL is not configured.",
+              "",
+              "Because this project uses @sparticuz/chromium-min,",
+              "production requires a remote Chromium pack URL.",
+              "",
+              "Add CHROMIUM_PACK_URL to your Vercel Environment Variables.",
+              "",
+              "Example:",
+              "https://github.com/Sparticuz/chromium/releases/download/v147.0.2/chromium-v147.0.2-pack.x64.tar",
+            ].join("\n"),
+          );
+        }
+
+        console.log(
+          "[MetaProvider] Chromium pack URL:",
+          CHROMIUM_PACK_URL,
+        );
+
         executablePath =
-          await chromium.executablePath();
+          await chromium.executablePath(
+            CHROMIUM_PACK_URL,
+          );
 
         launchArgs = [
           ...chromium.args,
-          "--disable-dev-shm-usage",
           "--no-sandbox",
           "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--no-zygote",
         ];
       }
 
@@ -282,7 +333,6 @@ async function getMetaBrowser(): Promise<Browser> {
 
   return metaBrowserPromise;
 }
-
 async function resetMetaBrowser(): Promise<void> {
   const browser = metaBrowser;
 

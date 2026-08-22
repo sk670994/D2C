@@ -2,8 +2,8 @@
   "name": "d2c-marketing-app",
   "version": "0.1.0",
   "private": true,
-   "engines": {
-    "node": "24.x"
+  "engines": {
+    "node": "22.x"
   },
   "scripts": {
     "dev": "next dev",
@@ -13,7 +13,7 @@
     "validate:formulas": "npx tsx scripts/validate-formulas.ts"
   },
   "dependencies": {
-    "@sparticuz/chromium": "^147.0.0",
+    "@sparticuz/chromium-min": "^147.0.0",
     "@supabase/ssr": "^0.9.0",
     "@supabase/supabase-js": "^2.98.0",
     "framer-motion": "^12.36.0",
