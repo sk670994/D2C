@@ -13,7 +13,7 @@
     "validate:formulas": "npx tsx scripts/validate-formulas.ts"
   },
   "dependencies": {
-    "@sparticuz/chromium-min": "^147.0.0",
+    "@sparticuz/chromium-min": "147.0.2",
     "@supabase/ssr": "^0.9.0",
     "@supabase/supabase-js": "^2.98.0",
     "framer-motion": "^12.36.0",
