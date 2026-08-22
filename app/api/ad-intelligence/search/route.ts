@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { createClient as createServerAuthClient } from "@/lib/supabase/server";
+
 import type {
   AdSearchInput,
   AdSearchMode,
@@ -12,6 +14,8 @@ import {
   buildAdSearchSummary,
 } from "@/lib/ad-intelligence/intelligence";
 
+import { saveAdSpySnapshot } from "@/lib/ad-intelligence/adspy-store";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -19,28 +23,50 @@ export const dynamic = "force-dynamic";
  * GET /api/ad-intelligence/search
  *
  * Examples:
- *
  * /api/ad-intelligence/search?q=Mamaearth
  * /api/ad-intelligence/search?q=Mamaearth&page=2
  * /api/ad-intelligence/search?q=Mamaearth&page=2&limit=20
  * /api/ad-intelligence/search?q=Mamaearth&mode=keyword
  * /api/ad-intelligence/search?q=Mamaearth&country=IN&platform=meta
  */
-export async function GET(
-  request: NextRequest
-) {
+export async function GET(request: NextRequest) {
   try {
-    const searchParams =
-      request.nextUrl.searchParams;
+    // ------------------------------------------------------------
+    // 1. AUTHENTICATION
+    // ------------------------------------------------------------
+
+    const authClient = await createServerAuthClient();
+
+    const {
+      data: { user },
+      error: userError,
+    } = await authClient.auth.getUser();
+
+    if (userError || !user) {
+      console.warn(
+        "[AdIntelligenceSearch] Unauthorized request."
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Unauthorized",
+          message: "You must be signed in to use AdSpy.",
+        },
+        {
+          status: 401,
+        }
+      );
+    }
 
     // ------------------------------------------------------------
-    // QUERY
+    // 2. SEARCH PARAMS
     // ------------------------------------------------------------
+
+    const searchParams = request.nextUrl.searchParams;
 
     const query =
-      searchParams
-        .get("q")
-        ?.trim() ?? "";
+      searchParams.get("q")?.trim() ?? "";
 
     if (!query) {
       return NextResponse.json(
@@ -54,27 +80,14 @@ export async function GET(
       );
     }
 
-    // ------------------------------------------------------------
-    // COUNTRY
-    // ------------------------------------------------------------
-
-    const country =
-      (
-        searchParams
-          .get("country")
-          ?.trim() || "IN"
-      ).toUpperCase();
-
-    // ------------------------------------------------------------
-    // PLATFORM
-    // ------------------------------------------------------------
+    const country = (
+      searchParams.get("country")?.trim() || "IN"
+    ).toUpperCase();
 
     const platform =
       (
-        searchParams
-          .get("platform")
-          ?.trim()
-          .toLowerCase() || "meta"
+        searchParams.get("platform")?.trim().toLowerCase() ||
+        "meta"
       );
 
     if (platform !== "meta") {
@@ -90,21 +103,8 @@ export async function GET(
       );
     }
 
-    // ------------------------------------------------------------
-    // MODE
-    //
-    // IMPORTANT:
-    // AdSearchMode is:
-    // "advertiser" | "keyword"
-    //
-    // Never pass an arbitrary string here.
-    // ------------------------------------------------------------
-
     const rawMode =
-      searchParams
-        .get("mode")
-        ?.trim()
-        .toLowerCase();
+      searchParams.get("mode")?.trim().toLowerCase();
 
     const mode: AdSearchMode =
       rawMode === "keyword"
@@ -112,44 +112,29 @@ export async function GET(
         : "advertiser";
 
     // ------------------------------------------------------------
-    // PAGE
+    // 3. PAGINATION PARAMS
     // ------------------------------------------------------------
 
-    const rawPage =
-      Number(
-        searchParams.get("page") ?? "1"
-      );
+    const rawPage = Number(
+      searchParams.get("page") ?? "1"
+    );
 
     const page =
-      Number.isFinite(rawPage) &&
-      rawPage >= 1
+      Number.isFinite(rawPage) && rawPage >= 1
         ? Math.floor(rawPage)
         : 1;
 
-    // ------------------------------------------------------------
-    // LIMIT
-    // ------------------------------------------------------------
-
-    const rawLimit =
-      Number(
-        searchParams.get("limit") ?? "20"
-      );
+    const rawLimit = Number(
+      searchParams.get("limit") ?? "20"
+    );
 
     const limit =
-      Number.isFinite(rawLimit) &&
-      rawLimit >= 1
-        ? Math.min(
-            Math.floor(rawLimit),
-            100
-          )
+      Number.isFinite(rawLimit) && rawLimit >= 1
+        ? Math.min(Math.floor(rawLimit), 100)
         : 20;
 
     // ------------------------------------------------------------
-    // PROVIDER
-    //
-    // We deliberately use metaProvider directly instead of
-    // importing `adProviders`, because your current project does
-    // not expose that barrel export consistently.
+    // 4. PROVIDER
     // ------------------------------------------------------------
 
     const provider = metaProvider;
@@ -167,63 +152,51 @@ export async function GET(
     }
 
     // ------------------------------------------------------------
-    // SEARCH
-    //
-    // We collect the provider's full result set first.
-    // Pagination is applied AFTER:
-    //
-    // 1. scraping
-    // 2. normalization
-    // 3. intelligence enrichment
-    //
-    // This keeps totalAdsFound and pagination accurate.
+    // 5. BUILD SEARCH INPUT
     // ------------------------------------------------------------
 
-  const searchInput: AdSearchInput = {
-  query,
-  country,
-  platform: "meta",
-  mode,
-};
+    const searchInput: AdSearchInput = {
+      query,
+      country,
+      platform: "meta",
+      mode,
+    };
+
+    console.info(
+      `[AdIntelligenceSearch] Searching Meta: ${query} (${country})`
+    );
+
+    // ------------------------------------------------------------
+    // 6. SCRAPE META
+    // ------------------------------------------------------------
 
     const providerResult =
-      await provider.search(
-        searchInput
-      );
+      await provider.search(searchInput);
 
     const scrapedAds =
       providerResult?.ads ?? [];
 
-    // ------------------------------------------------------------
-    // INTELLIGENCE / ENRICHMENT
-    // ------------------------------------------------------------
-
-    const enrichedAds =
-      enrichAds(
-        scrapedAds,
-        query
-      );
+    console.info(
+      `[AdIntelligenceSearch] Provider returned ${scrapedAds.length} ads.`
+    );
 
     // ------------------------------------------------------------
-    // SORT
-    //
-    // Intelligence should normally already rank the ads, but we
-    // preserve that ordering here.
+    // 7. ENRICH / RANK
     // ------------------------------------------------------------
 
-    const rankedAds =
-      [...enrichedAds];
+    const enrichedAds = enrichAds(
+      scrapedAds,
+      query
+    );
+
+    const rankedAds = [...enrichedAds];
+
+    console.info(
+      `[AdIntelligenceSearch] Enriched ${rankedAds.length} ads.`
+    );
 
     // ------------------------------------------------------------
-    // SUMMARY
-    //
-    // Build summary from ALL matching ads, not only the current
-    // page. Therefore:
-    //
-    // totalAdsFound = complete result set
-    // activeAds      = complete result set
-    // videoAds       = complete result set
-    // etc.
+    // 8. BUILD INTELLIGENCE SUMMARY
     // ------------------------------------------------------------
 
     const summary =
@@ -232,30 +205,66 @@ export async function GET(
       );
 
     // ------------------------------------------------------------
-    // PAGINATION
+    // 9. SAVE COMPLETE ADSPY SNAPSHOT
     // ------------------------------------------------------------
 
-    const total =
-      rankedAds.length;
+    /**
+     * IMPORTANT:
+     *
+     * Save the COMPLETE ranked dataset.
+     *
+     * Do NOT save paginatedAds here.
+     *
+     * This allows ZWIRK to later access:
+     * - all ads from the search
+     * - creative patterns
+     * - offers
+     * - creators
+     * - longevity
+     * - scores
+     * - historical snapshots
+     */
+    try {
+      await saveAdSpySnapshot({
+        userId: user.id,
+        query,
+        country,
+        platform: "meta",
+        ads: rankedAds,
+        intelligence: summary,
+      });
+
+      console.info(
+        `[AdIntelligenceSearch] Saved AdSpy snapshot: ${query} (${rankedAds.length} ads)`
+      );
+    } catch (snapshotError) {
+      /**
+       * Snapshot storage should NEVER break AdSpy search.
+       */
+      console.error(
+        "[AdIntelligenceSearch] Failed to persist AdSpy snapshot:",
+        snapshotError
+      );
+    }
+
+    // ------------------------------------------------------------
+    // 10. PAGINATION
+    // ------------------------------------------------------------
+
+    const total = rankedAds.length;
 
     const totalPages =
       total === 0
         ? 0
-        : Math.ceil(
-            total / limit
-          );
+        : Math.ceil(total / limit);
 
     const safePage =
       totalPages === 0
         ? 1
-        : Math.min(
-            page,
-            totalPages
-          );
+        : Math.min(page, totalPages);
 
     const startIndex =
-      (safePage - 1) *
-      limit;
+      (safePage - 1) * limit;
 
     const endIndex =
       startIndex + limit;
@@ -283,58 +292,51 @@ export async function GET(
         : null;
 
     // ------------------------------------------------------------
-    // RESPONSE
+    // 11. RESPONSE
     // ------------------------------------------------------------
 
     return NextResponse.json(
       {
         success: true,
-
         query,
-
         country,
-
         platform: "meta",
-
         mode,
 
-        count:
-          paginatedAds.length,
+        count: paginatedAds.length,
 
         pagination: {
           page: safePage,
-
           limit,
-
           total,
-
           totalPages,
-
           hasNextPage,
-
           hasPreviousPage,
-
           nextPage,
-
           previousPage,
         },
 
+        /**
+         * Summary represents the COMPLETE matching result set,
+         * not just the current page.
+         */
         summary,
 
+        /**
+         * UI receives only the requested page.
+         */
         ads: paginatedAds,
       },
       {
         status: 200,
       }
     );
-  }  catch (error: unknown) {
+  } catch (error: unknown) {
     let message = "Unknown error";
 
     if (error instanceof Error) {
       message = error.message;
-    } else if (
-      typeof error === "string"
-    ) {
+    } else if (typeof error === "string") {
       message = error;
     } else {
       try {
