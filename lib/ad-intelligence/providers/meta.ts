@@ -1413,96 +1413,71 @@ function isRelevantToAdvertiser(
   ad: CompetitorAd,
   query: string
 ): boolean {
-  const q = normalizeSearchText(query);
+  const normalize = (
+    value: string | null | undefined
+  ): string => {
+    return (value ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  };
+
+  const q = normalize(query);
 
   if (!q) {
     return false;
   }
 
-  const advertiser = normalizeSearchText(
+  const advertiser = normalize(
     ad.advertiserName
   );
 
-  const creator = normalizeSearchText(
+  const creator = normalize(
     ad.creatorName
   );
-
-  const product = normalizeSearchText(
-    ad.productName
-  );
-
-  const headline = normalizeSearchText(
-    ad.headline
-  );
-
-  const primaryText = normalizeSearchText(
-    ad.primaryText
-  );
-
-  const landingPage = normalizeSearchText(
-    ad.landingPage
-  );
-
-  const sourceUrl = normalizeSearchText(
-    ad.sourceUrl
-  );
-
-  const compactQuery = q.replace(/\s+/g, "");
 
   if (
     advertiser &&
     advertiser !== "unknown advertiser" &&
-    advertiser.includes(q)
+    (
+      advertiser === q ||
+      advertiser.includes(q) ||
+      q.includes(advertiser)
+    )
   ) {
     return true;
   }
 
   if (
     creator &&
-    creator.includes(q)
+    (
+      creator === q ||
+      creator.includes(q) ||
+      q.includes(creator)
+    )
   ) {
     return true;
   }
 
+  /*
+   * Landing-page domain is useful evidence.
+   *
+   * IMPORTANT:
+   * Never use ad.sourceUrl here because sourceUrl
+   * is the Meta Ad Library search URL and always
+   * contains the user's query.
+   */
   if (
-    product &&
-    product.includes(q)
+    hostContainsQuery(
+      ad.landingPage,
+      query
+    )
   ) {
     return true;
   }
 
-  if (
-    headline &&
-    headline.includes(q)
-  ) {
-    return true;
-  }
-
-  if (
-    primaryText &&
-    primaryText.includes(q)
-  ) {
-    return true;
-  }
-
-  if (
-    compactQuery &&
-    landingPage.replace(/\s+/g, "").includes(compactQuery)
-  ) {
-    return true;
-  }
-
-  if (
-    compactQuery &&
-    sourceUrl.replace(/\s+/g, "").includes(compactQuery)
-  ) {
-    return true;
-  }
-
-  return hostContainsQuery(
-    ad.landingPage,
-    query
-  );
+  return false;
 }
 
 /* =========================================================
