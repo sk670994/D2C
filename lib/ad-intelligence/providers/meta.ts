@@ -1408,7 +1408,6 @@ function normalizeSearchText(
     .replace(/\s+/g, " ")
     .trim();
 }
-
 function isRelevantToAdvertiser(
   ad: CompetitorAd,
   query: string
@@ -1437,6 +1436,9 @@ function isRelevantToAdvertiser(
     ad.creatorName
   );
 
+  /*
+   * 1. Strong advertiser identity match.
+   */
   if (
     advertiser &&
     advertiser !== "unknown advertiser" &&
@@ -1449,6 +1451,19 @@ function isRelevantToAdvertiser(
     return true;
   }
 
+  /*
+   * 2. Creator partnership match.
+   *
+   * Example:
+   * Search: Mamaearth
+   * Advertiser: Mamaearth
+   * Creator: some_creator
+   *
+   * The advertiser match above handles this normally.
+   *
+   * We only use creator matching when the creator itself
+   * is clearly the searched entity.
+   */
   if (
     creator &&
     (
@@ -1461,12 +1476,11 @@ function isRelevantToAdvertiser(
   }
 
   /*
-   * Landing-page domain is useful evidence.
+   * 3. Landing-domain match.
    *
-   * IMPORTANT:
-   * Never use ad.sourceUrl here because sourceUrl
-   * is the Meta Ad Library search URL and always
-   * contains the user's query.
+   * Only use the actual landing page.
+   * NEVER use sourceUrl because sourceUrl is the
+   * Meta Ad Library search URL and contains the query.
    */
   if (
     hostContainsQuery(
@@ -1477,9 +1491,23 @@ function isRelevantToAdvertiser(
     return true;
   }
 
+  /*
+   * IMPORTANT:
+   *
+   * Do NOT match productName, headline, or primaryText
+   * here.
+   *
+   * Those fields can mention another brand.
+   *
+   * Example:
+   * Advertiser: Foot Locker India
+   * Headline: Nike Air Jordan
+   *
+   * That is a Foot Locker ad, NOT a Nike advertiser ad.
+   */
+
   return false;
 }
-
 /* =========================================================
  * LIBRARY URL
  * ======================================================= */
@@ -1499,48 +1527,113 @@ export function buildLibraryUrl(
   return `${META_LIB_EN_BASE_URL}?${params.toString()}`;
 }
 
+let metaBrowser:
+  | Awaited<ReturnType<typeof playwrightChromium.launch>>
+  | null = null;
+
+let metaBrowserPromise:
+  | Promise<
+      Awaited<
+        ReturnType<
+          typeof playwrightChromium.launch
+        >
+      >
+    >
+  | null = null;
+
+async function getMetaBrowser() {
+  if (metaBrowser) {
+    try {
+      if (metaBrowser.isConnected()) {
+        return metaBrowser;
+      }
+    } catch {
+      // Browser is no longer usable.
+    }
+
+    metaBrowser = null;
+  }
+
+  if (!metaBrowserPromise) {
+    metaBrowserPromise =
+      (async () => {
+        const isLocal =
+          process.platform === "win32" ||
+          process.env.IS_LOCAL ===
+            "true";
+
+        const executablePath =
+          isLocal
+            ? getLocalBrowserExecutable()
+            : await chromium.executablePath();
+
+        console.log(
+          "[MetaProvider] Launching reusable Chromium"
+        );
+
+        const browser =
+          await playwrightChromium.launch({
+            args: isLocal
+              ? []
+              : chromium.args,
+            executablePath,
+            headless: true,
+          });
+
+        browser.on(
+          "disconnected",
+          () => {
+            console.log(
+              "[MetaProvider] Chromium disconnected"
+            );
+
+            if (
+              metaBrowser ===
+              browser
+            ) {
+              metaBrowser = null;
+            }
+          }
+        );
+
+        metaBrowser = browser;
+
+        return browser;
+      })().finally(() => {
+        metaBrowserPromise = null;
+      });
+  }
+
+  return metaBrowserPromise;
+}
 /* =========================================================
  * SCRAPER
  * ======================================================= */
-
 async function scrapeMetaAdLibrary(
   query: string,
   country: string,
-  maxScrolls = 30
+  maxScrolls = 14
 ): Promise<ScrapedMetaAd[]> {
- const isLocal =
-  process.platform === "win32" ||
-  process.env.IS_LOCAL === "true";
+  const browser =
+    await getMetaBrowser();
 
-const executablePath = isLocal
-  ? getLocalBrowserExecutable()
-  : await chromium.executablePath();
+  const context =
+    await browser.newContext({
+      locale: "en-IN",
+      viewport: {
+        width: 1440,
+        height: 1000,
+      },
+      extraHTTPHeaders: {
+        "Accept-Language":
+          "en-IN,en;q=0.9",
+      },
+    });
 
-const browser = await playwrightChromium.launch({
-  args: isLocal ? [] : chromium.args,
-  executablePath,
-  headless: true,
-});
+  const page =
+    await context.newPage();
 
   try {
-    const context =
-      await browser.newContext({
-        locale: "en-IN",
-
-        viewport: {
-          width: 1440,
-          height: 1000,
-        },
-
-        extraHTTPHeaders: {
-          "Accept-Language":
-            "en-IN,en;q=0.9",
-        },
-      });
-
-    const page =
-      await context.newPage();
-
     const url =
       buildLibraryUrl(
         query,
@@ -1574,7 +1667,17 @@ const browser = await playwrightChromium.launch({
       page.url()
     );
 
-    await page.waitForTimeout(5000);
+    /*
+     * Initial settle.
+     */
+    await page.waitForTimeout(
+      2500
+    );
+
+    /*
+     * Controlled scrolling.
+     */
+    const TARGET_LIBRARY_IDS = 80;
 
     let previousCount = 0;
     let stableRounds = 0;
@@ -1586,11 +1689,11 @@ const browser = await playwrightChromium.launch({
     ) {
       await page.mouse.wheel(
         0,
-        2400
+        2200
       );
 
       await page.waitForTimeout(
-        1100
+        650
       );
 
       const count =
@@ -1625,24 +1728,53 @@ const browser = await playwrightChromium.launch({
 
       previousCount = count;
 
-      if (stableRounds >= 3) {
+      if (
+        count >=
+        TARGET_LIBRARY_IDS
+      ) {
+        console.log(
+          "[MetaProvider] Target library ID count reached:",
+          count
+        );
+
+        break;
+      }
+
+      if (
+        stableRounds >= 4
+      ) {
+        console.log(
+          "[MetaProvider] Library ID count stabilized:",
+          count
+        );
+
         break;
       }
     }
 
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(
+      700
+    );
 
-    /**
+    /*
      * IMPORTANT:
      *
-     * CTA_VALUES is passed into evaluate.
+     * Keep the exact page.evaluate(...) extraction code
+     * from your current optimized version here.
      *
-     * Variables outside page.evaluate() do NOT
-     * automatically exist inside Chromium's page context.
+     * It should end with:
+     *
+     * const ads = await page.evaluate(
+     *   (ctaValues: string[]) => {
+     *     ...
+     *   },
+     *   CTA_VALUES
+     * );
      */
+
     const ads =
       await page.evaluate(
-        (ctaValues) => {
+        (ctaValues: string[]) => {
           const isLibraryIdText =
             (text: string): boolean =>
               /(?:Library ID|लाइब्रेरी ID):\s*\d+/i.test(
@@ -1658,24 +1790,49 @@ const browser = await playwrightChromium.launch({
                   /(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i
                 );
 
-              return match?.[1] ?? null;
+              return (
+                match?.[1] ?? null
+              );
             };
 
           const normalizePageText =
             (
               value: string
-            ): string => {
-              return value
-                .replace(/\u200B/g, "")
-                .replace(/\u200C/g, "")
-                .replace(/\u200D/g, "")
-                .replace(/\uFEFF/g, "")
-                .replace(/\u00A0/g, " ")
-                .replace(/\r/g, " ")
-                .replace(/\n/g, " ")
-                .replace(/\s+/g, " ")
+            ): string =>
+              value
+                .replace(
+                  /\u200B/g,
+                  ""
+                )
+                .replace(
+                  /\u200C/g,
+                  ""
+                )
+                .replace(
+                  /\u200D/g,
+                  ""
+                )
+                .replace(
+                  /\uFEFF/g,
+                  ""
+                )
+                .replace(
+                  /\u00A0/g,
+                  " "
+                )
+                .replace(
+                  /\r/g,
+                  " "
+                )
+                .replace(
+                  /\n/g,
+                  " "
+                )
+                .replace(
+                  /\s+/g,
+                  " "
+                )
                 .trim();
-            };
 
           const isDomain =
             (
@@ -1695,141 +1852,236 @@ const browser = await playwrightChromium.launch({
                   .toLowerCase();
 
               return ctaValues.some(
-                (cta) =>
-                  cta.toLowerCase() ===
+                (cta: string) =>
+                  cta
+                    .toLowerCase() ===
                   candidate
               );
             };
 
-          const elements =
-            Array.from(
-              document.querySelectorAll(
-                "*"
-              )
-            );
+          const isDateOnly =
+            (
+              value: string
+            ): boolean => {
+              const text =
+                value.trim();
 
-          const candidates =
-            elements.filter(
-              (element) => {
-                const text =
-                  element.textContent?.trim() ??
-                  "";
-
-                return (
-                  text.length >= 50 &&
-                  text.length <= 20_000 &&
-                  isLibraryIdText(text)
-                );
-              }
-            );
-
-          const unique: Element[] =
-            [];
-
-          for (
-            const element of candidates
-          ) {
-            const alreadyContained =
-              unique.some(
-                (candidate) =>
-                  candidate.contains(
-                    element
-                  )
+              return (
+                /^\d{1,2}\s+[A-Za-z]+\s+\d{4}$/i.test(
+                  text
+                ) ||
+                /^\d{1,2}\s+[A-Za-z]+\s+\d{4}\s*[-–]\s*\d{1,2}\s+[A-Za-z]+\s+\d{4}$/i.test(
+                  text
+                ) ||
+                /^\d{1,2}\s+[^\d\s]+\s+\d{4}$/u.test(
+                  text
+                ) ||
+                /^\d{1,2}\s+[^\d\s]+\s+\d{4}\s*[-–]\s*\d{1,2}\s+[^\d\s]+\s+\d{4}$/u.test(
+                  text
+                )
               );
+            };
+
+          /*
+           * Fast card discovery using text nodes.
+           */
+          const candidateCards =
+            new Map<
+              string,
+              Element
+            >();
+
+          const walker =
+            document.createTreeWalker(
+              document.body,
+              NodeFilter.SHOW_TEXT
+            );
+
+          let currentNode:
+            | Node
+            | null =
+            walker.nextNode();
+
+          while (
+            currentNode
+          ) {
+            const rawText =
+              currentNode.textContent ??
+              "";
 
             if (
-              alreadyContained
+              rawText &&
+              isLibraryIdText(
+                rawText
+              )
             ) {
-              continue;
-            }
+              let current =
+                currentNode.parentElement;
 
-            for (
-              let i =
-                unique.length - 1;
-              i >= 0;
-              i--
-            ) {
-              if (
-                element.contains(
-                  unique[i]
-                )
+              let best:
+                | Element
+                | null = null;
+
+              for (
+                let depth = 0;
+                depth < 10 &&
+                current;
+                depth++
               ) {
-                unique.splice(i, 1);
+                const text =
+                  current.textContent?.trim() ??
+                  "";
+
+                if (
+                  text.length >= 100 &&
+                  text.length <=
+                    20_000 &&
+                  isLibraryIdText(
+                    text
+                  )
+                ) {
+                  best =
+                    current;
+                }
+
+                current =
+                  current.parentElement;
+              }
+
+              if (
+                best
+              ) {
+                const libraryId =
+                  getLibraryId(
+                    best.textContent ??
+                      ""
+                  );
+
+                if (
+                  libraryId &&
+                  !candidateCards.has(
+                    libraryId
+                  )
+                ) {
+                  candidateCards.set(
+                    libraryId,
+                    best
+                  );
+                }
               }
             }
 
-            unique.push(element);
+            currentNode =
+              walker.nextNode();
           }
 
-          const cards: Element[] =
-            [];
-
-          for (
-            const element of unique
+          /*
+           * Fallback for Meta DOM changes.
+           */
+          if (
+            candidateCards.size ===
+            0
           ) {
-            let current:
-              | Element
-              | null = element;
+            const possibleContainers =
+              Array.from(
+                document.querySelectorAll(
+                  '[data-testid], [role="article"], article'
+                )
+              );
 
             for (
-              let depth = 0;
-              depth < 8 && current;
-              depth++
+              const element of
+                possibleContainers
             ) {
               const text =
-                current.textContent?.trim() ??
+                element.textContent?.trim() ??
                 "";
 
               if (
-                isLibraryIdText(text) &&
                 text.length >= 100 &&
-                text.length <= 20_000
+                text.length <=
+                  20_000 &&
+                isLibraryIdText(
+                  text
+                )
               ) {
-                cards.push(current);
-                break;
-              }
+                const libraryId =
+                  getLibraryId(
+                    text
+                  );
 
-              current =
-                current.parentElement;
+                if (
+                  libraryId &&
+                  !candidateCards.has(
+                    libraryId
+                  )
+                ) {
+                  candidateCards.set(
+                    libraryId,
+                    element
+                  );
+                }
+              }
             }
           }
+
+          const cards =
+            Array.from(
+              candidateCards.values()
+            );
 
           const seen =
             new Set<string>();
 
           const results: Array<{
             id: string;
-
-            advertiserName: string | null;
-            creatorName: string | null;
-            partnershipType: PartnershipType;
-
-            primaryText: string | null;
-            headline: string | null;
-            productName: string | null;
-            callToAction: string | null;
-
-            firstSeen: string | null;
-            lastSeen: string | null;
-
-            landingPage: string | null;
-
+            advertiserName:
+              | string
+              | null;
+            creatorName:
+              | string
+              | null;
+            partnershipType:
+              PartnershipType;
+            primaryText:
+              | string
+              | null;
+            headline:
+              | string
+              | null;
+            productName:
+              | string
+              | null;
+            callToAction:
+              | string
+              | null;
+            firstSeen:
+              | string
+              | null;
+            lastSeen:
+              | string
+              | null;
+            landingPage:
+              | string
+              | null;
             isActive: boolean;
-
-            publisherPlatforms: string[];
-
+            publisherPlatforms:
+              string[];
             hasVideo: boolean;
             hasImage: boolean;
             hasCarousel: boolean;
-
-            videoUrl: string | null;
-            imageUrl: string | null;
-            thumbnailUrl: string | null;
-
+            videoUrl:
+              | string
+              | null;
+            imageUrl:
+              | string
+              | null;
+            thumbnailUrl:
+              | string
+              | null;
             videoDurationSeconds:
               | number
               | null;
-
             rawLines: string[];
           }> = [];
 
@@ -1841,13 +2093,17 @@ const browser = await playwrightChromium.launch({
               "";
 
             const id =
-              getLibraryId(rawText);
+              getLibraryId(
+                rawText
+              );
 
             if (!id) {
               continue;
             }
 
-            if (seen.has(id)) {
+            if (
+              seen.has(id)
+            ) {
               continue;
             }
 
@@ -1881,7 +2137,8 @@ const browser = await playwrightChromium.launch({
             const advertiserLine =
               sponsoredIndex > 0
                 ? rawLines[
-                    sponsoredIndex - 1
+                    sponsoredIndex -
+                      1
                   ] ?? null
                 : null;
 
@@ -1901,7 +2158,7 @@ const browser = await playwrightChromium.launch({
             ) {
               const creatorMatch =
                 advertiserLine.match(
-                  /^(.+?)\s+(?:के\s+साथ|with)\s+(.+)$/i
+                  /^(.+?)\s+(?:के\s+साथ|with)\s+(.+)$/iu
                 );
 
               if (
@@ -1926,7 +2183,8 @@ const browser = await playwrightChromium.launch({
             }
 
             const startIndex =
-              sponsoredIndex >= 0
+              sponsoredIndex >=
+              0
                 ? sponsoredIndex + 1
                 : 0;
 
@@ -1935,8 +2193,10 @@ const browser = await playwrightChromium.launch({
               | null = null;
 
             for (
-              let i = startIndex;
-              i < rawLines.length;
+              let i =
+                startIndex;
+              i <
+              rawLines.length;
               i++
             ) {
               const line =
@@ -1957,7 +2217,7 @@ const browser = await playwrightChromium.launch({
               }
 
               if (
-                /^(?:Library ID|लाइब्रेरी ID):/i.test(
+                /^(?:Library ID|लाइब्रेरी ID):/iu.test(
                   line
                 )
               ) {
@@ -1980,18 +2240,14 @@ const browser = await playwrightChromium.launch({
 
               if (
                 line.length >= 8 &&
-                line.length <= 4000
+                line.length <=
+                  4000
               ) {
                 primaryText =
                   primaryText
                     ? `${primaryText} ${line}`
                     : line;
               }
-
-              /**
-               * Keep collecting copy until the
-               * landing-domain section begins.
-               */
             }
 
             const domainIndex =
@@ -2009,7 +2265,8 @@ const browser = await playwrightChromium.launch({
               for (
                 let i =
                   domainIndex + 1;
-                i < rawLines.length;
+                i <
+                rawLines.length;
                 i++
               ) {
                 const line =
@@ -2024,7 +2281,7 @@ const browser = await playwrightChromium.launch({
                 }
 
                 if (
-                  /^(?:Library ID|लाइब्रेरी ID):/i.test(
+                  /^(?:Library ID|लाइब्रेरी ID):/iu.test(
                     line
                   )
                 ) {
@@ -2046,19 +2303,24 @@ const browser = await playwrightChromium.launch({
                 }
 
                 if (
+                  isDateOnly(line)
+                ) {
+                  continue;
+                }
+
+                if (
                   line.length >= 3 &&
-                  line.length <= 500
+                  line.length <=
+                    500
                 ) {
                   productName =
                     line;
+
                   break;
                 }
               }
             }
 
-            /**
-             * CTA detection.
-             */
             let callToAction:
               | string
               | null = null;
@@ -2071,22 +2333,17 @@ const browser = await playwrightChromium.launch({
               ) {
                 callToAction =
                   ctaValues.find(
-                    (cta) =>
-                      cta.toLowerCase() ===
+                    (cta: string) =>
+                      cta
+                        .toLowerCase() ===
                       line.toLowerCase()
-                  ) ?? line;
+                  ) ??
+                  line;
 
                 break;
               }
             }
 
-            /**
-             * First/last dates.
-             *
-             * We keep the original visible
-             * text and let Node-side parsing
-             * normalize it later.
-             */
             let firstSeen:
               | string
               | null = null;
@@ -2098,24 +2355,26 @@ const browser = await playwrightChromium.launch({
             for (
               const line of rawLines
             ) {
-              const range =
+              const englishRange =
                 line.match(
                   /(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i
                 );
 
-              if (range) {
+              if (
+                englishRange
+              ) {
                 firstSeen =
-                  range[1];
+                  englishRange[1];
 
                 lastSeen =
-                  range[2];
+                  englishRange[2];
 
                 break;
               }
 
               const hindiRange =
                 line.match(
-                  /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[^\d\s]+\s+\d{4})/
+                  /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[^\d\s]+\s+\d{4})/u
                 );
 
               if (
@@ -2146,7 +2405,7 @@ const browser = await playwrightChromium.launch({
 
               const startedHindi =
                 line.match(
-                  /(.+)\s+को\s+चलना\s+शुरू\s+हुआ/
+                  /(.+)\s+को\s+चलना\s+शुरू\s+हुआ/u
                 );
 
               if (
@@ -2159,9 +2418,6 @@ const browser = await playwrightChromium.launch({
               }
             }
 
-            /**
-             * Landing page.
-             */
             let landingPage:
               | string
               | null = null;
@@ -2224,7 +2480,9 @@ const browser = await playwrightChromium.launch({
               }
             }
 
-            if (!landingPage) {
+            if (
+              !landingPage
+            ) {
               for (
                 const line of rawLines
               ) {
@@ -2253,9 +2511,6 @@ const browser = await playwrightChromium.launch({
               }
             }
 
-            /**
-             * Media detection.
-             */
             const videos =
               Array.from(
                 card.querySelectorAll(
@@ -2331,9 +2586,6 @@ const browser = await playwrightChromium.launch({
                 );
             }
 
-            /**
-             * Status.
-             */
             const joinedText =
               rawLines
                 .join(" ")
@@ -2355,13 +2607,6 @@ const browser = await playwrightChromium.launch({
                 )
               );
 
-            /**
-             * Platforms.
-             *
-             * Meta sometimes renders only
-             * "Platforms", so this is intentionally
-             * conservative.
-             */
             const publisherPlatforms:
               string[] = [];
 
@@ -2375,7 +2620,7 @@ const browser = await playwrightChromium.launch({
 
             for (
               const platform of
-              platformNames
+                platformNames
             ) {
               if (
                 joinedText.includes(
@@ -2390,46 +2635,26 @@ const browser = await playwrightChromium.launch({
 
             results.push({
               id,
-
               advertiserName,
-
               creatorName,
-
               partnershipType,
-
               primaryText,
-
               headline:
                 productName,
-
               productName,
-
               callToAction,
-
               firstSeen,
-
               lastSeen,
-
               landingPage,
-
               isActive,
-
               publisherPlatforms,
-
               hasVideo,
-
               hasImage,
-
               hasCarousel,
-
               videoUrl,
-
               imageUrl,
-
               thumbnailUrl,
-
               videoDurationSeconds,
-
               rawLines,
             });
           }
@@ -2446,10 +2671,21 @@ const browser = await playwrightChromium.launch({
 
     return ads;
   } finally {
-    await browser.close();
+    /*
+     * IMPORTANT:
+     *
+     * Do NOT close the browser here.
+     *
+     * The browser is intentionally kept alive so that
+     * subsequent searches on the same warm Node process
+     * can reuse Chromium.
+     *
+     * Only the page/context are closed.
+     */
+
+    await context.close();
   }
 }
-
 /**
  * Exported test helper.
  */
@@ -2602,6 +2838,34 @@ export const metaProvider: AdProvider = {
         country
       );
 
+    /* -----------------------------------------------------
+     * DIAGNOSTIC: SCRAPED RESULT
+     * --------------------------------------------------- */
+
+    console.log(
+      "[MetaProvider] Scraped count:",
+      scraped.length
+    );
+
+    console.log(
+      "[MetaProvider] Sample advertisers:",
+      scraped.slice(0, 10).map((ad) => ({
+        id: ad.id,
+        advertiserName:
+          ad.advertiserName,
+        creatorName:
+          ad.creatorName,
+        headline:
+          ad.headline,
+        productName:
+          ad.productName,
+      }))
+    );
+
+    /* -----------------------------------------------------
+     * NORMALIZATION
+     * --------------------------------------------------- */
+
     ads = scraped.map((ad) =>
       normalizeScrapedAd(
         ad,
@@ -2611,50 +2875,134 @@ export const metaProvider: AdProvider = {
     );
 
     /* -----------------------------------------------------
+     * DIAGNOSTIC: NORMALIZED RESULT
+     * --------------------------------------------------- */
+
+    console.log(
+      "[MetaProvider] Normalized sample:",
+      ads.slice(0, 10).map((ad) => ({
+        id: ad.id,
+        advertiserName:
+          ad.advertiserName,
+        landingPage:
+          ad.landingPage,
+        headline:
+          ad.headline,
+        productName:
+          ad.productName,
+      }))
+    );
+
+    /* -----------------------------------------------------
      * ADVERTISER RELEVANCE
      * --------------------------------------------------- */
 
-  if (mode === "advertiser") {
-  ads = ads.filter((ad) =>
-    isRelevantToAdvertiser(ad, query)
-  );
-}
+    if (mode === "advertiser") {
+      console.log(
+        "[MetaProvider] Advertiser matches:",
+        ads
+          .filter((ad) =>
+            isRelevantToAdvertiser(
+              ad,
+              query
+            )
+          )
+          .slice(0, 10)
+          .map((ad) => ({
+            id: ad.id,
+            advertiserName:
+              ad.advertiserName,
+            landingPage:
+              ad.landingPage,
+          }))
+      );
+
+      ads = ads.filter((ad) =>
+        isRelevantToAdvertiser(
+          ad,
+          query
+        )
+      );
+
+      console.log(
+        "[MetaProvider] Ads after relevance filter:",
+        ads.length
+      );
+    }
 
     /* -----------------------------------------------------
      * DEDUPLICATION
      * --------------------------------------------------- */
 
     function buildCreativeFingerprint(
-  ad: CompetitorAd
-): string {
-  const normalize = (value: string | null | undefined) =>
-    (value ?? "")
-      .toLowerCase()
-      .replace(/\s+/g, " ")
-      .trim();
+      ad: CompetitorAd
+    ): string {
+      const normalize = (
+        value:
+          | string
+          | null
+          | undefined
+      ) =>
+        (value ?? "")
+          .toLowerCase()
+          .replace(/\s+/g, " ")
+          .trim();
 
-  return [
-    normalize(ad.advertiserName),
-    normalize(ad.headline),
-    normalize(ad.productName),
-    normalize(ad.primaryText),
-    normalize(ad.callToAction),
-    normalize(ad.landingPage),
-    ad.creativeType ?? "",
-  ].join("|");
-}
+      return [
+        normalize(
+          ad.advertiserName
+        ),
+        normalize(
+          ad.headline
+        ),
+        normalize(
+          ad.productName
+        ),
+        normalize(
+          ad.primaryText
+        ),
+        normalize(
+          ad.callToAction
+        ),
+        normalize(
+          ad.landingPage
+        ),
+        ad.creativeType ?? "",
+      ].join("|");
+    }
 
-const unique = new Map<string, CompetitorAd>();
+    const unique =
+      new Map<
+        string,
+        CompetitorAd
+      >();
 
-for (const ad of ads) {
-  const fingerprint = buildCreativeFingerprint(ad);
+    for (const ad of ads) {
+      const fingerprint =
+        buildCreativeFingerprint(
+          ad
+        );
 
-  if (!unique.has(fingerprint)) {
-    unique.set(fingerprint, ad);
-  }
-}
+      if (
+        !unique.has(
+          fingerprint
+        )
+      ) {
+        unique.set(
+          fingerprint,
+          ad
+        );
+      }
+    }
 
-ads = Array.from(unique.values());
+    ads = Array.from(
+      unique.values()
+    );
+
+    console.log(
+      "[MetaProvider] Ads after deduplication:",
+      ads.length
+    );
 
     /* -----------------------------------------------------
      * SORT COMPLETE RESULT SET
@@ -2663,12 +3011,14 @@ ads = Array.from(unique.values());
     ads.sort((a, b) => {
       const aScore =
         (a.creativeScore ?? 0) +
-        (a.runningDays ?? 0) * 0.5 +
+        (a.runningDays ?? 0) *
+          0.5 +
         (a.isActive ? 20 : 0);
 
       const bScore =
         (b.creativeScore ?? 0) +
-        (b.runningDays ?? 0) * 0.5 +
+        (b.runningDays ?? 0) *
+          0.5 +
         (b.isActive ? 20 : 0);
 
       return bScore - aScore;
@@ -2690,16 +3040,8 @@ ads = Array.from(unique.values());
 
     /* -----------------------------------------------------
      * IMPORTANT
-     * ---------------------------------------------------
-
-     * DO NOT DO THIS HERE:
      *
-     * const page = ...
-     * const start = ...
-     * const end = ...
-     * ads = ads.slice(start, end)
-     *
-     * The API route owns pagination.
+     * DO NOT paginate here.
      *
      * Provider:
      *   scrape -> normalize -> filter -> dedupe -> sort
@@ -2718,5 +3060,4 @@ ads = Array.from(unique.values());
     };
   },
 };
-
 export default metaProvider;
