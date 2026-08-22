@@ -65,3 +65,57 @@ DROP POLICY IF EXISTS "users can update their competitor ads" ON public.competit
 CREATE POLICY "users can update their competitor ads" ON public.competitor_ads FOR UPDATE TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 DROP POLICY IF EXISTS "users can delete their competitor ads" ON public.competitor_ads;
 CREATE POLICY "users can delete their competitor ads" ON public.competitor_ads FOR DELETE TO authenticated USING (auth.uid() = user_id);
+CREATE TABLE IF NOT EXISTS public.adspy_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+
+  query TEXT NOT NULL,
+  country TEXT NOT NULL DEFAULT 'IN',
+  platform TEXT NOT NULL DEFAULT 'meta',
+
+  total_ads INTEGER NOT NULL DEFAULT 0,
+
+  -- Complete AdSpy dataset returned by the scraper.
+  ads JSONB NOT NULL DEFAULT '[]'::jsonb,
+
+  -- Derived intelligence from AdSpy.
+  intelligence JSONB NOT NULL DEFAULT '{}'::jsonb,
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS adspy_snapshots_user_idx
+ON public.adspy_snapshots(user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS adspy_snapshots_query_idx
+ON public.adspy_snapshots(user_id, query, country, created_at DESC);
+
+ALTER TABLE public.adspy_snapshots ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "users can view their adspy snapshots"
+ON public.adspy_snapshots;
+
+CREATE POLICY "users can view their adspy snapshots"
+ON public.adspy_snapshots
+FOR SELECT
+TO authenticated
+USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "users can insert their adspy snapshots"
+ON public.adspy_snapshots;
+
+CREATE POLICY "users can insert their adspy snapshots"
+ON public.adspy_snapshots
+FOR INSERT
+TO authenticated
+WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "users can delete their adspy snapshots"
+ON public.adspy_snapshots;
+
+CREATE POLICY "users can delete their adspy snapshots"
+ON public.adspy_snapshots
+FOR DELETE
+TO authenticated
+USING (auth.uid() = user_id);
