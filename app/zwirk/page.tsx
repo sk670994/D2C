@@ -1,10 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
 import Link from "next/link";
 
-import type { CalculatedReport } from "@/lib/types/domain";
-import { buildCompetitiveNarrative } from "@/lib/competitive/signals";
+import type {
+  CalculatedReport,
+} from "@/lib/types/domain";
+
+import {
+  buildCompetitiveNarrative,
+} from "@/lib/competitive/signals";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,7 +27,9 @@ import {
 } from "@/components/ui/card";
 
 type ChatMessage = {
-  role: "user" | "assistant";
+  role:
+    | "user"
+    | "assistant";
   content: string;
 };
 
@@ -26,6 +38,8 @@ const starterPrompts = [
   "What should I fix first if CAC is rising 20% MoM?",
   "Give me a 30-day scale plan for Meta and Google.",
   "Summarize the top 3 profit levers for my DTC brand.",
+  "Analyze my competitors' Meta ads and tell me what I should test next.",
+  "What are competitors doing differently in their creatives, offers and hooks?",
 ];
 
 type ZwirkContext = {
@@ -33,11 +47,120 @@ type ZwirkContext = {
   summary: string;
 };
 
+type ZwirkAdSpyAd = {
+  id: string;
+  advertiserName?: string | null;
+  creatorName?: string | null;
+  partnershipType?:
+    | "direct"
+    | "creator"
+    | "unknown";
+  primaryText?: string | null;
+  headline?: string | null;
+  description?: string | null;
+  callToAction?: string | null;
+  firstSeen?: string | null;
+  lastSeen?: string | null;
+  isActive?: boolean;
+  publisherPlatforms?: string[];
+  productName?: string | null;
+  productPrice?: number | null;
+  currency?: string | null;
+  offer?: string | null;
+  creativeType?:
+    | "image"
+    | "video"
+    | "carousel"
+    | "unknown";
+  imageUrl?: string | null;
+  videoUrl?: string | null;
+  thumbnailUrl?: string | null;
+  landingPage?: string | null;
+  sourceUrl?: string | null;
+  runningDays?: number | null;
+  creativeScore?: number | null;
+  longevityScore?: number | null;
+  relevanceScore?: number | null;
+  engagementPotentialScore?:
+    | number
+    | null;
+};
+
+type ZwirkAdSpySnapshot = {
+  version: 1;
+  source: "AdSpy";
+  query: string;
+  country: string;
+  fetchedAt: string;
+
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+
+  summary: {
+    analyzedAds: number;
+    totalAds: number;
+
+    activeAds: number;
+    inactiveAds: number;
+    activeShare: number;
+
+    videoAds: number;
+    imageAds: number;
+    carouselAds: number;
+    unknownCreativeAds: number;
+
+    videoShare: number;
+
+    creatorAds: number;
+    creatorShare: number;
+
+    averageLongevity: number;
+    averageCreativeScore: number;
+    averageRelevanceScore: number;
+    averageEngagementPotential: number;
+  };
+
+  creativeFamilies: Array<{
+    name: string;
+    variants: number;
+    imageCount: number;
+    videoCount: number;
+    carouselCount: number;
+    creatorCount: number;
+    averageLongevity: number;
+    averageCreative: number;
+    averageEngagement: number;
+    topOffer: string | null;
+  }>;
+
+  marketPatterns: {
+    topOffers: Array<{
+      offer: string;
+      count: number;
+    }>;
+    topCreators: string[];
+    hookPatterns: Array<{
+      label: string;
+      count: number;
+      share: number;
+    }>;
+  };
+
+  recommendedExperiments: string[];
+
+  ads: ZwirkAdSpyAd[];
+};
+
 type ProofOfWork = {
   context: string;
   brandVault: string;
   assumptions: string[];
   competitiveContext?: string;
+  adSpyContext?: string;
 };
 
 type BrandVaultStatus =
@@ -45,169 +168,522 @@ type BrandVaultStatus =
   | "complete"
   | "incomplete";
 
-export default function ZwirkPage() {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: "assistant",
-      content:
-        "I'm ZWIRK. Ask me about your marketing performance, profitability, CAC, ROAS, or scaling strategy.",
-    },
-  ]);
+const ZWIRK_ADSPY_STORAGE_KEY =
+  "zwirkAdSpySnapshot";
 
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+function formatNumber(
+  value?: number | null
+): string {
+  if (
+    typeof value !==
+      "number" ||
+    !Number.isFinite(value)
+  ) {
+    return "n/a";
+  }
+
+  return value.toLocaleString(
+    "en-IN"
+  );
+}
+
+function formatAdSpyForZwirk(
+  snapshot: ZwirkAdSpySnapshot
+): string {
+  const lines: string[] = [];
+
+  lines.push(
+    "ADSPY OBSERVED COMPETITOR INTELLIGENCE",
+    `Query: ${snapshot.query}`,
+    `Country: ${snapshot.country}`,
+    `Fetched: ${snapshot.fetchedAt}`,
+    `Page: ${snapshot.pagination.page}/${snapshot.pagination.totalPages}`,
+    `Visible ads analyzed: ${snapshot.summary.analyzedAds}`,
+    `Total matching ads: ${snapshot.summary.totalAds}`,
+    ""
+  );
+
+  lines.push(
+    "SUMMARY:",
+    `Active ads: ${snapshot.summary.activeAds} (${snapshot.summary.activeShare}%)`,
+    `Inactive ads: ${snapshot.summary.inactiveAds}`,
+    `Video ads: ${snapshot.summary.videoAds} (${snapshot.summary.videoShare}%)`,
+    `Image ads: ${snapshot.summary.imageAds}`,
+    `Carousel ads: ${snapshot.summary.carouselAds}`,
+    `Unknown creative ads: ${snapshot.summary.unknownCreativeAds}`,
+    `Creator ads: ${snapshot.summary.creatorAds} (${snapshot.summary.creatorShare}%)`,
+    `Average longevity: ${snapshot.summary.averageLongevity} days`,
+    `Average creative score: ${snapshot.summary.averageCreativeScore}/100`,
+    `Average relevance: ${snapshot.summary.averageRelevanceScore}/100`,
+    `Average engagement potential: ${snapshot.summary.averageEngagementPotential}/100`,
+    ""
+  );
+
+  if (
+    snapshot.creativeFamilies
+      .length > 0
+  ) {
+    lines.push(
+      "CREATIVE FAMILIES:"
+    );
+
+    snapshot.creativeFamilies.forEach(
+      (family) => {
+        lines.push(
+          [
+            `- ${family.name}`,
+            `variants=${family.variants}`,
+            `images=${family.imageCount}`,
+            `videos=${family.videoCount}`,
+            `carousels=${family.carouselCount}`,
+            `creators=${family.creatorCount}`,
+            `avgLongevity=${family.averageLongevity}d`,
+            `avgCreative=${family.averageCreative}/100`,
+            `avgEngagementPotential=${family.averageEngagement}/100`,
+            `commonOffer=${family.topOffer ?? "n/a"}`,
+          ].join(" | ")
+        );
+      }
+    );
+
+    lines.push("");
+  }
+
+  if (
+    snapshot.marketPatterns
+      .topOffers.length > 0
+  ) {
+    lines.push(
+      "COMMON OFFERS:"
+    );
+
+    snapshot.marketPatterns.topOffers.forEach(
+      (item) => {
+        lines.push(
+          `- ${item.offer}: ${item.count} ads`
+        );
+      }
+    );
+
+    lines.push("");
+  }
+
+  if (
+    snapshot.marketPatterns
+      .topCreators.length > 0
+  ) {
+    lines.push(
+      "CREATOR SIGNALS:"
+    );
+
+    snapshot.marketPatterns.topCreators.forEach(
+      (creator) => {
+        lines.push(
+          `- ${creator}`
+        );
+      }
+    );
+
+    lines.push("");
+  }
+
+  if (
+    snapshot.marketPatterns
+      .hookPatterns.length > 0
+  ) {
+    lines.push(
+      "HOOK PATTERNS:"
+    );
+
+    snapshot.marketPatterns.hookPatterns.forEach(
+      (pattern) => {
+        lines.push(
+          `- ${pattern.label}: ${pattern.share}% (${pattern.count} ads)`
+        );
+      }
+    );
+
+    lines.push("");
+  }
+
+  if (
+    snapshot.recommendedExperiments
+      .length > 0
+  ) {
+    lines.push(
+      "ADSPY-BASED TEST IDEAS:"
+    );
+
+    snapshot.recommendedExperiments.forEach(
+      (experiment) => {
+        lines.push(
+          `- ${experiment}`
+        );
+      }
+    );
+
+    lines.push("");
+  }
+
+  lines.push(
+    "VISIBLE AD DETAILS:"
+  );
+
+  snapshot.ads.forEach(
+    (ad, index) => {
+      lines.push(
+        `--- AD ${index + 1} ---`,
+        `ID: ${ad.id}`,
+        `Advertiser: ${ad.advertiserName ?? "n/a"}`,
+        `Creator: ${ad.creatorName ?? "n/a"}`,
+        `Partnership: ${ad.partnershipType ?? "n/a"}`,
+        `Product: ${ad.productName ?? "n/a"}`,
+        `Offer: ${ad.offer ?? "n/a"}`,
+        `Creative type: ${ad.creativeType ?? "n/a"}`,
+        `CTA: ${ad.callToAction ?? "n/a"}`,
+        `Active: ${
+          typeof ad.isActive ===
+          "boolean"
+            ? String(
+                ad.isActive
+              )
+            : "n/a"
+        }`,
+        `Running days: ${
+          ad.runningDays ??
+          "n/a"
+        }`,
+        `First seen: ${
+          ad.firstSeen ??
+          "n/a"
+        }`,
+        `Last seen: ${
+          ad.lastSeen ??
+          "n/a"
+        }`,
+        `Creative score: ${
+          ad.creativeScore ??
+          "n/a"
+        }/100`,
+        `Longevity score: ${
+          ad.longevityScore ??
+          "n/a"
+        }/100`,
+        `Relevance score: ${
+          ad.relevanceScore ??
+          "n/a"
+        }/100`,
+        `Engagement potential: ${
+          ad.engagementPotentialScore ??
+          "n/a"
+        }/100`,
+        `Platforms: ${
+          ad.publisherPlatforms?.join(
+            ", "
+          ) || "n/a"
+        }`,
+        `Headline: ${
+          ad.headline ??
+          "n/a"
+        }`,
+        `Primary text: ${
+          ad.primaryText ??
+          "n/a"
+        }`,
+        `Description: ${
+          ad.description ??
+          "n/a"
+        }`,
+        ""
+      );
+    }
+  );
+
+  lines.push(
+    "IMPORTANT: AdSpy scores are estimates or derived signals. They are not actual competitor clicks, CTR, impressions, spend, conversions, revenue, ROAS or profit."
+  );
+
+  return lines.join(
+    "\n"
+  );
+}
+
+export default function ZwirkPage() {
+  const [messages, setMessages] =
+    useState<ChatMessage[]>(
+      [
+        {
+          role: "assistant",
+          content:
+            "I'm ZWIRK. Ask me about your marketing performance, profitability, CAC, ROAS, scaling strategy, or what your competitors are doing in the Meta Ad Library.",
+        },
+      ]
+    );
+
+  const [input, setInput] =
+    useState("");
+
+  const [loading, setLoading] =
+    useState(false);
+
+  const [error, setError] =
+    useState<string | null>(
+      null
+    );
 
   const [context, setContext] =
-    useState<ZwirkContext | null>(null);
+    useState<ZwirkContext | null>(
+      null
+    );
 
-  const [competitorSignals, setCompetitorSignals] =
-    useState<string[]>([]);
+  const [
+    competitorSignals,
+    setCompetitorSignals,
+  ] = useState<string[]>(
+    []
+  );
+
+  const [adSpySnapshot, setAdSpySnapshot] =
+    useState<ZwirkAdSpySnapshot | null>(
+      null
+    );
+
+  const [adSpyContext, setAdSpyContext] =
+    useState("");
 
   const [proof, setProof] =
-    useState<ProofOfWork | null>(null);
+    useState<ProofOfWork | null>(
+      null
+    );
 
   const [brandVaultStatus] =
-    useState<BrandVaultStatus>("loading");
+    useState<BrandVaultStatus>(
+      "loading"
+    );
 
-  const [useContext, setUseContext] = useState(true);
+  const [useContext, setUseContext] =
+    useState(true);
+
+  const [
+    useAdSpyContext,
+    setUseAdSpyContext,
+  ] = useState(true);
 
   const [actionToasts, setActionToasts] =
-    useState<Record<string, string>>({});
+    useState<
+      Record<string, string>
+    >({});
 
   const canSend =
-    input.trim().length > 0 && !loading;
+    input.trim().length > 0 &&
+    !loading;
 
   const chatBody = useMemo(
     () =>
       messages.filter(
-        (msg) => msg.content.trim().length > 0
+        (msg) =>
+          msg.content
+            .trim()
+            .length > 0
       ),
     [messages]
   );
 
-  // --------------------------------------------------
-  // Load saved chat
-  // --------------------------------------------------
-
+  /*
+   * --------------------------------------------------
+   * Load saved chat
+   * --------------------------------------------------
+   */
   useEffect(() => {
     const saved =
-      localStorage.getItem("zwirkChat");
+      localStorage.getItem(
+        "zwirkChat"
+      );
 
-    if (!saved) return;
+    if (!saved) {
+      return;
+    }
 
     try {
       const parsed =
-        JSON.parse(saved) as ChatMessage[];
+        JSON.parse(
+          saved
+        ) as ChatMessage[];
 
       if (
-        Array.isArray(parsed) &&
+        Array.isArray(
+          parsed
+        ) &&
         parsed.length > 0
       ) {
-        setMessages(parsed);
+        setMessages(
+          parsed
+        );
       }
     } catch {
       // Ignore invalid saved chat.
     }
   }, []);
 
-  // --------------------------------------------------
-  // Save chat
-  // --------------------------------------------------
-
+  /*
+   * --------------------------------------------------
+   * Save chat
+   * --------------------------------------------------
+   */
   useEffect(() => {
     localStorage.setItem(
       "zwirkChat",
-      JSON.stringify(messages)
+      JSON.stringify(
+        messages
+      )
     );
   }, [messages]);
 
-  // --------------------------------------------------
-  // Load dashboard context
-  // --------------------------------------------------
-
+  /*
+   * --------------------------------------------------
+   * Load dashboard + AdSpy context
+   * --------------------------------------------------
+   */
   useEffect(() => {
-    const stored =
-      sessionStorage.getItem("report");
+    const storedReport =
+      sessionStorage.getItem(
+        "report"
+      );
 
-    if (!stored) return;
+    if (storedReport) {
+      try {
+        const report =
+          JSON.parse(
+            storedReport
+          ) as CalculatedReport;
+
+        const summaryLines = [
+          `Contribution margin: ${pct(
+            report.unitEconomics
+              .contributionMarginPct
+          )}`,
+
+          `Blended ROAS: ${fmt(
+            report.adMetrics
+              .blendedRoas
+          )}x`,
+
+          `Blended CAC: ${fmt(
+            report.adMetrics
+              .blendedCac
+          )}`,
+
+          `Max allowable CAC: ${fmt(
+            report.unitEconomics
+              .maxAllowableCac
+          )}`,
+
+          `Net profit margin: ${pct(
+            report.monthlyPnl
+              .netProfitMarginPct
+          )}`,
+
+          `Net revenue (month): ${fmt(
+            report.monthlyPnl
+              .netRevenueMonth
+          )}`,
+
+          `Net profit (month): ${fmt(
+            report.monthlyPnl
+              .netProfitMonth
+          )}`,
+
+          `Scale verdict: ${
+            report.scalePlanner
+              .readiness
+          }`,
+        ];
+
+        const competitorNarrative =
+          buildCompetitiveNarrative(
+            report
+          );
+
+        const summary =
+          competitorNarrative.length >
+          0
+            ? [
+                ...summaryLines,
+                "",
+                "Competitive radar:",
+                ...competitorNarrative,
+              ].join("\n")
+            : summaryLines.join(
+                "\n"
+              );
+
+        setContext({
+          label:
+            "Dashboard context loaded",
+          summary,
+        });
+
+        setCompetitorSignals(
+          competitorNarrative
+        );
+      } catch {
+        // Ignore malformed dashboard data.
+      }
+    }
 
     try {
-      const report =
-        JSON.parse(stored) as CalculatedReport;
+      const rawAdSpy =
+        sessionStorage.getItem(
+          ZWIRK_ADSPY_STORAGE_KEY
+        );
 
-      const summaryLines = [
-        `Contribution margin: ${pct(
-          report.unitEconomics
-            .contributionMarginPct
-        )}`,
+      if (!rawAdSpy) {
+        return;
+      }
 
-        `Blended ROAS: ${fmt(
-          report.adMetrics.blendedRoas
-        )}x`,
+      const parsed =
+        JSON.parse(
+          rawAdSpy
+        ) as ZwirkAdSpySnapshot;
 
-        `Blended CAC: ${fmt(
-          report.adMetrics.blendedCac
-        )}`,
+      if (
+        !parsed ||
+        parsed.version !== 1 ||
+        parsed.source !==
+          "AdSpy" ||
+        !Array.isArray(
+          parsed.ads
+        )
+      ) {
+        return;
+      }
 
-        `Max allowable CAC: ${fmt(
-          report.unitEconomics.maxAllowableCac
-        )}`,
+      setAdSpySnapshot(
+        parsed
+      );
 
-        `Net profit margin: ${pct(
-          report.monthlyPnl
-            .netProfitMarginPct
-        )}`,
-
-        `Net revenue (month): ${fmt(
-          report.monthlyPnl
-            .netRevenueMonth
-        )}`,
-
-        `Net profit (month): ${fmt(
-          report.monthlyPnl
-            .netProfitMonth
-        )}`,
-
-        `Scale verdict: ${report.scalePlanner.readiness}`,
-      ];
-
-      const competitorNarrative =
-        buildCompetitiveNarrative(report);
-
-      const summary =
-        competitorNarrative.length > 0
-          ? [
-              ...summaryLines,
-              "",
-              "Competitive radar:",
-              ...competitorNarrative,
-            ].join("\n")
-          : summaryLines.join("\n");
-
-      setContext({
-        label: "Dashboard context loaded",
-        summary,
-      });
-
-      setCompetitorSignals(
-        competitorNarrative
+      setAdSpyContext(
+        formatAdSpyForZwirk(
+          parsed
+        )
       );
     } catch {
-      // Ignore malformed dashboard data.
+      // Ignore malformed AdSpy state.
     }
   }, []);
 
-  // --------------------------------------------------
-  // Formatting helpers
-  // --------------------------------------------------
-
+  /*
+   * --------------------------------------------------
+   * Formatting helpers
+   * --------------------------------------------------
+   */
   function fmt(
     value?: number,
     suffix = ""
   ) {
     if (
-      typeof value !== "number" ||
+      typeof value !==
+        "number" ||
       Number.isNaN(value)
     ) {
       return "n/a";
@@ -221,128 +697,180 @@ export default function ZwirkPage() {
     )}${suffix}`;
   }
 
-  function pct(value?: number) {
+  function pct(
+    value?: number
+  ) {
     if (
-      typeof value !== "number" ||
+      typeof value !==
+        "number" ||
       Number.isNaN(value)
     ) {
       return "n/a";
     }
 
-    return `${(value * 100).toFixed(1)}%`;
+    return `${(
+      value * 100
+    ).toFixed(1)}%`;
   }
 
-  // --------------------------------------------------
-  // Reset chat
-  // --------------------------------------------------
-
+  /*
+   * --------------------------------------------------
+   * Reset chat
+   * --------------------------------------------------
+   */
   function resetChat() {
-    const initial: ChatMessage[] = [
-      {
-        role: "assistant",
-        content:
-          "I'm ZWIRK. Ask me about your marketing performance, profitability, CAC, ROAS, or scaling strategy.",
-      },
-    ];
+    const initial: ChatMessage[] =
+      [
+        {
+          role: "assistant",
+          content:
+            "I'm ZWIRK. Ask me about your marketing performance, profitability, CAC, ROAS, scaling strategy, or what your competitors are doing in the Meta Ad Library.",
+        },
+      ];
 
-    setMessages(initial);
+    setMessages(
+      initial
+    );
+
     setError(null);
     setProof(null);
 
-    localStorage.removeItem("zwirkChat");
+    localStorage.removeItem(
+      "zwirkChat"
+    );
   }
 
-  // --------------------------------------------------
-  // Copy
-  // --------------------------------------------------
-
-  async function copyMessage(text: string) {
+  /*
+   * --------------------------------------------------
+   * Copy
+   * --------------------------------------------------
+   */
+  async function copyMessage(
+    text: string
+  ) {
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(
+        text
+      );
     } catch {
       // Ignore clipboard errors.
     }
   }
 
-  // --------------------------------------------------
-  // Action toast
-  // --------------------------------------------------
-
+  /*
+   * --------------------------------------------------
+   * Action toast
+   * --------------------------------------------------
+   */
   function showActionToast(
     key: string,
     label: string
   ) {
-    setActionToasts((prev) => ({
-      ...prev,
-      [key]: label,
-    }));
+    setActionToasts(
+      (prev) => ({
+        ...prev,
+        [key]: label,
+      })
+    );
 
-    window.setTimeout(() => {
-      setActionToasts((prev) => {
-        const next = { ...prev };
+    window.setTimeout(
+      () => {
+        setActionToasts(
+          (prev) => {
+            const next = {
+              ...prev,
+            };
 
-        delete next[key];
+            delete next[key];
 
-        return next;
-      });
-    }, 1400);
+            return next;
+          }
+        );
+      },
+      1400
+    );
   }
 
-  // --------------------------------------------------
-  // Download response
-  // --------------------------------------------------
-
-  function downloadMessage(text: string) {
-    const blob = new Blob([text], {
-      type: "text/plain",
-    });
+  /*
+   * --------------------------------------------------
+   * Download response
+   * --------------------------------------------------
+   */
+  function downloadMessage(
+    text: string
+  ) {
+    const blob =
+      new Blob(
+        [text],
+        {
+          type: "text/plain",
+        }
+      );
 
     const url =
-      URL.createObjectURL(blob);
+      URL.createObjectURL(
+        blob
+      );
 
     const link =
-      document.createElement("a");
+      document.createElement(
+        "a"
+      );
 
     link.href = url;
 
     link.download =
       `zwirk-response-${new Date()
         .toISOString()
-        .slice(0, 10)}.txt`;
+        .slice(
+          0,
+          10
+        )}.txt`;
 
-    document.body.appendChild(link);
+    document.body.appendChild(
+      link
+    );
 
     link.click();
 
     link.remove();
 
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(
+      url
+    );
   }
 
-  // --------------------------------------------------
-  // Retry
-  // --------------------------------------------------
-
+  /*
+   * --------------------------------------------------
+   * Retry
+   * --------------------------------------------------
+   */
   function retryLastPrompt() {
     const lastUser =
-      [...messages]
+      [
+        ...messages,
+      ]
         .reverse()
         .find(
           (msg) =>
-            msg.role === "user"
+            msg.role ===
+            "user"
         );
 
-    if (!lastUser) return;
+    if (!lastUser) {
+      return;
+    }
 
     void sendMessage(
       lastUser.content
     );
   }
 
-  // --------------------------------------------------
-  // Tooltip
-  // --------------------------------------------------
-
+  /*
+   * --------------------------------------------------
+   * Tooltip
+   * --------------------------------------------------
+   */
   function tooltipFor(
     index: number,
     action: string,
@@ -355,17 +883,21 @@ export default function ZwirkPage() {
     );
   }
 
-  // --------------------------------------------------
-  // Send message
-  // --------------------------------------------------
-
+  /*
+   * --------------------------------------------------
+   * Send message
+   * --------------------------------------------------
+   */
   async function sendMessage(
     message: string
   ) {
     const trimmedMessage =
       message.trim();
 
-    if (!trimmedMessage || loading) {
+    if (
+      !trimmedMessage ||
+      loading
+    ) {
       return;
     }
 
@@ -373,15 +905,20 @@ export default function ZwirkPage() {
     setError(null);
     setProof(null);
 
-    const nextMessages: ChatMessage[] = [
-      ...messages,
-      {
-        role: "user",
-        content: trimmedMessage,
-      },
-    ];
+    const nextMessages: ChatMessage[] =
+      [
+        ...messages,
+        {
+          role: "user",
+          content:
+            trimmedMessage,
+        },
+      ];
 
-    setMessages(nextMessages);
+    setMessages(
+      nextMessages
+    );
+
     setInput("");
 
     try {
@@ -389,8 +926,10 @@ export default function ZwirkPage() {
         messages: ChatMessage[];
         context?: string;
         competitorContext?: string;
+        adSpyContext?: string;
       } = {
-        messages: nextMessages,
+        messages:
+          nextMessages,
       };
 
       if (
@@ -402,29 +941,45 @@ export default function ZwirkPage() {
       }
 
       if (
-        competitorSignals.length > 0
+        competitorSignals.length >
+        0
       ) {
         payload.competitorContext =
-          competitorSignals.join("\n");
+          competitorSignals.join(
+            "\n"
+          );
       }
 
-      const res = await fetch(
-        "/api/zwirk",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-          body: JSON.stringify(
-            payload
-          ),
-        }
-      );
+      if (
+        useAdSpyContext &&
+        adSpyContext
+      ) {
+        payload.adSpyContext =
+          adSpyContext;
+      }
 
-      const data = await res
-        .json()
-        .catch(() => ({}));
+      const res =
+        await fetch(
+          "/api/zwirk",
+          {
+            method:
+              "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify(
+              payload
+            ),
+          }
+        );
+
+      const data =
+        await res
+          .json()
+          .catch(
+            () => ({})
+          );
 
       if (!res.ok) {
         throw new Error(
@@ -447,16 +1002,21 @@ export default function ZwirkPage() {
         "I could not generate a response.";
 
       setProof(
-        responseData.proof ?? null
+        responseData.proof ??
+          null
       );
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: reply,
-        },
-      ]);
+      setMessages(
+        (prev) => [
+          ...prev,
+          {
+            role:
+              "assistant",
+            content:
+              reply,
+          },
+        ]
+      );
     } catch (err) {
       setError(
         err instanceof Error
@@ -464,15 +1024,13 @@ export default function ZwirkPage() {
           : "ZWIRK is unavailable right now."
       );
 
-      setProof(null);
+      setProof(
+        null
+      );
     } finally {
       setLoading(false);
     }
   }
-
-  // --------------------------------------------------
-  // Render
-  // --------------------------------------------------
 
   return (
     <main className="main zwirk-page">
@@ -483,21 +1041,28 @@ export default function ZwirkPage() {
           </p>
 
           <h1>
-            <span>ZWIRK</span>
+            <span>
+              ZWIRK
+            </span>
 
             <span className="zwirk-title-beta">
               BETA version
             </span>
 
-            -- a quick profit check
-            for D2C teams
+            -- a quick profit
+            check for D2C
+            teams
           </h1>
 
           <p className="muted-text">
-            Ask focused profit and
-            scale questions, then get
-            clear, actionable next
-            steps.
+            Ask focused profit
+            and scale questions,
+            then get clear,
+            actionable next
+            steps using your
+            business data and
+            current competitor
+            intelligence.
           </p>
 
           <div className="zwirk-hero-actions">
@@ -522,7 +1087,9 @@ export default function ZwirkPage() {
             <Button
               type="button"
               variant="secondary"
-              onClick={resetChat}
+              onClick={
+                resetChat
+              }
             >
               Clear Chat
             </Button>
@@ -532,23 +1099,70 @@ export default function ZwirkPage() {
             <label className="zwirk-context-toggle">
               <input
                 type="checkbox"
-                checked={useContext}
-                onChange={(event) =>
+                checked={
+                  useContext
+                }
+                onChange={(
+                  event
+                ) =>
                   setUseContext(
-                    event.target.checked
+                    event.target
+                      .checked
                   )
                 }
               />
 
               <span>
-                {context.label}
+                {
+                  context.label
+                }
               </span>
             </label>
           ) : (
             <p className="muted-text zwirk-context-note">
               Connect your dashboard
-              to unlock context-aware
-              answers.
+              to unlock
+              context-aware answers.
+            </p>
+          )}
+
+          {adSpySnapshot ? (
+            <label className="zwirk-context-toggle">
+              <input
+                type="checkbox"
+                checked={
+                  useAdSpyContext
+                }
+                onChange={(
+                  event
+                ) =>
+                  setUseAdSpyContext(
+                    event.target
+                      .checked
+                  )
+                }
+              />
+
+              <span>
+                AdSpy intelligence
+                loaded:{" "}
+                {
+                  adSpySnapshot
+                    .summary
+                    .totalAds
+                }{" "}
+                ads from{" "}
+                {
+                  adSpySnapshot.query
+                }
+              </span>
+            </label>
+          ) : (
+            <p className="muted-text zwirk-context-note">
+              Run an AdSpy search
+              from the Dashboard to
+              give ZWIRK current
+              competitor intelligence.
             </p>
           )}
 
@@ -562,11 +1176,67 @@ export default function ZwirkPage() {
               <ul>
                 {competitorSignals.map(
                   (signal) => (
-                    <li key={signal}>
-                      {signal}
+                    <li
+                      key={
+                        signal
+                      }
+                    >
+                      {
+                        signal
+                      }
                     </li>
                   )
                 )}
+              </ul>
+            </div>
+          ) : null}
+
+          {adSpySnapshot ? (
+            <div className="zwirk-competitive-summary">
+              <h4>
+                AdSpy snapshot
+              </h4>
+
+              <ul>
+                <li>
+                  {
+                    adSpySnapshot
+                      .summary
+                      .totalAds
+                  }{" "}
+                  total matching
+                  competitor ads
+                </li>
+
+                <li>
+                  {
+                    adSpySnapshot
+                      .summary
+                      .videoShare
+                  }
+                  % video share
+                </li>
+
+                <li>
+                  {
+                    adSpySnapshot
+                      .summary
+                      .creatorShare
+                  }
+                  % creator share
+                </li>
+
+                <li>
+                  Average
+                  observed
+                  longevity:{" "}
+                  {
+                    adSpySnapshot
+                      .summary
+                      .averageLongevity
+                  }{" "}
+                  days
+                </li>
               </ul>
             </div>
           ) : null}
@@ -577,7 +1247,8 @@ export default function ZwirkPage() {
               <p className="muted-text">
                 Complete your Brand
                 Vault to make ZWIRK
-                sound like your brand.
+                sound like your
+                brand.
               </p>
 
               <Link href="/brand-vault">
@@ -608,7 +1279,9 @@ export default function ZwirkPage() {
             {starterPrompts.map(
               (prompt) => (
                 <button
-                  key={prompt}
+                  key={
+                    prompt
+                  }
                   type="button"
                   className="zwirk-prompt"
                   onClick={() =>
@@ -616,9 +1289,13 @@ export default function ZwirkPage() {
                       prompt
                     )
                   }
-                  disabled={loading}
+                  disabled={
+                    loading
+                  }
                 >
-                  {prompt}
+                  {
+                    prompt
+                  }
                 </button>
               )
             )}
@@ -632,21 +1309,23 @@ export default function ZwirkPage() {
             </CardTitle>
 
             <CardDescription>
-              Fast, tactical answers
-              in plain English.
+              Fast, tactical
+              answers in plain
+              English.
             </CardDescription>
           </CardHeader>
 
           <CardContent className="zwirk-capability-list">
             <div>
               <h4>
-                Profit diagnostics
+                Profit
+                diagnostics
               </h4>
 
               <p className="muted-text">
-                Identify margin, CAC,
-                and ROAS bottlenecks
-                quickly.
+                Identify margin,
+                CAC, and ROAS
+                bottlenecks quickly.
               </p>
             </div>
 
@@ -664,12 +1343,18 @@ export default function ZwirkPage() {
 
             <div>
               <h4>
-                Scenario planning
+                Competitive
+                intelligence
               </h4>
 
               <p className="muted-text">
-                Compare changes in
-                AOV, returns, or CAC.
+                Connect current
+                competitor creatives,
+                offers, creators,
+                hooks and longevity
+                signals to your
+                own business
+                decisions.
               </p>
             </div>
           </CardContent>
@@ -678,27 +1363,32 @@ export default function ZwirkPage() {
 
       <section className="zwirk-chat surface">
         <div className="zwirk-chat-header">
-          <h2>Conversation</h2>
+          <h2>
+            Conversation
+          </h2>
 
           <span
             className="proof-badge"
             style={{
-              backgroundColor: proof
-                ? proof.assumptions
-                    .length > 0
-                  ? "#e7f8ec"
-                  : "#fdf2d6"
-                : "#f4f4f4",
+              backgroundColor:
+                proof
+                  ? proof.assumptions
+                      .length > 0
+                    ? "#e7f8ec"
+                    : "#fdf2d6"
+                  : "#f4f4f4",
 
-              color: proof
-                ? proof.assumptions
-                    .length > 0
-                  ? "#0f6b30"
-                  : "#805500"
-                : "#666",
+              color:
+                proof
+                  ? proof.assumptions
+                      .length > 0
+                    ? "#0f6b30"
+                    : "#805500"
+                  : "#666",
 
               borderRadius: 999,
-              padding: "2px 10px",
+              padding:
+                "2px 10px",
               fontSize: 12,
               marginLeft: 12,
             }}
@@ -726,7 +1416,10 @@ export default function ZwirkPage() {
 
         <div className="zwirk-messages">
           {chatBody.map(
-            (msg, index) => (
+            (
+              msg,
+              index
+            ) => (
               <div
                 key={`${msg.role}-${index}`}
                 className={`zwirk-message-group ${msg.role}`}
@@ -735,7 +1428,9 @@ export default function ZwirkPage() {
                   className={`zwirk-message ${msg.role}`}
                 >
                   <span>
-                    {msg.content}
+                    {
+                      msg.content
+                    }
                   </span>
                 </div>
 
@@ -774,7 +1469,6 @@ export default function ZwirkPage() {
                           height="10"
                           rx="2"
                         />
-
                         <path d="M5 15V5a2 2 0 0 1 2-2h10" />
                       </svg>
                     </button>
@@ -906,7 +1600,9 @@ export default function ZwirkPage() {
 
         {error ? (
           <p className="error-text">
-            {error}
+            {
+              error
+            }
           </p>
         ) : null}
 
@@ -924,7 +1620,9 @@ export default function ZwirkPage() {
                   </h4>
 
                   <pre>
-                    {proof.context}
+                    {
+                      proof.context
+                    }
                   </pre>
                 </div>
 
@@ -934,7 +1632,9 @@ export default function ZwirkPage() {
                   </h4>
 
                   <pre>
-                    {proof.brandVault}
+                    {
+                      proof.brandVault
+                    }
                   </pre>
                 </div>
 
@@ -952,8 +1652,23 @@ export default function ZwirkPage() {
                   </div>
                 ) : null}
 
-                {proof.assumptions
-                  .length > 0 ? (
+                {proof.adSpyContext ? (
+                  <div>
+                    <h4>
+                      AdSpy intelligence
+                      used
+                    </h4>
+
+                    <pre>
+                      {
+                        proof.adSpyContext
+                      }
+                    </pre>
+                  </div>
+                ) : null}
+
+                {proof.assumptions.length >
+                0 ? (
                   <div>
                     <h4>
                       Assumptions
@@ -961,9 +1676,17 @@ export default function ZwirkPage() {
 
                     <ul>
                       {proof.assumptions.map(
-                        (item) => (
-                          <li key={item}>
-                            {item}
+                        (
+                          item
+                        ) => (
+                          <li
+                            key={
+                              item
+                            }
+                          >
+                            {
+                              item
+                            }
                           </li>
                         )
                       )}
@@ -989,14 +1712,20 @@ export default function ZwirkPage() {
         <div className="zwirk-input">
           <Textarea
             value={input}
-            onChange={(event) =>
+            onChange={(
+              event
+            ) =>
               setInput(
-                event.target.value
+                event.target
+                  .value
               )
             }
-            onKeyDown={(event) => {
+            onKeyDown={(
+              event
+            ) => {
               if (
-                event.key === "Enter" &&
+                event.key ===
+                  "Enter" &&
                 !event.shiftKey
               ) {
                 event.preventDefault();
@@ -1015,9 +1744,13 @@ export default function ZwirkPage() {
           <Button
             type="button"
             onClick={() =>
-              void sendMessage(input)
+              void sendMessage(
+                input
+              )
             }
-            disabled={!canSend}
+            disabled={
+              !canSend
+            }
           >
             {loading
               ? "Sending..."
