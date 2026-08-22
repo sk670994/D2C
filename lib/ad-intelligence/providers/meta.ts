@@ -1,3 +1,4 @@
+
 import type {
   AdProvider,
   AdSearchInput,
@@ -9,6 +10,30 @@ import type {
   CompetitorAd,
 } from "../types";
 
+import { chromium as playwrightChromium } from "playwright-core";
+import chromium from "@sparticuz/chromium";
+
+function getLocalBrowserExecutable(): string {
+  const candidates = [
+    process.env.CHROME_EXECUTABLE_PATH,
+    process.env.EDGE_EXECUTABLE_PATH,
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+  ];
+   const fs = require("node:fs");
+
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    "No local Chrome/Edge executable found. Set CHROME_EXECUTABLE_PATH or EDGE_EXECUTABLE_PATH."
+  );
+}
 const META_LIB_EN_BASE_URL =
   "https://www.facebook.com/ads/library/";
 
@@ -762,20 +787,36 @@ function extractPrimaryText(
 function extractProductName(
   lines: string[]
 ): string | null {
-  const domainIndex =
-    lines.findIndex((line) => {
-      const value =
-        normalizeExtractedText(line);
+  const domainIndex = lines.findIndex((line) => {
+    const value = normalizeExtractedText(line);
+    return value ? isDomain(value) : false;
+  });
 
-      return value ? isDomain(value) : false;
-    });
+  const startIndex =
+    domainIndex >= 0
+      ? domainIndex + 1
+      : 0;
 
-  if (domainIndex < 0) {
-    return null;
-  }
+  const ignoredExact = new Set([
+    "Mamaearth",
+    "Nykaa",
+    "Beardo",
+    "BEARDO for Men",
+    "Nike",
+    "Sponsored",
+    "प्रायोजित",
+    "Shop Now",
+    "Learn More",
+    "Buy Now",
+    "Sign Up",
+    "अभी खरीदें",
+    "और जानें",
+  ]);
+
+  const candidates: string[] = [];
 
   for (
-    let i = domainIndex + 1;
+    let i = startIndex;
     i < lines.length;
     i++
   ) {
@@ -786,8 +827,16 @@ function extractProductName(
       continue;
     }
 
+    if (ignoredExact.has(candidate)) {
+      continue;
+    }
+
+    if (isDomain(candidate)) {
+      continue;
+    }
+
     if (
-      /^(?:₹|INR|Rs\.?)\s*[\d,]+/i.test(
+      /^(?:₹|INR|Rs\.?)\s*[\d,]+(?:\.\d+)?/i.test(
         candidate
       )
     ) {
@@ -802,6 +851,14 @@ function extractProductName(
     }
 
     if (
+      /^(?:0:00)\s*\/\s*(?:0:\d{2}|\d+:\d{2})$/i.test(
+        candidate
+      )
+    ) {
+      continue;
+    }
+
+    if (
       CTA_VALUES.some(
         (cta) =>
           cta.toLowerCase() ===
@@ -811,15 +868,9 @@ function extractProductName(
       continue;
     }
 
+    // Skip obvious UI/status/date metadata.
     if (
-      candidate === "Mamaearth" ||
-      candidate === "Nykaa"
-    ) {
-      continue;
-    }
-
-    if (
-      /^0:00\s*\/\s*(?:0:\d{2}|\d+:\d{2})$/i.test(
+      /^(?:Active|Inactive|Image|Video|Carousel)$/i.test(
         candidate
       )
     ) {
@@ -827,16 +878,52 @@ function extractProductName(
     }
 
     if (
-      candidate.length >= 3 &&
-      candidate.length <= 500
+      /^\d{1,2}\s+[A-Za-z]+\s+\d{4}$/i.test(
+        candidate
+      )
     ) {
-      return candidate;
+      continue;
     }
+
+    if (
+      /^\d{1,2}\s+[^\d\s]+\s+\d{4}$/.test(
+        candidate
+      )
+    ) {
+      continue;
+    }
+
+    if (candidate.length < 3 || candidate.length > 500) {
+      continue;
+    }
+
+    candidates.push(candidate);
   }
 
-  return null;
-}
+  if (candidates.length === 0) {
+    return null;
+  }
 
+  // Prefer concise product/title-like strings.
+  const titleLike = candidates.find((candidate) => {
+    const wordCount =
+      candidate.split(/\s+/).length;
+
+    return (
+      wordCount >= 2 &&
+      wordCount <= 18 &&
+      candidate.length <= 180 &&
+      !/[.!?]{2,}/.test(candidate)
+    );
+  });
+
+  if (titleLike) {
+    return titleLike;
+  }
+
+  // Fall back to the first usable candidate.
+  return candidates[0] ?? null;
+}
 /* =========================================================
  * OFFER
  * ======================================================= */
@@ -1245,16 +1332,15 @@ function normalizeScrapedAd(
  * SEARCH RELEVANCE
  * ======================================================= */
 
-function normalizeSearchText(
-  value: string | null | undefined
-): string {
-  return (value ?? "")
+function normalizeQueryForMatch(value: string): string {
+  return value
     .toLowerCase()
-    .replace(
-      /[^a-z0-9]+/g,
-      " "
-    )
+    .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+function compactMatch(value: string): string {
+  return normalizeQueryForMatch(value).replace(/\s+/g, "");
 }
 
 function hostContainsQuery(
@@ -1268,19 +1354,14 @@ function hostContainsQuery(
   try {
     const parsed = new URL(url);
 
-    const host =
-      parsed.hostname
-        .replace(/^www\./i, "")
-        .toLowerCase();
+    const host = parsed.hostname
+      .replace(/^www\./i, "")
+      .toLowerCase();
 
-    const q =
-      normalizeSearchText(query);
-
-    const compactQuery =
-      q.replace(/\s+/g, "");
+    const compactQuery = compactMatch(query);
 
     return (
-      compactQuery.length > 0 &&
+      compactQuery.length >= 3 &&
       host.includes(compactQuery)
     );
   } catch {
@@ -1288,20 +1369,87 @@ function hostContainsQuery(
   }
 }
 
+function textContainsQuery(
+  value: string | null | undefined,
+  query: string
+): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const normalizedValue =
+    normalizeQueryForMatch(value);
+
+  const normalizedQuery =
+    normalizeQueryForMatch(query);
+
+  if (!normalizedQuery) {
+    return false;
+  }
+
+  if (
+    normalizedValue === normalizedQuery ||
+    normalizedValue.includes(normalizedQuery)
+  ) {
+    return true;
+  }
+
+  return compactMatch(value).includes(
+    compactMatch(query)
+  );
+}
+
+function normalizeSearchText(
+  value: string | null | undefined
+): string {
+  return (value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function isRelevantToAdvertiser(
   ad: CompetitorAd,
   query: string
 ): boolean {
-  const q =
-    normalizeSearchText(query);
+  const q = normalizeSearchText(query);
 
-  const advertiser =
-    normalizeSearchText(
-      ad.advertiserName
-    );
+  if (!q) {
+    return false;
+  }
+
+  const advertiser = normalizeSearchText(
+    ad.advertiserName
+  );
+
+  const creator = normalizeSearchText(
+    ad.creatorName
+  );
+
+  const product = normalizeSearchText(
+    ad.productName
+  );
+
+  const headline = normalizeSearchText(
+    ad.headline
+  );
+
+  const primaryText = normalizeSearchText(
+    ad.primaryText
+  );
+
+  const landingPage = normalizeSearchText(
+    ad.landingPage
+  );
+
+  const sourceUrl = normalizeSearchText(
+    ad.sourceUrl
+  );
+
+  const compactQuery = q.replace(/\s+/g, "");
 
   if (
-    q &&
     advertiser &&
     advertiser !== "unknown advertiser" &&
     advertiser.includes(q)
@@ -1310,15 +1458,51 @@ function isRelevantToAdvertiser(
   }
 
   if (
-    hostContainsQuery(
-      ad.landingPage,
-      query
-    )
+    creator &&
+    creator.includes(q)
   ) {
     return true;
   }
 
-  return false;
+  if (
+    product &&
+    product.includes(q)
+  ) {
+    return true;
+  }
+
+  if (
+    headline &&
+    headline.includes(q)
+  ) {
+    return true;
+  }
+
+  if (
+    primaryText &&
+    primaryText.includes(q)
+  ) {
+    return true;
+  }
+
+  if (
+    compactQuery &&
+    landingPage.replace(/\s+/g, "").includes(compactQuery)
+  ) {
+    return true;
+  }
+
+  if (
+    compactQuery &&
+    sourceUrl.replace(/\s+/g, "").includes(compactQuery)
+  ) {
+    return true;
+  }
+
+  return hostContainsQuery(
+    ad.landingPage,
+    query
+  );
 }
 
 /* =========================================================
@@ -1349,13 +1533,19 @@ async function scrapeMetaAdLibrary(
   country: string,
   maxScrolls = 30
 ): Promise<ScrapedMetaAd[]> {
-  const { chromium } =
-    await import("playwright");
+ const isLocal =
+  process.platform === "win32" ||
+  process.env.IS_LOCAL === "true";
 
-  const browser =
-    await chromium.launch({
-      headless: true,
-    });
+const executablePath = isLocal
+  ? getLocalBrowserExecutable()
+  : await chromium.executablePath();
+
+const browser = await playwrightChromium.launch({
+  args: isLocal ? [] : chromium.args,
+  executablePath,
+  headless: true,
+});
 
   try {
     const context =
@@ -2309,15 +2499,72 @@ export async function scrapeMetaAdLibraryForTest(
 }
 
 /* =========================================================
- * PROVIDER
+ * PROVIDER CACHE
  * ======================================================= */
+
+type MetaProviderCacheEntry = {
+  ads: CompetitorAd[];
+  createdAt: number;
+};
+
+const META_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const metaProviderCache =
+  new Map<string, MetaProviderCacheEntry>();
+
+function getMetaCacheKey(
+  query: string,
+  country: string,
+  mode: string
+): string {
+  return [
+    "meta",
+    country.trim().toUpperCase(),
+    mode,
+    query.trim().toLowerCase(),
+  ].join(":");
+}
+
+function getCachedMetaAds(
+  key: string
+): CompetitorAd[] | null {
+  const cached = metaProviderCache.get(key);
+
+  if (!cached) {
+    return null;
+  }
+
+  const age = Date.now() - cached.createdAt;
+
+  if (age > META_CACHE_TTL_MS) {
+    metaProviderCache.delete(key);
+    return null;
+  }
+
+  return cached.ads;
+}
+
+function setCachedMetaAds(
+  key: string,
+  ads: CompetitorAd[]
+): void {
+  metaProviderCache.set(key, {
+    ads,
+    createdAt: Date.now(),
+  });
+}
+/* =========================================================
+ * PROVIDER CACHE
+ * ======================================================= */
+
 export const metaProvider: AdProvider = {
   platform: "meta",
 
   async search(
     input: AdSearchInput
   ): Promise<ProviderResult> {
-    const query = input.query?.trim();
+    const query =
+      input.query?.trim();
 
     if (!query) {
       return {
@@ -2329,14 +2576,58 @@ export const metaProvider: AdProvider = {
       input.country?.trim().toUpperCase() ||
       DEFAULT_COUNTRY;
 
-    const mode = input.mode ?? "advertiser";
+    const mode =
+      input.mode ?? "advertiser";
 
-    const scraped = await scrapeMetaAdLibrary(
-      query,
-      country
+    const cacheKey =
+      getMetaCacheKey(
+        query,
+        country,
+        mode
+      );
+
+    let ads =
+      getCachedMetaAds(cacheKey);
+
+    /* -----------------------------------------------------
+     * CACHE HIT
+     * --------------------------------------------------- */
+
+    if (ads) {
+      console.log(
+        "[MetaProvider] Cache hit:",
+        query,
+        "total:",
+        ads.length
+      );
+
+      /*
+       * Return the COMPLETE cached result set.
+       *
+       * Do not paginate here.
+       * route.ts is responsible for pagination.
+       */
+      return {
+        ads,
+      };
+    }
+
+    /* -----------------------------------------------------
+     * CACHE MISS
+     * --------------------------------------------------- */
+
+    console.log(
+      "[MetaProvider] Cache miss:",
+      query
     );
 
-    let ads = scraped.map((ad) =>
+    const scraped =
+      await scrapeMetaAdLibrary(
+        query,
+        country
+      );
+
+    ads = scraped.map((ad) =>
       normalizeScrapedAd(
         ad,
         query,
@@ -2344,50 +2635,56 @@ export const metaProvider: AdProvider = {
       )
     );
 
-    /*
-     * Advertiser mode:
-     * Prefer ads belonging to the searched advertiser.
-     *
-     * We intentionally do NOT force the result to zero
-     * when Meta's HTML extraction is incomplete.
-     */
-    if (mode === "advertiser") {
-      const relevant = ads.filter((ad) =>
-        isRelevantToAdvertiser(
-          ad,
-          query
-        )
-      );
+    /* -----------------------------------------------------
+     * ADVERTISER RELEVANCE
+     * --------------------------------------------------- */
 
-      if (relevant.length > 0) {
-        ads = relevant;
-      }
-    }
+  if (mode === "advertiser") {
+  ads = ads.filter((ad) =>
+    isRelevantToAdvertiser(ad, query)
+  );
+}
 
-    /*
-     * Deduplicate by actual Meta Library ID.
-     */
-    const unique = new Map<
-      string,
-      CompetitorAd
-    >();
+    /* -----------------------------------------------------
+     * DEDUPLICATION
+     * --------------------------------------------------- */
 
-    for (const ad of ads) {
-      unique.set(
-        `${ad.platform}:${ad.id}`,
-        ad
-      );
-    }
+    function buildCreativeFingerprint(
+  ad: CompetitorAd
+): string {
+  const normalize = (value: string | null | undefined) =>
+    (value ?? "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
 
-    ads = Array.from(
-      unique.values()
-    );
+  return [
+    normalize(ad.advertiserName),
+    normalize(ad.headline),
+    normalize(ad.productName),
+    normalize(ad.primaryText),
+    normalize(ad.callToAction),
+    normalize(ad.landingPage),
+    ad.creativeType ?? "",
+  ].join("|");
+}
 
-    /*
-     * Sort the COMPLETE result set first.
-     *
-     * Pagination must happen after this.
-     */
+const unique = new Map<string, CompetitorAd>();
+
+for (const ad of ads) {
+  const fingerprint = buildCreativeFingerprint(ad);
+
+  if (!unique.has(fingerprint)) {
+    unique.set(fingerprint, ad);
+  }
+}
+
+ads = Array.from(unique.values());
+
+    /* -----------------------------------------------------
+     * SORT COMPLETE RESULT SET
+     * --------------------------------------------------- */
+
     ads.sort((a, b) => {
       const aScore =
         (a.creativeScore ?? 0) +
@@ -2402,26 +2699,43 @@ export const metaProvider: AdProvider = {
       return bScore - aScore;
     });
 
-    /*
-     * IMPORTANT:
-     * Do NOT slice here.
+    /* -----------------------------------------------------
+     * CACHE COMPLETE RESULT SET
+     * --------------------------------------------------- */
+
+    setCachedMetaAds(
+      cacheKey,
+      ads
+    );
+
+    console.log(
+      "[MetaProvider] Cached normalized ads:",
+      ads.length
+    );
+
+    /* -----------------------------------------------------
+     * IMPORTANT
+     * ---------------------------------------------------
+
+     * DO NOT DO THIS HERE:
+     *
+     * const page = ...
+     * const start = ...
+     * const end = ...
+     * ads = ads.slice(start, end)
      *
      * The API route owns pagination.
      *
-     * Returning the complete normalized result allows
-     * the route to correctly calculate:
+     * Provider:
+     *   scrape -> normalize -> filter -> dedupe -> sort
      *
-     *   total
-     *   totalPages
-     *   hasNextPage
-     *   hasPreviousPage
-     *
-     * and then slice the correct page.
-     */
+     * Route:
+     *   enrich -> summary -> paginate -> response
+     * --------------------------------------------------- */
+
     console.log(
-      "[MetaProvider] Normalized ads:",
-      ads.length,
-      "total"
+      "[MetaProvider] Returning full result set:",
+      ads.length
     );
 
     return {

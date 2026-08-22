@@ -196,68 +196,107 @@ function calculateRelevanceScore(
   ad: CompetitorAd,
   query: string
 ): number {
-  const q =
-    normalizeText(query);
+  const q = normalizeText(query);
 
   if (!q) {
-    return 50;
+    return 0;
   }
 
-  const advertiser =
-    normalizeText(
-      ad.advertiserName
-    );
+  const advertiser = normalizeText(
+    ad.advertiserName
+  );
 
-  const product =
-    normalizeText(
-      ad.productName
-    );
+  const creator = normalizeText(
+    ad.creatorName
+  );
 
-  const headline =
-    normalizeText(
-      ad.headline
-    );
+  const landingPage = normalizeText(
+    ad.landingPage
+  );
 
-  const landing =
-    normalizeText(
-      ad.landingPage
-    );
+  const product = normalizeText(
+    ad.productName
+  );
 
-  const normalizedQuery =
-    q.replace(
-      /[^a-z0-9]/g,
-      ""
-    );
+  const headline = normalizeText(
+    ad.headline
+  );
+
+  const primaryText = normalizeText(
+    ad.primaryText
+  );
 
   if (
-    advertiser === q ||
-    advertiser.includes(q)
+    advertiser &&
+    advertiser !== "unknown advertiser" &&
+    (
+      advertiser === q ||
+      advertiser.includes(q) ||
+      q.includes(advertiser)
+    )
   ) {
-    return 95;
+    return 100;
   }
 
-  const compactQuery =
-    compact(normalizedQuery);
-
   if (
-    compactQuery &&
-    landing.includes(
-      compactQuery
+    creator &&
+    (
+      creator === q ||
+      creator.includes(q) ||
+      q.includes(creator)
     )
   ) {
     return 90;
   }
 
+  try {
+    const host = new URL(landingPage).hostname
+      .replace(/^www\./, "")
+      .toLowerCase();
+
+    const compactQuery = q.replace(
+      /[^a-z0-9]/g,
+      ""
+    );
+
+    const compactHost = host.replace(
+      /[^a-z0-9]/g,
+      ""
+    );
+
+    if (
+      compactQuery &&
+      compactHost.includes(compactQuery)
+    ) {
+      return 90;
+    }
+  } catch {
+    // Ignore invalid landing URLs.
+  }
+
   if (
-    product.includes(q) ||
-    headline.includes(q)
+    product &&
+    product.includes(q)
   ) {
     return 80;
   }
 
-  return 50;
-}
+  if (
+    headline &&
+    headline.includes(q)
+  ) {
+    return 75;
+  }
 
+  if (
+    primaryText &&
+    primaryText.includes(q)
+  ) {
+    return 65;
+  }
+
+  return 20;
+}
 /* =========================================================
  * ENGAGEMENT POTENTIAL
  * ======================================================= */
