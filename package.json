@@ -16,7 +16,7 @@
     "framer-motion": "^12.36.0",
     "motion-utils": "^12.36.0",
     "next": "^16.1.6",
-    "playwright-core": "^1.62.1",
+    "playwright-core": "^1.59.1",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "xlsx": "0.18.5"
