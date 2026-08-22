@@ -8,7 +8,7 @@ const nextConfig: NextConfig = {
 
   outputFileTracingIncludes: {
     "/api/ad-intelligence/search": [
-      "./node_modules/@sparticuz/chromium/bin/**/*",
+      "./node_modules/@sparticuz/chromium/**/*",
     ],
   },
 };
