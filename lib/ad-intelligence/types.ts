@@ -57,10 +57,12 @@ export type CompetitorAd = {
 
   creatorName?: string | null;
 
-  partnershipType?:
-    | "direct"
-    | "creator"
-    | "unknown";
+ partnershipType?:
+  | "direct"
+  | "creator"
+  | "paid_partnership"
+  | "collaboration"
+  | "unknown";
 
   country?: string | null;
 

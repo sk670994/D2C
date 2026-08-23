@@ -1781,6 +1781,36 @@ function extractCallToAction(
 
   return null;
 }
+
+/* =========================================================
+ * ACTIVE STATUS
+ * ======================================================= */
+
+function extractActiveStatus(
+  lines: string[],
+): boolean {
+  const text = lines
+    .map(
+      (line) =>
+        normalizeExtractedText(line) ?? "",
+    )
+    .join(" ")
+    .toLowerCase();
+
+  // Explicit inactive signals.
+  if (
+    text.includes("inactive") ||
+    text.includes("निष्क्रिय")
+  ) {
+    return false;
+  }
+
+  // Meta frequently does not expose a literal
+  // "Active" label inside the rendered card.
+  // Since the ad was returned by the Ad Library,
+  // treat an unspecified status as active.
+  return true;
+}
 /* =========================================================
  * NORMALIZATION
  * ======================================================= */
