@@ -4,6 +4,34 @@ import type {
   MetricSources,
 } from "./types";
 
+import {
+  groupCreativeFamilies,
+  summarizeCreativeFamilies,
+  type CreativeFamily,
+  type CreativeFamilySummary,
+} from "./intelligence/creative-families";
+
+import {
+  analyzeCreatorAd,
+  summarizeCreatorAnalysis,
+  type CreatorAdAnalysis,
+  type CreatorAnalysisSummary,
+} from "./intelligence/creator-analysis";
+
+import {
+  analyzeVideoAd,
+  summarizeVideoAnalysis,
+  type VideoAnalysis,
+  type VideoAnalysisSummary,
+} from "./intelligence/video-analysis";
+
+import {
+  analyzeMarketingAd,
+  summarizeMarketingAnalysis,
+  type MarketingAnalysis,
+  type MarketingAnalysisSummary,
+} from "./intelligence/marketing-analysis";
+
 /* =========================================================
  * INTELLIGENCE TYPES
  * ======================================================= */
@@ -34,6 +62,17 @@ export type EnrichedCompetitorAd = Omit<
   engagementPotentialScore?: number;
   intelligence?: AdIntelligence;
   metricSources?: MetricSources;
+
+  analysis?: {
+    creativeFamilyId: string | null;
+    creativeFamilyName: string | null;
+
+    creator: CreatorAdAnalysis;
+
+    video: VideoAnalysis | null;
+
+    marketing: MarketingAnalysis;
+  };
 };
 
 /* =========================================================
@@ -87,6 +126,16 @@ export type AdSearchSummary = {
   clicks: MetricAvailabilityResult;
   ctr: MetricAvailabilityResult;
   impressions: MetricAvailabilityResult;
+
+  creativeFamilies: CreativeFamilySummary;
+
+  creatorAnalysis: CreatorAnalysisSummary;
+
+  videoAnalysis: VideoAnalysisSummary;
+
+  marketingAnalysis: MarketingAnalysisSummary;
+
+  creativeFamilyList: CreativeFamily[];
 };
 
 /* =========================================================
@@ -105,11 +154,14 @@ export type AdIntelligenceResult = {
 function clamp(
   value: number,
   min = 0,
-  max = 100
+  max = 100,
 ): number {
   return Math.max(
     min,
-    Math.min(max, value)
+    Math.min(
+      max,
+      value,
+    ),
   );
 }
 
@@ -117,7 +169,7 @@ function safeNumber(
   value:
     | number
     | null
-    | undefined
+    | undefined,
 ): number {
   return (
     typeof value === "number" &&
@@ -131,7 +183,7 @@ function normalizeText(
   value:
     | string
     | null
-    | undefined
+    | undefined,
 ): string {
   return (value ?? "")
     .toLowerCase()
@@ -139,11 +191,11 @@ function normalizeText(
 }
 
 function compact(
-  value: string
+  value: string,
 ): string {
   return value.replace(
     /\s+/g,
-    ""
+    "",
   );
 }
 
@@ -152,10 +204,12 @@ function compact(
  * ======================================================= */
 
 function calculateLongevityScore(
-  ad: CompetitorAd
+  ad: CompetitorAd,
 ): number {
   const days =
-    safeNumber(ad.runningDays);
+    safeNumber(
+      ad.runningDays,
+    );
 
   if (days <= 0) {
     return 0;
@@ -194,41 +248,49 @@ function calculateLongevityScore(
 
 function calculateRelevanceScore(
   ad: CompetitorAd,
-  query: string
+  query: string,
 ): number {
-  const q = normalizeText(query);
+  const q =
+    normalizeText(query);
 
   if (!q) {
     return 0;
   }
 
-  const advertiser = normalizeText(
-    ad.advertiserName
-  );
+  const advertiser =
+    normalizeText(
+      ad.advertiserName,
+    );
 
-  const creator = normalizeText(
-    ad.creatorName
-  );
+  const creator =
+    normalizeText(
+      ad.creatorName,
+    );
 
-  const landingPage = normalizeText(
-    ad.landingPage
-  );
+  const landingPage =
+    normalizeText(
+      ad.landingPage,
+    );
 
-  const product = normalizeText(
-    ad.productName
-  );
+  const product =
+    normalizeText(
+      ad.productName,
+    );
 
-  const headline = normalizeText(
-    ad.headline
-  );
+  const headline =
+    normalizeText(
+      ad.headline,
+    );
 
-  const primaryText = normalizeText(
-    ad.primaryText
-  );
+  const primaryText =
+    normalizeText(
+      ad.primaryText,
+    );
 
   if (
     advertiser &&
-    advertiser !== "unknown advertiser" &&
+    advertiser !==
+      "unknown advertiser" &&
     (
       advertiser === q ||
       advertiser.includes(q) ||
@@ -250,23 +312,34 @@ function calculateRelevanceScore(
   }
 
   try {
-    const host = new URL(landingPage).hostname
-      .replace(/^www\./, "")
-      .toLowerCase();
+    const host =
+      new URL(
+        landingPage,
+      )
+        .hostname
+        .replace(
+          /^www\./,
+          "",
+        )
+        .toLowerCase();
 
-    const compactQuery = q.replace(
-      /[^a-z0-9]/g,
-      ""
-    );
+    const compactQuery =
+      q.replace(
+        /[^a-z0-9]/g,
+        "",
+      );
 
-    const compactHost = host.replace(
-      /[^a-z0-9]/g,
-      ""
-    );
+    const compactHost =
+      host.replace(
+        /[^a-z0-9]/g,
+        "",
+      );
 
     if (
       compactQuery &&
-      compactHost.includes(compactQuery)
+      compactHost.includes(
+        compactQuery,
+      )
     ) {
       return 90;
     }
@@ -297,23 +370,26 @@ function calculateRelevanceScore(
 
   return 20;
 }
+
 /* =========================================================
  * ENGAGEMENT POTENTIAL
  * ======================================================= */
 
 function calculateEngagementPotential(
-  ad: CompetitorAd
+  ad: CompetitorAd,
 ): number {
   let score = 35;
 
   if (
-    ad.creativeType === "video"
+    ad.creativeType ===
+    "video"
   ) {
     score += 20;
   }
 
   if (
-    ad.creativeType === "carousel"
+    ad.creativeType ===
+    "carousel"
   ) {
     score += 10;
   }
@@ -354,25 +430,25 @@ function calculateEngagementPotential(
 
 function buildRankingReasons(
   ad: CompetitorAd,
-  longevityScore: number
+  longevityScore: number,
 ): string[] {
   const reasons: string[] = [];
 
   if (ad.offer) {
     reasons.push(
-      "Strong offer detected"
+      "Strong offer detected",
     );
   }
 
   if (ad.productName) {
     reasons.push(
-      "Specific product detected"
+      "Specific product detected",
     );
   }
 
   if (ad.callToAction) {
     reasons.push(
-      "Clear CTA"
+      "Clear CTA",
     );
   }
 
@@ -381,29 +457,31 @@ function buildRankingReasons(
     ad.primaryText.length >= 120
   ) {
     reasons.push(
-      "Detailed ad copy"
+      "Detailed ad copy",
     );
   }
 
   if (
-    ad.creativeType === "video"
+    ad.creativeType ===
+    "video"
   ) {
     reasons.push(
-      "Video creative"
+      "Video creative",
     );
   }
 
   if (
-    ad.creativeType === "carousel"
+    ad.creativeType ===
+    "carousel"
   ) {
     reasons.push(
-      "Carousel creative"
+      "Carousel creative",
     );
   }
 
   if (longevityScore >= 60) {
     reasons.push(
-      "Long-running creative"
+      "Long-running creative",
     );
   }
 
@@ -415,7 +493,7 @@ function buildRankingReasons(
  * ======================================================= */
 
 function buildBadges(
-  ad: CompetitorAd
+  ad: CompetitorAd,
 ): string[] {
   const badges: string[] = [];
 
@@ -424,10 +502,14 @@ function buildBadges(
   }
 
   if (ad.productName) {
-    badges.push("Product Ad");
+    badges.push(
+      "Product Ad",
+    );
   }
 
-  switch (ad.creativeType) {
+  switch (
+    ad.creativeType
+  ) {
     case "video":
       badges.push("Video");
       break;
@@ -437,7 +519,9 @@ function buildBadges(
       break;
 
     case "carousel":
-      badges.push("Carousel");
+      badges.push(
+        "Carousel",
+      );
       break;
 
     default:
@@ -445,7 +529,8 @@ function buildBadges(
   }
 
   if (
-    ad.partnershipType === "creator"
+    ad.partnershipType ===
+    "creator"
   ) {
     badges.push("Creator");
   }
@@ -467,12 +552,18 @@ function buildBadges(
  * ======================================================= */
 
 function buildMetricSources(
-  ad: CompetitorAd
+  ad: CompetitorAd,
 ): MetricSources {
   return {
-    creativeScore: "estimated",
-    longevityScore: "derived",
-    relevanceScore: "derived",
+    creativeScore:
+      "estimated",
+
+    longevityScore:
+      "derived",
+
+    relevanceScore:
+      "derived",
+
     engagementPotentialScore:
       "estimated",
 
@@ -500,24 +591,28 @@ function buildMetricSources(
 
 function enrichAd(
   ad: CompetitorAd,
-  query: string
+  query: string,
 ): EnrichedCompetitorAd {
   const longevityScore =
-    calculateLongevityScore(ad);
+    calculateLongevityScore(
+      ad,
+    );
 
   const relevanceScore =
     calculateRelevanceScore(
       ad,
-      query
+      query,
     );
 
   const engagementPotentialScore =
-    calculateEngagementPotential(ad);
+    calculateEngagementPotential(
+      ad,
+    );
 
   const rankingReasons =
     buildRankingReasons(
       ad,
-      longevityScore
+      longevityScore,
     );
 
   const badges =
@@ -550,10 +645,14 @@ function enrichAd(
 
 export function enrichAds(
   ads: CompetitorAd[],
-  query = ""
+  query = "",
 ): EnrichedCompetitorAd[] {
-  return ads.map((ad) =>
-    enrichAd(ad, query)
+  return ads.map(
+    (ad) =>
+      enrichAd(
+        ad,
+        query,
+      ),
   );
 }
 
@@ -562,48 +661,48 @@ export function enrichAds(
  * ======================================================= */
 
 export function rankAds(
-  ads: EnrichedCompetitorAd[]
+  ads: EnrichedCompetitorAd[],
 ): EnrichedCompetitorAd[] {
   return [...ads].sort(
     (a, b) => {
       const aCreative =
         safeNumber(
-          a.creativeScore
+          a.creativeScore,
         );
 
       const bCreative =
         safeNumber(
-          b.creativeScore
+          b.creativeScore,
         );
 
       const aLongevity =
         safeNumber(
-          a.longevityScore
+          a.longevityScore,
         );
 
       const bLongevity =
         safeNumber(
-          b.longevityScore
+          b.longevityScore,
         );
 
       const aRelevance =
         safeNumber(
-          a.relevanceScore
+          a.relevanceScore,
         );
 
       const bRelevance =
         safeNumber(
-          b.relevanceScore
+          b.relevanceScore,
         );
 
       const aEngagement =
         safeNumber(
-          a.engagementPotentialScore
+          a.engagementPotentialScore,
         );
 
       const bEngagement =
         safeNumber(
-          b.engagementPotentialScore
+          b.engagementPotentialScore,
         );
 
       const aTotal =
@@ -618,8 +717,11 @@ export function rankAds(
         bRelevance +
         bEngagement;
 
-      return bTotal - aTotal;
-    }
+      return (
+        bTotal -
+        aTotal
+      );
+    },
   );
 }
 
@@ -628,24 +730,26 @@ export function rankAds(
  * ======================================================= */
 
 function findLongestRunningAd(
-  ads: EnrichedCompetitorAd[]
-): EnrichedCompetitorAd | null {
+  ads: EnrichedCompetitorAd[],
+):
+  | EnrichedCompetitorAd
+  | null {
   return (
     [...ads]
       .filter(
         (ad) =>
           safeNumber(
-            ad.runningDays
-          ) > 0
+            ad.runningDays,
+          ) > 0,
       )
       .sort(
         (a, b) =>
           safeNumber(
-            b.runningDays
+            b.runningDays,
           ) -
           safeNumber(
-            a.runningDays
-          )
+            a.runningDays,
+          ),
       )[0] ?? null
   );
 }
@@ -655,17 +759,19 @@ function findLongestRunningAd(
  * ======================================================= */
 
 function findHighestCreativeScoreAd(
-  ads: EnrichedCompetitorAd[]
-): EnrichedCompetitorAd | null {
+  ads: EnrichedCompetitorAd[],
+):
+  | EnrichedCompetitorAd
+  | null {
   return (
     [...ads].sort(
       (a, b) =>
         safeNumber(
-          b.creativeScore
+          b.creativeScore,
         ) -
         safeNumber(
-          a.creativeScore
-        )
+          a.creativeScore,
+        ),
     )[0] ?? null
   );
 }
@@ -675,35 +781,40 @@ function findHighestCreativeScoreAd(
  * ======================================================= */
 
 function findMostClickWorthyAd(
-  ads: EnrichedCompetitorAd[]
-): EnrichedCompetitorAd | null {
+  ads: EnrichedCompetitorAd[],
+):
+  | EnrichedCompetitorAd
+  | null {
   return (
     [...ads].sort(
       (a, b) => {
         const aScore =
           safeNumber(
-            a.engagementPotentialScore
+            a.engagementPotentialScore,
           ) +
           safeNumber(
-            a.creativeScore
+            a.creativeScore,
           ) +
           safeNumber(
-            a.relevanceScore
+            a.relevanceScore,
           );
 
         const bScore =
           safeNumber(
-            b.engagementPotentialScore
+            b.engagementPotentialScore,
           ) +
           safeNumber(
-            b.creativeScore
+            b.creativeScore,
           ) +
           safeNumber(
-            b.relevanceScore
+            b.relevanceScore,
           );
 
-        return bScore - aScore;
-      }
+        return (
+          bScore -
+          aScore
+        );
+      },
     )[0] ?? null
   );
 }
@@ -713,13 +824,18 @@ function findMostClickWorthyAd(
  * ======================================================= */
 
 function findMostAdvertisedProduct(
-  ads: EnrichedCompetitorAd[]
-): MostAdvertisedProduct | null {
+  ads: EnrichedCompetitorAd[],
+):
+  | MostAdvertisedProduct
+  | null {
   const counts =
     new Map<string, number>();
 
   const displayNames =
-    new Map<string, string>();
+    new Map<
+      string,
+      string
+    >();
 
   for (const ad of ads) {
     const product =
@@ -734,12 +850,13 @@ function findMostAdvertisedProduct(
 
     counts.set(
       key,
-      (counts.get(key) ?? 0) + 1
+      (counts.get(key) ??
+        0) + 1,
     );
 
     displayNames.set(
       key,
-      product
+      product,
     );
   }
 
@@ -753,7 +870,10 @@ function findMostAdvertisedProduct(
     key,
     count,
   ] of counts.entries()) {
-    if (count > bestCount) {
+    if (
+      count >
+      bestCount
+    ) {
       bestKey = key;
       bestCount = count;
     }
@@ -766,9 +886,11 @@ function findMostAdvertisedProduct(
   return {
     productName:
       displayNames.get(
-        bestKey
+        bestKey,
       ) ?? null,
-    adCount: bestCount,
+
+    adCount:
+      bestCount,
   };
 }
 
@@ -777,46 +899,49 @@ function findMostAdvertisedProduct(
  * ======================================================= */
 
 export function buildAdSearchSummary(
-  ads: EnrichedCompetitorAd[]
+  ads: EnrichedCompetitorAd[],
 ): AdSearchSummary {
   const activeAds =
     ads.filter(
-      (ad) => ad.isActive
+      (ad) =>
+        ad.isActive,
     ).length;
 
   const inactiveAds =
-    ads.length - activeAds;
+    ads.length -
+    activeAds;
 
   const videoAds =
     ads.filter(
       (ad) =>
         ad.creativeType ===
-        "video"
+        "video",
     ).length;
 
   const imageAds =
     ads.filter(
       (ad) =>
         ad.creativeType ===
-        "image"
+        "image",
     ).length;
 
   const carouselAds =
     ads.filter(
       (ad) =>
         ad.creativeType ===
-        "carousel"
+        "carousel",
     ).length;
 
   const unknownCreativeAds =
     ads.filter(
       (ad) =>
         ad.creativeType ===
-        "unknown"
+        "unknown",
     ).length;
 
   return {
-    totalAdsFound: ads.length,
+    totalAdsFound:
+      ads.length,
 
     activeAds,
 
@@ -832,71 +957,364 @@ export function buildAdSearchSummary(
 
     longestRunningAd:
       findLongestRunningAd(
-        ads
+        ads,
       ),
 
     mostClickWorthyAd:
       findMostClickWorthyAd(
-        ads
+        ads,
       ),
 
     highestCreativeScoreAd:
       findHighestCreativeScoreAd(
-        ads
+        ads,
       ),
 
     mostAdvertisedProduct:
       findMostAdvertisedProduct(
-        ads
+        ads,
       ),
 
     reach: {
-      status: "unavailable",
+      status:
+        "unavailable",
+
       reason:
         "No reach figure was exposed by the provider.",
     },
 
     clicks: {
-      status: "unavailable",
+      status:
+        "unavailable",
+
       reason:
         "No click count was exposed by the provider.",
     },
 
     ctr: {
-      status: "unavailable",
+      status:
+        "unavailable",
+
       reason:
         "No CTR was exposed by the provider.",
     },
 
     impressions: {
-      status: "unavailable",
+      status:
+        "unavailable",
+
       reason:
         "No impression count was exposed by the provider.",
     },
+
+    /*
+     * These are populated by calculateAdIntelligence().
+     * They are initialized here so the base summary remains
+     * a complete AdSearchSummary shape.
+     */
+    creativeFamilies:
+      emptyCreativeFamilySummary(),
+
+    creatorAnalysis:
+      emptyCreatorAnalysisSummary(),
+
+    videoAnalysis:
+      emptyVideoAnalysisSummary(),
+
+    marketingAnalysis:
+      emptyMarketingAnalysisSummary(),
+
+    creativeFamilyList: [],
+  };
+}
+
+/* =========================================================
+ * EMPTY INTELLIGENCE SUMMARIES
+ * ======================================================= */
+
+function emptyCreativeFamilySummary():
+  CreativeFamilySummary {
+  return {
+    familyCount: 0,
+    totalVariants: 0,
+    largestFamily: null,
+    mostCommonOffer: null,
+    creatorFamilies: 0,
+    videoFamilies: 0,
+    carouselFamilies: 0,
+  };
+}
+
+function emptyCreatorAnalysisSummary():
+  CreatorAnalysisSummary {
+  return {
+    totalAds: 0,
+    creatorAds: 0,
+    creatorShare: 0,
+    paidPartnershipAds: 0,
+    collaborationAds: 0,
+    explicitCreatorNames: 0,
+    detectedCreators: 0,
+    creatorProfiles: [],
+    topCreator: null,
+  };
+}
+
+function emptyVideoAnalysisSummary():
+  VideoAnalysisSummary {
+  return {
+    totalAds: 0,
+    videoAds: 0,
+    videoShare: 0,
+    videosWithTranscript: 0,
+    videosPendingTranscript: 0,
+    videosWithCreatorSignal: 0,
+    averageDurationSeconds: 0,
+    shortVideos: 0,
+    mediumVideos: 0,
+    longVideos: 0,
+    hookTypes: {
+      offer: 0,
+      product: 0,
+      problem: 0,
+      benefit: 0,
+      curiosity: 0,
+      social_proof: 0,
+      urgency: 0,
+      unknown: 0,
+    },
+    topHookType: "unknown",
+    analyzedVideos: [],
+  };
+}
+
+function emptyMarketingAnalysisSummary():
+  MarketingAnalysisSummary {
+  return {
+    totalAds: 0,
+    analyzedAds: 0,
+    averageConfidence: 0,
+    angleCounts: {
+      product: 0,
+      benefit: 0,
+      offer: 0,
+      problem_solution: 0,
+      social_proof: 0,
+      urgency: 0,
+      curiosity: 0,
+      lifestyle: 0,
+      seasonal: 0,
+      brand: 0,
+      unknown: 0,
+    },
+    hookCounts: {
+      offer: 0,
+      problem: 0,
+      benefit: 0,
+      curiosity: 0,
+      social_proof: 0,
+      urgency: 0,
+      product: 0,
+      statement: 0,
+      unknown: 0,
+    },
+    topAngle: "unknown",
+    topHook: "unknown",
+    offerCount: 0,
+    urgencyCount: 0,
+    proofCount: 0,
+    benefitCount: 0,
+    objectionCount: 0,
+    analyses: [],
   };
 }
 
 /* =========================================================
  * CALCULATE AD INTELLIGENCE
+ *
+ * Pipeline:
+ *
+ * CompetitorAd[]
+ *      ↓
+ * Existing enrichment
+ *      ↓
+ * Creative families
+ *      ↓
+ * Creator analysis
+ *      ↓
+ * Video analysis
+ *      ↓
+ * Marketing analysis
+ *      ↓
+ * Existing ranking
+ *      ↓
+ * Existing summary + new summaries
  * ======================================================= */
 
 export function calculateAdIntelligence(
   ads: CompetitorAd[],
-  query = ""
+  query = "",
 ): AdIntelligenceResult {
+  /*
+   * 1. Existing enrichment remains unchanged.
+   */
   const enriched =
     enrichAds(
       ads,
-      query
+      query,
     );
 
+  /*
+   * 2. Build creative families from enriched ads.
+   */
+  const creativeFamilies =
+    groupCreativeFamilies(
+      enriched,
+    );
+
+  /*
+   * 3. Create a fast ad → family lookup.
+   */
+  const creativeFamilyByAdId =
+    new Map<
+      string,
+      {
+        id: string;
+        name: string;
+      }
+    >();
+
+  for (
+    const family of creativeFamilies
+  ) {
+    for (
+      const ad of family.variants
+    ) {
+      creativeFamilyByAdId.set(
+        ad.id,
+        {
+          id: family.id,
+          name: family.name,
+        },
+      );
+    }
+  }
+
+  /*
+   * 4. Attach the standalone intelligence modules.
+   */
+  const analyzed =
+    enriched.map(
+      (ad) => {
+        const family =
+          creativeFamilyByAdId.get(
+            ad.id,
+          );
+
+        const creator =
+          analyzeCreatorAd(
+            ad,
+          );
+
+        const video =
+          ad.creativeType ===
+            "video" ||
+          Boolean(
+            ad.videoUrl,
+          )
+            ? analyzeVideoAd(
+                ad,
+              )
+            : null;
+
+        const marketing =
+          analyzeMarketingAd(
+            ad,
+          );
+
+        return {
+          ...ad,
+
+          analysis: {
+            creativeFamilyId:
+              family?.id ??
+              null,
+
+            creativeFamilyName:
+              family?.name ??
+              null,
+
+            creator,
+
+            video,
+
+            marketing,
+          },
+        };
+      },
+    );
+
+  /*
+   * 5. Preserve the existing ranking system.
+   */
   const ranked =
-    rankAds(enriched);
-
-  const summary =
-    buildAdSearchSummary(
-      ranked
+    rankAds(
+      analyzed,
     );
+
+  /*
+   * 6. Preserve the existing base summary.
+   */
+  const baseSummary =
+    buildAdSearchSummary(
+      ranked,
+    );
+
+  /*
+   * 7. Calculate the new intelligence summaries.
+   */
+  const creativeFamilySummary =
+    summarizeCreativeFamilies(
+      creativeFamilies,
+    );
+
+  const creatorSummary =
+    summarizeCreatorAnalysis(
+      ranked,
+    );
+
+  const videoSummary =
+    summarizeVideoAnalysis(
+      ranked,
+    );
+
+  const marketingSummary =
+    summarizeMarketingAnalysis(
+      ranked,
+    );
+
+  /*
+   * 8. Combine everything into one result.
+   */
+  const summary: AdSearchSummary =
+    {
+      ...baseSummary,
+
+      creativeFamilies:
+        creativeFamilySummary,
+
+      creatorAnalysis:
+        creatorSummary,
+
+      videoAnalysis:
+        videoSummary,
+
+      marketingAnalysis:
+        marketingSummary,
+
+      creativeFamilyList:
+        creativeFamilies,
+    };
 
   return {
     ads: ranked,
