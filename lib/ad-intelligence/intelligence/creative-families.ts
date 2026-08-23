@@ -1,13 +1,39 @@
-import type { CompetitorAd } from "../types";
-import type { EnrichedCompetitorAd } from "../intelligence";
+import type {
+  CompetitorAd,
+  MetricSources,
+} from "../types";
+
+/* =========================================================
+ * LOCAL ENRICHED AD TYPE
+ *
+ * We intentionally do not import from ../intelligence.ts
+ * because this file lives inside the intelligence/ directory
+ * and that creates an import-resolution collision.
+ * ======================================================= */
+
+type EnrichedCompetitorAd =
+  Omit<
+    CompetitorAd,
+    "metricSources"
+  > & {
+    longevityScore?: number;
+    relevanceScore?: number;
+    engagementPotentialScore?: number;
+
+    intelligence?: {
+      rankingReasons: string[];
+      badges: string[];
+    };
+
+    metricSources?: MetricSources;
+  };
 
 /* =========================================================
  * CREATIVE FAMILIES
  *
- * Groups related ads into estimated creative families.
+ * Estimated deterministic clustering.
  *
- * This is NOT a Meta-provided label.
- * It is our own deterministic clustering signal.
+ * These are NOT Meta-provided family labels.
  * ======================================================= */
 
 export type CreativeFamily = {
@@ -37,8 +63,20 @@ export type CreativeFamily = {
 };
 
 /* =========================================================
- * NORMALIZATION
+ * GENERIC / PLACEHOLDER META HEADLINES
  * ======================================================= */
+
+const PLACEHOLDER_HEADLINES = new Set([
+  "this ad has multiple versions",
+  "this ad has multiple versions.",
+  "this ad has multiple versions using this creative",
+  "multiple versions of this ad",
+  "इस विज्ञापन के एक से अधिक वर्जन है",
+  "इस विज्ञापन के एक से अधिक वर्जन हैं",
+  "इस विज्ञापन के एक से अधिक संस्करण हैं",
+  "इस विज्ञापन के एक से अधिक संस्करण है",
+  "3 विज्ञापन इस क्रिएटिव और टेक्स्ट का उपयोग करता है",
+]);
 
 function normalizeText(
   value:
@@ -58,6 +96,97 @@ function compactText(
 ): string {
   return normalizeText(value)
     .replace(/[^a-z0-9]+/g, "");
+}
+
+function isPlaceholderHeadline(
+  value:
+    | string
+    | null
+    | undefined,
+): boolean {
+  const normalized =
+    normalizeText(value);
+
+  if (!normalized) {
+    return true;
+  }
+
+  if (
+    PLACEHOLDER_HEADLINES.has(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+
+  /*
+   * Generic fallback for localized Meta placeholder text.
+   */
+  return (
+    normalized.includes(
+      "multiple versions",
+    ) ||
+    normalized.includes(
+      "more than one version",
+    ) ||
+    normalized.includes(
+      "एक से अधिक वर्जन",
+    ) ||
+    normalized.includes(
+      "एक से अधिक संस्करण",
+    )
+  );
+}
+
+/* =========================================================
+ * MEANINGFUL FIELD
+ * ======================================================= */
+
+function getMeaningfulHeadline(
+  ad: CompetitorAd,
+): string | null {
+  if (
+    isPlaceholderHeadline(
+      ad.headline,
+    )
+  ) {
+    return null;
+  }
+
+  const headline =
+    ad.headline?.trim();
+
+  return headline || null;
+}
+
+function getMeaningfulProduct(
+  ad: CompetitorAd,
+): string | null {
+  if (
+    isPlaceholderHeadline(
+      ad.productName,
+    )
+  ) {
+    return null;
+  }
+
+  const product =
+    ad.productName?.trim();
+
+  return product || null;
+}
+
+function getMeaningfulPrimaryText(
+  ad: CompetitorAd,
+): string | null {
+  const text =
+    ad.primaryText?.trim();
+
+  if (!text) {
+    return null;
+  }
+
+  return text;
 }
 
 /* =========================================================
@@ -130,7 +259,9 @@ function jaccardSimilarity(
     return 0;
   }
 
-  return intersection / union;
+  return (
+    intersection / union
+  );
 }
 
 /* =========================================================
@@ -158,7 +289,7 @@ function getLandingDomain(
 }
 
 /* =========================================================
- * OFFER NORMALIZATION
+ * OFFER
  * ======================================================= */
 
 function normalizeOffer(
@@ -174,67 +305,151 @@ function normalizeOffer(
 }
 
 /* =========================================================
- * FAMILY SIMILARITY
+ * CREATIVE SIGNALS
  * ======================================================= */
 
+function sameAdvertiser(
+  a: CompetitorAd,
+  b: CompetitorAd,
+): boolean {
+  const left =
+    normalizeText(
+      a.advertiserName,
+    );
+
+  const right =
+    normalizeText(
+      b.advertiserName,
+    );
+
+  return Boolean(
+    left &&
+      right &&
+      left === right,
+  );
+}
+
+function sameCreator(
+  a: CompetitorAd,
+  b: CompetitorAd,
+): boolean {
+  const left =
+    normalizeText(
+      a.creatorName,
+    );
+
+  const right =
+    normalizeText(
+      b.creatorName,
+    );
+
+  return Boolean(
+    left &&
+      right &&
+      left === right,
+  );
+}
+
+/* =========================================================
+ * FAMILY SIMILARITY
+ *
+ * Important:
+ * - advertiser is strong
+ * - real product title is strong
+ * - real headline is strong
+ * - primary copy becomes important when Meta gives
+ *   a placeholder headline/product
+ * - same landing domain helps
+ * - identical placeholders do NOT create similarity
+ * ======================================================= */
 function familySimilarity(
   a: CompetitorAd,
   b: CompetitorAd,
 ): number {
   let score = 0;
 
-  /*
-   * Same advertiser is a strong signal.
-   */
-  if (
-    normalizeText(
-      a.advertiserName,
-    ) &&
-    normalizeText(
-      a.advertiserName,
-    ) ===
-      normalizeText(
-        b.advertiserName,
-      )
-  ) {
+  if (sameAdvertiser(a, b)) {
     score += 30;
   }
+
+  if (sameCreator(a, b)) {
+    score += 12;
+  }
+
+  const aProduct =
+    getMeaningfulProduct(a);
+
+  const bProduct =
+    getMeaningfulProduct(b);
+
+  const aHeadline =
+    getMeaningfulHeadline(a);
+
+  const bHeadline =
+    getMeaningfulHeadline(b);
+
+  const aPrimary =
+    getMeaningfulPrimaryText(a);
+
+  const bPrimary =
+    getMeaningfulPrimaryText(b);
 
   /*
    * Product similarity.
    */
-  const productSimilarity =
-    jaccardSimilarity(
-      a.productName,
-      b.productName,
-    );
+  if (
+    aProduct &&
+    bProduct
+  ) {
+    const similarity =
+      jaccardSimilarity(
+        aProduct,
+        bProduct,
+      );
 
-  score +=
-    productSimilarity * 30;
+    score +=
+      similarity * 30;
+  }
 
   /*
    * Headline similarity.
+   *
+   * Placeholder headlines have already been removed.
    */
-  const headlineSimilarity =
-    jaccardSimilarity(
-      a.headline,
-      b.headline,
-    );
+  if (
+    aHeadline &&
+    bHeadline
+  ) {
+    const similarity =
+      jaccardSimilarity(
+        aHeadline,
+        bHeadline,
+      );
 
-  score +=
-    headlineSimilarity * 15;
+    score +=
+      similarity * 18;
+  }
 
   /*
-   * Primary-text similarity.
+   * Primary copy similarity.
    */
-  const textSimilarity =
-    jaccardSimilarity(
-      a.primaryText,
-      b.primaryText,
-    );
+  if (
+    aPrimary &&
+    bPrimary
+  ) {
+    const similarity =
+      jaccardSimilarity(
+        aPrimary,
+        bPrimary,
+      );
 
-  score +=
-    textSimilarity * 10;
+    /*
+     * Long identical-ish body copy is a very strong
+     * family signal when product titles are unreliable.
+     */
+    score +=
+      similarity * 20;
+  }
 
   /*
    * Same offer.
@@ -250,7 +465,7 @@ function familySimilarity(
     bOffer &&
     aOffer === bOffer
   ) {
-    score += 5;
+    score += 8;
   }
 
   /*
@@ -271,23 +486,45 @@ function familySimilarity(
     bDomain &&
     aDomain === bDomain
   ) {
-    score += 5;
+    score += 8;
   }
 
   /*
-   * Same creative type provides a small signal.
+   * Same creative type is only a weak signal.
    */
   if (
     a.creativeType &&
+    b.creativeType &&
     a.creativeType ===
       b.creativeType
   ) {
-    score += 5;
+    score += 4;
+  }
+
+  /*
+   * Same CTA is a tiny supporting signal.
+   */
+  const aCta =
+    normalizeText(
+      a.callToAction,
+    );
+
+  const bCta =
+    normalizeText(
+      b.callToAction,
+    );
+
+  if (
+    aCta &&
+    bCta &&
+    aCta === bCta
+  ) {
+    score += 3;
   }
 
   return Math.min(
     100,
-    score,
+    Math.round(score),
   );
 }
 
@@ -298,9 +535,12 @@ function familySimilarity(
 function getPreferredFamilyName(
   ads: EnrichedCompetitorAd[],
 ): string {
+  /*
+   * 1. Most common meaningful product.
+   */
   const products = ads
-    .map((ad) =>
-      ad.productName?.trim(),
+    .map(
+      getMeaningfulProduct,
     )
     .filter(
       (
@@ -309,66 +549,25 @@ function getPreferredFamilyName(
         Boolean(value),
     );
 
-  if (products.length > 0) {
-    const counts =
-      new Map<
-        string,
-        number
-      >();
-
-    const displayNames =
-      new Map<
-        string,
-        string
-      >();
-
-    for (const product of products) {
-      const key =
-        normalizeText(
-          product,
-        );
-
-      counts.set(
-        key,
-        (counts.get(key) ??
-          0) + 1,
+  if (
+    products.length > 0
+  ) {
+    const common =
+      findCommonValue(
+        products,
       );
 
-      displayNames.set(
-        key,
-        product,
-      );
-    }
-
-    let bestKey: string | null =
-      null;
-
-    let bestCount = 0;
-
-    for (const [
-      key,
-      count,
-    ] of counts.entries()) {
-      if (
-        count > bestCount
-      ) {
-        bestKey = key;
-        bestCount = count;
-      }
-    }
-
-    if (bestKey) {
-      return (
-        displayNames.get(
-          bestKey,
-        ) ?? "Creative family"
-      );
+    if (common) {
+      return common;
     }
   }
 
+  /*
+   * 2. Most common meaningful headline.
+   */
   const headlines = ads
-    .map((ad) =>
-      ad.headline?.trim(),
+    .map(
+      getMeaningfulHeadline,
     )
     .filter(
       (
@@ -377,8 +576,60 @@ function getPreferredFamilyName(
         Boolean(value),
     );
 
-  if (headlines.length > 0) {
-    return headlines[0];
+  if (
+    headlines.length > 0
+  ) {
+    const common =
+      findCommonValue(
+        headlines,
+      );
+
+    if (common) {
+      return common;
+    }
+  }
+
+  /*
+   * 3. Most common primary text.
+   */
+  const primaryTexts =
+    ads
+      .map(
+        getMeaningfulPrimaryText,
+      )
+      .filter(
+        (
+          value,
+        ): value is string =>
+          Boolean(value),
+      );
+
+  if (
+    primaryTexts.length > 0
+  ) {
+    const common =
+      findCommonValue(
+        primaryTexts,
+      );
+
+    if (common) {
+      return common;
+    }
+  }
+
+  /*
+   * 4. Advertiser fallback.
+   */
+  const advertiser =
+    findCommonValue(
+      ads.map(
+        (ad) =>
+          ad.advertiserName,
+      ),
+    );
+
+  if (advertiser) {
+    return advertiser;
   }
 
   return "Creative family";
@@ -413,6 +664,10 @@ function findCommonValue(
     const key =
       normalizeText(cleaned);
 
+    if (!key) {
+      continue;
+    }
+
     const existing =
       counts.get(key);
 
@@ -433,55 +688,149 @@ function findCommonValue(
       }
     | null = null;
 
-  for (const item of counts.values()) {
+  for (
+    const item of counts.values()
+  ) {
     if (
       !best ||
-      item.count > best.count
+      item.count >
+        best.count
     ) {
       best = item;
     }
   }
 
-  return best?.display ?? null;
+  return (
+    best?.display ??
+    null
+  );
 }
 
 /* =========================================================
- * FAMILY ID
+ * FAMILY BASE SIGNATURE
+ *
+ * Stable enough for repeated observations.
  * ======================================================= */
 
-function buildFamilyId(
+function buildFamilySignature(
   ads: EnrichedCompetitorAd[],
 ): string {
   const advertiser =
     compactText(
-      ads[0]?.advertiserName ??
-        "",
+      findCommonValue(
+        ads.map(
+          (ad) =>
+            ad.advertiserName,
+        ),
+      ) ?? "",
     );
 
   const product =
     compactText(
-      getPreferredFamilyName(ads),
+      findCommonValue(
+        ads
+          .map(
+            getMeaningfulProduct,
+          ),
+      ) ?? "",
+    );
+
+  const headline =
+    compactText(
+      findCommonValue(
+        ads
+          .map(
+            getMeaningfulHeadline,
+          ),
+      ) ?? "",
+    );
+
+  const primaryText =
+    compactText(
+      findCommonValue(
+        ads
+          .map(
+            getMeaningfulPrimaryText,
+          ),
+      ) ?? "",
+    ).slice(
+      0,
+      80,
     );
 
   const domain =
     compactText(
-      getLandingDomain(
-        ads[0]?.landingPage,
+      findCommonValue(
+        ads.map((ad) =>
+          getLandingDomain(
+            ad.landingPage,
+          ),
+        ),
+      ) ?? "",
+    );
+
+  const creator =
+    compactText(
+      findCommonValue(
+        ads.map(
+          (ad) =>
+            ad.creatorName,
+        ),
       ) ?? "",
     );
 
   return [
-    "family",
     advertiser,
     product,
+    headline,
+    primaryText,
     domain,
+    creator,
   ]
     .filter(Boolean)
     .join("-");
 }
 
 /* =========================================================
- * FAMILY METRICS
+ * FAMILY ID
+ *
+ * Must be unique within the returned set.
+ * ======================================================= */
+
+function buildUniqueFamilyId(
+  signature: string,
+  usedIds: Set<string>,
+): string {
+  const base =
+    `family-${signature || "unknown"}`;
+
+  if (
+    !usedIds.has(base)
+  ) {
+    usedIds.add(base);
+    return base;
+  }
+
+  let counter = 2;
+
+  while (
+    usedIds.has(
+      `${base}-${counter}`,
+    )
+  ) {
+    counter++;
+  }
+
+  const id =
+    `${base}-${counter}`;
+
+  usedIds.add(id);
+
+  return id;
+}
+
+/* =========================================================
+ * AVERAGE
  * ======================================================= */
 
 function average(
@@ -509,6 +858,7 @@ function average(
 
 function buildCreativeFamily(
   ads: EnrichedCompetitorAd[],
+  usedIds: Set<string>,
 ): CreativeFamily {
   const imageCount =
     ads.filter(
@@ -534,7 +884,8 @@ function buildCreativeFamily(
   const commonOffer =
     findCommonValue(
       ads.map(
-        (ad) => ad.offer,
+        (ad) =>
+          ad.offer,
       ),
     );
 
@@ -563,19 +914,29 @@ function buildCreativeFamily(
       ),
     );
 
-  return {
-    id: buildFamilyId(
+  const signature =
+    buildFamilySignature(
       ads,
-    ),
+    );
+
+  return {
+    id:
+      buildUniqueFamilyId(
+        signature,
+        usedIds,
+      ),
 
     name:
       getPreferredFamilyName(
         ads,
       ),
 
-    variants: ads,
+    variants: [
+      ...ads,
+    ],
 
-    variantCount: ads.length,
+    variantCount:
+      ads.length,
 
     imageCount,
 
@@ -627,18 +988,12 @@ function buildCreativeFamily(
 }
 
 /* =========================================================
- * GROUP ADS
+ * FAMILY GROUPING
  * ======================================================= */
 
-/**
- * Group ads using deterministic similarity.
- *
- * Default threshold is intentionally conservative to
- * avoid collapsing unrelated creatives into one family.
- */
 export function groupCreativeFamilies(
   ads: EnrichedCompetitorAd[],
-  threshold = 62,
+  threshold = 58,
 ): CreativeFamily[] {
   if (
     ads.length === 0
@@ -646,19 +1001,85 @@ export function groupCreativeFamilies(
     return [];
   }
 
+  /*
+   * Process more information-rich ads first.
+   *
+   * This prevents an uninformative placeholder creative
+   * from becoming the representative for an entire family.
+   */
+  const sortedAds =
+    [...ads].sort(
+      (a, b) => {
+        const aInfo =
+          Number(
+            Boolean(
+              getMeaningfulProduct(
+                a,
+              ),
+            ),
+          ) +
+          Number(
+            Boolean(
+              getMeaningfulHeadline(
+                a,
+              ),
+            ),
+          ) +
+          Number(
+            Boolean(
+              getMeaningfulPrimaryText(
+                a,
+              ),
+            ),
+          );
+
+        const bInfo =
+          Number(
+            Boolean(
+              getMeaningfulProduct(
+                b,
+              ),
+            ),
+          ) +
+          Number(
+            Boolean(
+              getMeaningfulHeadline(
+                b,
+              ),
+            ),
+          ) +
+          Number(
+            Boolean(
+              getMeaningfulPrimaryText(
+                b,
+              ),
+            ),
+          );
+
+        return (
+          bInfo - aInfo
+        );
+      },
+    );
+
   const groups:
     EnrichedCompetitorAd[][] =
     [];
 
-  for (const ad of ads) {
+  for (
+    const ad of sortedAds
+  ) {
     let bestGroup:
-      EnrichedCompetitorAd[] | null =
+      | EnrichedCompetitorAd[]
+      | null =
       null;
 
     let bestScore =
-      0;
+      -Infinity;
 
-    for (const group of groups) {
+    for (
+      const group of groups
+    ) {
       const representative =
         group[0];
 
@@ -669,31 +1090,56 @@ export function groupCreativeFamilies(
         );
 
       if (
-        similarity >= threshold &&
-        similarity > bestScore
+        similarity >=
+          threshold &&
+        similarity >
+          bestScore
       ) {
         bestScore =
           similarity;
 
-        bestGroup = group;
+        bestGroup =
+          group;
       }
     }
 
     if (bestGroup) {
       bestGroup.push(ad);
     } else {
-      groups.push([ad]);
+      groups.push([
+        ad,
+      ]);
     }
   }
 
+  const usedIds =
+    new Set<string>();
+
   return groups
     .map(
-      buildCreativeFamily,
+      (group) =>
+        buildCreativeFamily(
+          group,
+          usedIds,
+        ),
     )
     .sort(
-      (a, b) =>
-        b.variantCount -
-        a.variantCount,
+      (a, b) => {
+        if (
+          b.variantCount !==
+          a.variantCount
+        ) {
+          return (
+            b.variantCount -
+            a.variantCount
+          );
+        }
+
+        return (
+          b.averageCreativeScore -
+          a.averageCreativeScore
+        );
+      },
     );
 }
 
