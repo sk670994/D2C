@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -588,130 +588,57 @@ function getHookPatterns(
 function familyNameForAd(
   ad: AdSpyAd
 ): string {
-  const product =
-    normalizeWhitespace(
-      ad.productName
-    );
+  const product = normalizeWhitespace(ad.productName);
+  const headline = normalizeWhitespace(ad.headline);
+  const primary = normalizeWhitespace(ad.primaryText);
+  const creator = normalizeWhitespace(ad.creatorName);
+  const offer = normalizeWhitespace(ad.offer);
 
-  const headline =
-    normalizeWhitespace(
-      ad.headline
-    );
+  const source = normalizeWhitespace(
+    `${product} ${headline} ${primary}`
+  );
 
-  const primary =
-    normalizeWhitespace(
-      ad.primaryText
-    );
-
-  const source =
-    `${product} ${headline} ${primary}`.toLowerCase();
-
-  const families: Array<{
-    label: string;
-    patterns: RegExp[];
-  }> = [
-    {
-      label: "Rosemary Haircare",
-      patterns: [
-        /\brosemary\b/i,
-        /\bmethi dana\b/i,
-        /\brosemary hair\b/i,
-      ],
-    },
-    {
-      label: "Anti-Hair Fall",
-      patterns: [
-        /hair[- ]?fall/i,
-        /\bhair fall\b/i,
-        /\bdandruff\b/i,
-        /\bscalp\b/i,
-      ],
-    },
-    {
-      label: "Lipstick / Makeup",
-      patterns: [
-        /lipstick/i,
-        /carnation nude/i,
-        /moisture matte/i,
-        /matte longstay/i,
-      ],
-    },
-    {
-      label: "Face Wash / Cleansing",
-      patterns: [
-        /face wash/i,
-        /facewash/i,
-        /cleanse/i,
-        /cleanser/i,
-        /multani mitti/i,
-        /ubtan/i,
-      ],
-    },
-    {
-      label: "Pigmentation / Blemishes",
-      patterns: [
-        /pigmentation/i,
-        /blemish/i,
-        /acne/i,
-        /dark spot/i,
-      ],
-    },
-    {
-      label: "Sunscreen / Sun Protection",
-      patterns: [
-        /sunscreen/i,
-        /spf\s*\d/i,
-        /sun protection/i,
-        /tanning/i,
-        /tan\b/i,
-      ],
-    },
-    {
-      label: "Creator / UGC",
-      patterns: [],
-    },
-  ];
-
-  for (const family of families) {
-    if (
-      family.patterns.length > 0 &&
-      family.patterns.some(
-        (pattern) =>
-          pattern.test(source)
+  /*
+   * Generic grouping only.
+   * Do not hardcode Mamaearth/Nykaa/Nike/etc.
+   * The first available meaningful product/title becomes the family.
+   */
+  if (product && !looksLikeDateText(product)) {
+    return product
+      .replace(
+        /\s*[-–|]\s*\d+(?:\.\d+)?\s*(?:ml|g|kg|gm|mg|oz|pcs?|units?|pack|packs)\b/gi,
+        ""
       )
-    ) {
-      return family.label;
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 70) || product.slice(0, 70);
+  }
+
+  if (headline && !looksLikeDateText(headline)) {
+    return headline.slice(0, 70);
+  }
+
+  const hook = getHookText(ad);
+  if (hook) {
+    const compactHook = hook
+      .replace(/https?:\/\/\S+/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (compactHook) {
+      return compactHook.slice(0, 70);
     }
   }
 
-  if (
-    ad.partnershipType ===
-      "creator" ||
-    ad.creatorName
-  ) {
-    return "Creator / UGC";
+  if (creator) {
+    return `Creator: ${creator}`.slice(0, 70);
   }
 
-  const fallback =
-    product ||
-    headline ||
-    getHookText(ad) ||
-    "Other creatives";
+  if (offer) {
+    return `Offer-led: ${offer}`.slice(0, 70);
+  }
 
-  return (
-    fallback
-      .replace(
-        /\s*-\s*\d+(?:\.\d+)?\s*(?:ml|g|kg|gm|mg|pcs?|units?)\b/gi,
-        ""
-      )
-      .replace(
-        /\s*\|\s*[^|]+$/g,
-        ""
-      )
-      .trim()
-      .slice(0, 55) ||
-    "Other creatives"
-  );
+  return source.slice(0, 70) || "Other creatives";
 }
 
 function buildCreativeFamilies(
@@ -1486,51 +1413,45 @@ export function AdSpySection({
    *
    * IMPORTANT:
    * This does NOT trigger another Meta scrape.
+   *
+   * This belongs in an effect, not inside render.
    */
-  if (
-    typeof window !==
-      "undefined" &&
-    ads.length > 0
-  ) {
-    const currentSignature =
-      JSON.stringify({
-        query:
-          query.trim(),
-        country:
-          country
-            .trim()
-            .toUpperCase() ||
-          "IN",
-        page:
-          pagination?.page ??
-          page,
-        ids: ads.map(
-          (ad) => ad.id
-        ),
-      });
-
-    const lastSignature =
-      sessionStorage.getItem(
-        "zwirkAdSpySnapshotSignature"
-      );
-
+  useEffect(() => {
     if (
-      lastSignature !==
-      currentSignature
+      typeof window === "undefined" ||
+      ads.length === 0
     ) {
+      return;
+    }
+
+    const snapshotQuery = query.trim();
+    const snapshotCountry =
+      country.trim().toUpperCase() || "IN";
+
+    const currentSignature = JSON.stringify({
+      query: snapshotQuery,
+      country: snapshotCountry,
+      page: pagination?.page ?? page,
+      ids: ads.map((ad) => ad.id),
+    });
+
+    const lastSignature = sessionStorage.getItem(
+      "zwirkAdSpySnapshotSignature"
+    );
+
+    if (lastSignature === currentSignature) {
+      return;
+    }
+
+    try {
       sessionStorage.setItem(
         "zwirkAdSpySnapshotSignature",
         currentSignature
       );
 
       publishAdSpySnapshot({
-        query:
-          query.trim(),
-        country:
-          country
-            .trim()
-            .toUpperCase() ||
-          "IN",
+        query: snapshotQuery,
+        country: snapshotCountry,
         ads,
         pagination,
         creativeFamilies,
@@ -1539,8 +1460,24 @@ export function AdSpySection({
         hookPatterns,
         recommendedExperiments,
       });
+    } catch (error) {
+      console.warn(
+        "[AdSpy] Unable to publish ZWIRK snapshot:",
+        error
+      );
     }
-  }
+  }, [
+    ads,
+    query,
+    country,
+    page,
+    pagination,
+    creativeFamilies,
+    topOffers,
+    topCreators,
+    hookPatterns,
+    recommendedExperiments,
+  ]);
 
   const familyStats =
     creativeFamilies.slice(
@@ -1605,111 +1542,92 @@ export function AdSpySection({
       </div>
 
       <div
-        className="surface"
+        className="surface adspy-search-panel"
         style={{
           padding: 16,
           borderRadius: 14,
           marginBottom: 20,
         }}
       >
-        <div
-          className="editor-grid"
-          style={{
-            alignItems: "end",
-          }}
-        >
-          <Label className="input-row">
+        <div className="adspy-search-grid">
+          <Label className="input-row adspy-platform-field">
             <span>Platform</span>
-            <select value={platform} onChange={(event) => onPlatformChange?.(event.target.value as "meta" | "google" | "linkedin")}>
-              <option value="meta">Meta (Facebook + Instagram)</option>
-              <option value="google">Google + YouTube</option>
-              <option value="linkedin">LinkedIn</option>
+            <select
+              value={platform}
+              onChange={(event) =>
+                onPlatformChange?.(
+                  event.target.value as
+                    | "meta"
+                    | "google"
+                    | "linkedin"
+                )
+              }
+              aria-label="Advertising platform"
+            >
+              <option value="meta">
+                Meta (Facebook + Instagram)
+              </option>
+              <option value="google">
+                Google + YouTube
+              </option>
+              <option value="linkedin">
+                LinkedIn
+              </option>
             </select>
           </Label>
 
-          <Label className="input-row">
-            <span>
-              Brand or keyword
-            </span>
-
+          <Label className="input-row adspy-query-field">
+            <span>Brand or keyword</span>
             <Input
               type="text"
               placeholder="e.g. Mamaearth, Nike, skincare"
               value={query}
-              onChange={(
-                event
-              ) =>
-                onQueryChange(
-                  event.target.value
-                )
+              onChange={(event) =>
+                onQueryChange(event.target.value)
               }
-              onKeyDown={(
-                event
-              ) => {
-                if (
-                  event.key ===
-                  "Enter"
-                ) {
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
                   void search(1);
                 }
               }}
+              aria-label="Brand or keyword"
             />
           </Label>
 
-          <Label className="input-row">
-            <span>
-              Country
-            </span>
-
+          <Label className="input-row adspy-country-field">
+            <span>Country</span>
             <Input
               type="text"
               value={country}
               maxLength={2}
               placeholder="IN"
-              onChange={(
-                event
-              ) =>
+              onChange={(event) =>
                 onCountryChange(
                   event.target.value
                     .toUpperCase()
-                    .replace(
-                      /[^A-Z]/g,
-                      ""
-                    )
+                    .replace(/[^A-Z]/g, "")
                     .slice(0, 2)
                 )
               }
+              aria-label="Country code"
             />
           </Label>
 
-          <div
-            className="action-row"
-            style={{
-              alignItems:
-                "end",
-            }}
-          >
+          <div className="adspy-action-row">
             <Button
               type="button"
-              onClick={() =>
-                void search(1)
-              }
+              onClick={() => void search(1)}
               disabled={loading}
             >
-              {loading
-                ? "Searching..."
-                : "Search AdSpy"}
+              {loading ? "Searching..." : "Search AdSpy"}
             </Button>
 
-            {(query ||
-              ads.length > 0) &&
-            !loading ? (
+            {(query || ads.length > 0) && !loading ? (
               <Button
                 type="button"
                 variant="secondary"
-                onClick={
-                  clearSearch
-                }
+                onClick={clearSearch}
               >
                 Clear
               </Button>
@@ -1718,38 +1636,15 @@ export function AdSpySection({
         </div>
 
         {pagination ? (
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              alignItems:
-                "center",
-              flexWrap:
-                "wrap",
-              marginTop: 14,
-            }}
-          >
+          <div className="adspy-pagination-meta">
             <Badge variant="secondary">
-              {totalResults.toLocaleString(
-                "en-IN"
-              )}{" "}
-              total
+              {totalResults.toLocaleString("en-IN")} total
             </Badge>
-
             <Badge variant="secondary">
-              Page{" "}
-              {
-                pagination.page
-              }{" "}
-              /{" "}
-              {
-                pagination.totalPages
-              }
+              Page {pagination.page} / {pagination.totalPages}
             </Badge>
-
             <Badge variant="secondary">
-              {country ||
-                "IN"}
+              {country || "IN"}
             </Badge>
           </div>
         ) : null}
@@ -2889,10 +2784,12 @@ export function AdSpySection({
                         </span>
 
                         {ad.partnershipType ===
-                          "creator" ||
-                        ad.creatorName ? (
+                            "creator" ||
+                          ad.creatorName ? (
                           <Badge variant="secondary">
-                            Creator
+                            {ad.creatorName
+                              ? `Creator: ${ad.creatorName}`
+                              : "Creator"}
                           </Badge>
                         ) : null}
                       </div>
@@ -3171,22 +3068,35 @@ export function AdSpySection({
                           )}
                       </div>
 
-                      {ad.creatorName ? (
+                      {ad.creatorName || ad.partnershipType ? (
                         <div
                           className="muted-text"
                           style={{
-                            marginTop:
-                              10,
-                            fontSize:
-                              "0.8rem",
+                            marginTop: 10,
+                            fontSize: "0.8rem",
+                            lineHeight: 1.5,
                           }}
                         >
-                          Creator:{" "}
-                          <strong>
-                            {
-                              ad.creatorName
-                            }
-                          </strong>
+                          {ad.creatorName ? (
+                            <div>
+                              Creator:{" "}
+                              <strong>
+                                {ad.creatorName}
+                              </strong>
+                            </div>
+                          ) : null}
+
+                          {ad.partnershipType &&
+                          ad.partnershipType !== "unknown" ? (
+                            <div>
+                              Partnership:{" "}
+                              <strong>
+                                {ad.partnershipType === "creator"
+                                  ? "Creator / collaboration"
+                                  : "Direct advertiser"}
+                              </strong>
+                            </div>
+                          ) : null}
                         </div>
                       ) : null}
 
