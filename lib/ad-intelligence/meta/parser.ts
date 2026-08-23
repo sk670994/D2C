@@ -1099,19 +1099,81 @@ export function extractOffer(
     return null;
   }
 
-  const patterns = [
-    /\bflat\s+\d{1,3}%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
-    /\bup\s*to\s+\d{1,3}%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
-    /\bupto\s+\d{1,3}%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
-    /\b\d{1,3}%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
-    /\b\d{1,3}%\s*discount\b/i,
+  /*
+   * Percentage offers are handled separately so we can
+   * validate the numeric value before returning it.
+   *
+   * Valid:
+   *   10% off
+   *   15% off
+   *   50% discount
+   *   up to 80% off
+   *
+   * Invalid:
+   *   315% off
+   *   150% discount
+   */
+  const percentagePatterns = [
+    /\bflat\s+(\d{1,3})%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
+
+    /\bup\s*to\s+(\d{1,3})%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
+
+    /\bupto\s+(\d{1,3})%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
+
+    /\b(\d{1,3})%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
+
+    /\b(\d{1,3})%\s*discount\b/i,
+  ];
+
+  for (
+    const pattern of percentagePatterns
+  ) {
+    const match =
+      text.match(pattern);
+
+    if (!match) {
+      continue;
+    }
+
+    const percentage =
+      Number(match[1]);
+
+    /*
+     * Reject impossible/corrupted discount values.
+     */
+    if (
+      !Number.isFinite(
+        percentage,
+      ) ||
+      percentage <= 0 ||
+      percentage > 100
+    ) {
+      continue;
+    }
+
+    return (
+      normalizeExtractedText(
+        match[0],
+      ) ?? null
+    );
+  }
+
+  /*
+   * Non-percentage offers.
+   */
+  const nonPercentagePatterns = [
     /\buse\s+code[:\s]+[A-Z0-9_-]+\b/i,
+
     /\bprice\s*drop\b/i,
+
     /\bsale\s+is\s+live\b/i,
+
     /\bfree\s+shipping\b/i,
   ];
 
-  for (const pattern of patterns) {
+  for (
+    const pattern of nonPercentagePatterns
+  ) {
     const match =
       text.match(pattern);
 
