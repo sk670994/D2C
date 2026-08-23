@@ -27,6 +27,15 @@ import type {
 type PartnershipType =
   | "direct"
   | "creator"
+  | "paid_partnership"
+  | "collaboration"
+  | "unknown";
+
+type DestinationKind =
+  | "advertiser"
+  | "tracking"
+  | "app_store"
+  | "social"
   | "unknown";
 
 type DomLinkCandidate = {
@@ -80,24 +89,15 @@ type ScrapedMetaAd = {
 const META_LIB_EN_BASE_URL =
   "https://www.facebook.com/ads/library/";
 
-/**
- * Production:
- * Set this in Vercel Environment Variables.
- *
- * IMPORTANT:
- * The Chromium pack version MUST match the installed
- * @sparticuz/chromium-min version.
- *
- * Example for chromium-min 147.0.2:
- * https://github.com/Sparticuz/chromium/releases/download/v147.0.2/chromium-v147.0.2-pack.x64.tar
- */
-const CHROMIUM_PACK_URL =
-  process.env.CHROMIUM_PACK_URL?.trim() || "";
-
 const DEFAULT_COUNTRY = "IN";
 const DEFAULT_MAX_SCROLLS = 14;
 const TARGET_LIBRARY_IDS = 80;
+
 const META_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const INITIAL_RENDER_WAIT_MS = 2500;
+const POST_SCROLL_WAIT_MS = 700;
+
 const CTA_VALUES = [
   "Shop Now",
   "Learn More",
@@ -133,8 +133,21 @@ const CTA_SET = new Set(
   ),
 );
 
+const NOISE_EXACT = new Set([
+  "Sponsored",
+  "प्रायोजित",
+  "Active",
+  "Inactive",
+  "Image",
+  "Video",
+  "Carousel",
+  "सक्रिय",
+  "निष्क्रिय",
+  "Ad Library",
+]);
+
 /* =========================================================
- * BROWSER
+ * BROWSER PATH / CHROMIUM
  * ======================================================= */
 
 function getLocalBrowserExecutable(): string {
@@ -154,30 +167,17 @@ function getLocalBrowserExecutable(): string {
   );
 
   for (const candidate of candidates) {
-    let absolutePath: string;
-
     try {
       if (/^file:\/\//i.test(candidate)) {
         console.warn(
           "[MetaProvider] Ignoring file:// browser path:",
           candidate,
         );
-
         continue;
       }
 
-      absolutePath = path.resolve(candidate);
-    } catch (error) {
-      console.warn(
-        "[MetaProvider] Invalid browser path candidate:",
-        candidate,
-        error,
-      );
+      const absolutePath = path.resolve(candidate);
 
-      continue;
-    }
-
-    try {
       if (existsSync(absolutePath)) {
         console.log(
           "[MetaProvider] Local browser executable:",
@@ -188,8 +188,8 @@ function getLocalBrowserExecutable(): string {
       }
     } catch (error) {
       console.warn(
-        "[MetaProvider] Could not inspect browser path:",
-        absolutePath,
+        "[MetaProvider] Invalid browser path candidate:",
+        candidate,
         error,
       );
     }
@@ -206,6 +206,30 @@ function getLocalBrowserExecutable(): string {
   );
 }
 
+function getChromiumPackUrl(): string {
+  const value =
+    process.env.CHROMIUM_PACK_URL?.trim();
+
+  if (!value) {
+    throw new Error(
+      [
+        "CHROMIUM_PACK_URL is missing.",
+        "",
+        "For Vercel/production using @sparticuz/chromium-min,",
+        "set CHROMIUM_PACK_URL to the hosted Chromium .tar archive.",
+      ].join("\n"),
+    );
+  }
+
+  if (!/^https?:\/\//i.test(value)) {
+    throw new Error(
+      "CHROMIUM_PACK_URL must be an HTTPS/HTTP URL.",
+    );
+  }
+
+  return value;
+}
+
 let metaBrowser: Browser | null = null;
 
 let metaBrowserPromise:
@@ -219,7 +243,7 @@ async function getMetaBrowser(): Promise<Browser> {
         return metaBrowser;
       }
     } catch {
-      // Browser is no longer usable.
+      // Continue by recreating browser.
     }
 
     metaBrowser = null;
@@ -241,54 +265,27 @@ async function getMetaBrowser(): Promise<Browser> {
         launchArgs = [
           "--disable-blink-features=AutomationControlled",
           "--disable-dev-shm-usage",
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
+          "--disable-gpu",
         ];
       } else {
-        /*
-         * @sparticuz/chromium-min does NOT bundle the
-         * Chromium Brotli files.
-         *
-         * Therefore production MUST provide either:
-         *
-         * 1. CHROMIUM_PACK_URL
-         * 2. a local Brotli directory
-         *
-         * For Vercel, use CHROMIUM_PACK_URL.
-         */
-        if (!CHROMIUM_PACK_URL) {
-          throw new Error(
-            [
-              "CHROMIUM_PACK_URL is not configured.",
-              "",
-              "Because this project uses @sparticuz/chromium-min,",
-              "production requires a remote Chromium pack URL.",
-              "",
-              "Add CHROMIUM_PACK_URL to your Vercel Environment Variables.",
-              "",
-              "Example:",
-              "https://github.com/Sparticuz/chromium/releases/download/v147.0.2/chromium-v147.0.2-pack.x64.tar",
-            ].join("\n"),
-          );
-        }
+        const packUrl =
+          getChromiumPackUrl();
 
         console.log(
           "[MetaProvider] Chromium pack URL:",
-          CHROMIUM_PACK_URL,
+          packUrl,
         );
 
         executablePath =
           await chromium.executablePath(
-            CHROMIUM_PACK_URL,
+            packUrl,
           );
 
         launchArgs = [
           ...chromium.args,
+          "--disable-dev-shm-usage",
           "--no-sandbox",
           "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-gpu",
-          "--no-zygote",
         ];
       }
 
@@ -333,6 +330,7 @@ async function getMetaBrowser(): Promise<Browser> {
 
   return metaBrowserPromise;
 }
+
 async function resetMetaBrowser(): Promise<void> {
   const browser = metaBrowser;
 
@@ -352,10 +350,6 @@ async function resetMetaBrowser(): Promise<void> {
     );
   }
 }
-
-/* =========================================================
- * SAFE CONTEXT CLOSE
- * ======================================================= */
 
 async function safeCloseContext(
   context: BrowserContext | null,
@@ -385,16 +379,17 @@ function cleanText(
     return null;
   }
 
-  const cleaned = value
-    .replace(/\u200B/g, "")
-    .replace(/\u200C/g, "")
-    .replace(/\u200D/g, "")
-    .replace(/\uFEFF/g, "")
-    .replace(/\u00A0/g, " ")
-    .replace(/\r/g, " ")
-    .replace(/\n/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const cleaned =
+    value
+      .replace(/\u200B/g, "")
+      .replace(/\u200C/g, "")
+      .replace(/\u200D/g, "")
+      .replace(/\uFEFF/g, "")
+      .replace(/\u00A0/g, " ")
+      .replace(/\r/g, " ")
+      .replace(/\n/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
 
   return cleaned.length > 0
     ? cleaned
@@ -439,7 +434,7 @@ function repairMojibake(
       return repaired;
     }
   } catch {
-    // Keep original value.
+    // Preserve original text.
   }
 
   return value;
@@ -521,30 +516,66 @@ function normalizeUrl(
   }
 
   try {
-    return new URL(unwrapped).toString();
+    return new URL(
+      unwrapped,
+    ).toString();
   } catch {
     return null;
+  }
+}
+
+function classifyDestination(
+  value: string,
+): DestinationKind {
+  try {
+    const host =
+      new URL(value)
+        .hostname
+        .toLowerCase()
+        .replace(/^www\./, "");
+
+    if (
+      host === "facebook.com" ||
+      host.endsWith(".facebook.com") ||
+      host === "instagram.com" ||
+      host.endsWith(".instagram.com")
+    ) {
+      return "social";
+    }
+
+    if (
+      host === "doubleclick.net" ||
+      host.endsWith(".doubleclick.net") ||
+      host === "googleadservices.com" ||
+      host.endsWith(".googleadservices.com") ||
+      host === "googlesyndication.com" ||
+      host.endsWith(".googlesyndication.com") ||
+      host === "l.facebook.com"
+    ) {
+      return "tracking";
+    }
+
+    if (
+      host === "play.google.com" ||
+      host === "itunes.apple.com" ||
+      host === "apps.apple.com"
+    ) {
+      return "app_store";
+    }
+
+    return "advertiser";
+  } catch {
+    return "unknown";
   }
 }
 
 function isFacebookInternalUrl(
   value: string,
 ): boolean {
-  try {
-    const url = new URL(value);
-
-    const host =
-      url.hostname.toLowerCase();
-
-    return (
-      host === "facebook.com" ||
-      host.endsWith(".facebook.com") ||
-      host === "instagram.com" ||
-      host.endsWith(".instagram.com")
-    );
-  } catch {
-    return false;
-  }
+  return (
+    classifyDestination(value) ===
+    "social"
+  );
 }
 
 function isDomain(
@@ -575,17 +606,19 @@ function parsePrice(
     return null;
   }
 
-  const match = text.match(
-    /(?:₹|INR|Rs\.?)\s*([\d,]+(?:\.\d+)?)/i,
-  );
+  const match =
+    text.match(
+      /(?:₹|INR|Rs\.?)\s*([\d,]+(?:\.\d+)?)/i,
+    );
 
   if (!match) {
     return null;
   }
 
-  const number = Number(
-    match[1].replace(/,/g, ""),
-  );
+  const number =
+    Number(
+      match[1].replace(/,/g, ""),
+    );
 
   return Number.isFinite(number)
     ? number
@@ -593,7 +626,7 @@ function parsePrice(
 }
 
 /* =========================================================
- * DATES
+ * DATE
  * ======================================================= */
 
 const MONTHS: Record<
@@ -652,11 +685,12 @@ function createValidDate(
   month: number,
   day: number,
 ): Date | null {
-  const date = new Date(
-    year,
-    month,
-    day,
-  );
+  const date =
+    new Date(
+      year,
+      month,
+      day,
+    );
 
   if (
     date.getFullYear() !== year ||
@@ -670,7 +704,10 @@ function createValidDate(
 }
 
 function parseDate(
-  value: string | null | undefined,
+  value:
+    | string
+    | null
+    | undefined,
 ): Date | null {
   const cleaned =
     normalizeExtractedText(value);
@@ -679,9 +716,10 @@ function parseDate(
     return null;
   }
 
-  let match = cleaned.match(
-    /^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/i,
-  );
+  let match =
+    cleaned.match(
+      /^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/i,
+    );
 
   if (match) {
     const month =
@@ -698,13 +736,16 @@ function parseDate(
     }
   }
 
-  match = cleaned.match(
-    /^(\d{1,2})\s+([^\d\s]+)\s+(\d{4})$/u,
-  );
+  match =
+    cleaned.match(
+      /^(\d{1,2})\s+([^\d\s]+)\s+(\d{4})$/u,
+    );
 
   if (match) {
     const month =
-      HINDI_MONTHS[match[2]];
+      HINDI_MONTHS[
+        match[2]
+      ];
 
     if (month !== undefined) {
       return createValidDate(
@@ -718,11 +759,43 @@ function parseDate(
   const native =
     new Date(cleaned);
 
-  if (!Number.isNaN(native.getTime())) {
+  if (
+    !Number.isNaN(
+      native.getTime(),
+    )
+  ) {
     return native;
   }
 
   return null;
+}
+
+function isDateOnly(
+  value: string,
+): boolean {
+  const text =
+    value.trim();
+
+  return (
+    /^\d{1,2}\s+[A-Za-z]+\s+\d{4}$/i.test(
+      text,
+    ) ||
+    /^\d{1,2}\s+[^\d\s]+\s+\d{4}$/u.test(
+      text,
+    ) ||
+    /(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i.test(
+      text,
+    ) ||
+    /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[^\d\s]+\s+\d{4})/u.test(
+      text,
+    ) ||
+    /^Started running on\s+/i.test(
+      text,
+    ) ||
+    /को\s+चलना\s+शुरू\s+हुआ/u.test(
+      text,
+    )
+  );
 }
 
 function extractDateRange(
@@ -754,7 +827,9 @@ function extractDateRange(
     }
 
     let match =
-      line.match(englishRange);
+      line.match(
+        englishRange,
+      );
 
     if (match) {
       return {
@@ -764,7 +839,9 @@ function extractDateRange(
     }
 
     match =
-      line.match(hindiRange);
+      line.match(
+        hindiRange,
+      );
 
     if (match) {
       return {
@@ -774,7 +851,9 @@ function extractDateRange(
     }
 
     match =
-      line.match(englishStarted);
+      line.match(
+        englishStarted,
+      );
 
     if (match) {
       return {
@@ -784,7 +863,9 @@ function extractDateRange(
     }
 
     match =
-      line.match(hindiStarted);
+      line.match(
+        hindiStarted,
+      );
 
     if (match) {
       return {
@@ -801,8 +882,14 @@ function extractDateRange(
 }
 
 function calculateRunningDays(
-  firstSeen: string | null | undefined,
-  lastSeen: string | null | undefined,
+  firstSeen:
+    | string
+    | null
+    | undefined,
+  lastSeen:
+    | string
+    | null
+    | undefined,
 ): number {
   const start =
     parseDate(firstSeen);
@@ -815,17 +902,19 @@ function calculateRunningDays(
     parseDate(lastSeen) ??
     new Date();
 
-  const startDay = new Date(
-    start.getFullYear(),
-    start.getMonth(),
-    start.getDate(),
-  );
+  const startDay =
+    new Date(
+      start.getFullYear(),
+      start.getMonth(),
+      start.getDate(),
+    );
 
-  const endDay = new Date(
-    end.getFullYear(),
-    end.getMonth(),
-    end.getDate(),
-  );
+  const endDay =
+    new Date(
+      end.getFullYear(),
+      end.getMonth(),
+      end.getDate(),
+    );
 
   const diff =
     endDay.getTime() -
@@ -858,7 +947,7 @@ function isCTA(
 function isLibraryIdLine(
   value: string,
 ): boolean {
-  return /^(?:Library ID|लाइब्रेरी ID):\s*\d+$/i.test(
+  return /^(?:Library ID|लाइब्रेरी ID):\s*\d+$/iu.test(
     value.trim(),
   );
 }
@@ -879,28 +968,6 @@ function isStatusLine(
   );
 }
 
-function isDateOnly(
-  value: string,
-): boolean {
-  const text =
-    value.trim();
-
-  return (
-    /^\d{1,2}\s+[A-Za-z]+\s+\d{4}$/i.test(
-      text,
-    ) ||
-    /^\d{1,2}\s+[^\d\s]+\s+\d{4}$/u.test(
-      text,
-    ) ||
-    /(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i.test(
-      text,
-    ) ||
-    /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[^\d\s]+\s+\d{4})/u.test(
-      text,
-    )
-  );
-}
-
 function isPriceLine(
   value: string,
 ): boolean {
@@ -912,9 +979,12 @@ function isPriceLine(
 function isSentenceLike(
   value: string,
 ): boolean {
+  const text =
+    value.trim();
+
   return (
-    value.length > 120 ||
-    /[.!?]\s+/.test(value)
+    text.length > 140 ||
+    /[.!?]\s+/.test(text)
   );
 }
 
@@ -931,8 +1001,12 @@ function isOfferLike(
     /\b(?:code|coupon)\s*[:\-]?\s*[A-Z0-9_-]+\b/i.test(
       value,
     ) ||
-    /\bprice\s*drop\b/i.test(value) ||
-    /\bfree\s+shipping\b/i.test(value)
+    /\bprice\s*drop\b/i.test(
+      value,
+    ) ||
+    /\bfree\s+shipping\b/i.test(
+      value,
+    )
   );
 }
 
@@ -954,7 +1028,7 @@ function looksLikePersonName(
     return true;
   }
 
-  if (
+  return (
     /^[A-Za-z0-9._-]{3,40}$/.test(
       text,
     ) &&
@@ -962,478 +1036,45 @@ function looksLikePersonName(
       text.includes("_") ||
       text.includes(".")
     )
+  );
+}
+
+function isGenericMetaText(
+  value: string,
+): boolean {
+  const text =
+    value.trim();
+
+  if (!text) {
+    return true;
+  }
+
+  if (
+    NOISE_EXACT.has(text)
   ) {
     return true;
   }
 
-  return false;
-}
-
-/* =========================================================
- * CTA
- * ======================================================= */
-
-function extractCallToAction(
-  lines: string[],
-): string | null {
-  for (const line of lines) {
-    const cleaned =
-      normalizeExtractedText(
-        line,
-      );
-
-    if (!cleaned) {
-      continue;
-    }
-
-    if (isCTA(cleaned)) {
-      return (
-        CTA_VALUES.find(
-          (cta) =>
-            cta.toLowerCase() ===
-            cleaned.toLowerCase(),
-        ) ?? cleaned
-      );
-    }
-  }
-
-  return null;
-}
-
-/* =========================================================
- * ACTIVE STATUS
- * ======================================================= */
-
-function extractActiveStatus(
-  lines: string[],
-): boolean {
-  const text = lines
-    .map(
-      (line) =>
-        normalizeExtractedText(
-          line,
-        ) ?? "",
-    )
-    .join(" ")
-    .toLowerCase();
-
-  if (
-    text.includes("inactive") ||
-    text.includes("निष्क्रिय")
-  ) {
-    return false;
-  }
-
-  /*
-   * Meta often does not expose the literal word "Active"
-   * in the rendered ad card. Visibility in Ad Library is
-   * therefore treated as active unless explicitly inactive.
-   */
-  return true;
-}
-
-/* =========================================================
- * ADVERTISER / CREATOR
- * ======================================================= */
-
-function extractAdvertiserIdentity(
-  lines: string[],
-): {
-  advertiserName: string | null;
-  creatorName: string | null;
-  partnershipType: PartnershipType;
-} {
-  const sponsoredIndex =
-    lines.findIndex((line) => {
-      const value =
-        normalizeExtractedText(
-          line,
-        );
-
-      return (
-        value?.toLowerCase() ===
-          "sponsored" ||
-        value === "प्रायोजित"
-      );
-    });
-
-  if (sponsoredIndex <= 0) {
-    return {
-      advertiserName: null,
-      creatorName: null,
-      partnershipType: "unknown",
-    };
-  }
-
-  const candidate =
-    normalizeExtractedText(
-      lines[
-        sponsoredIndex - 1
-      ],
-    );
-
-  if (!candidate) {
-    return {
-      advertiserName: null,
-      creatorName: null,
-      partnershipType: "unknown",
-    };
-  }
-
-  const creatorMatch =
-    candidate.match(
-      /^(.+?)\s+(?:के\s+साथ|with)\s+(.+)$/iu,
-    );
-
-  if (creatorMatch) {
-    return {
-      advertiserName:
-        normalizeWhitespace(
-          creatorMatch[1],
-        ),
-      creatorName:
-        normalizeWhitespace(
-          creatorMatch[2],
-        ),
-      partnershipType: "creator",
-    };
-  }
-
-  return {
-    advertiserName: candidate,
-    creatorName: null,
-    partnershipType: "direct",
-  };
-}
-
-/* =========================================================
- * PRIMARY TEXT
- * ======================================================= */
-
-function extractPrimaryText(
-  lines: string[],
-): string | null {
-  const sponsoredIndex =
-    lines.findIndex((line) => {
-      const value =
-        normalizeExtractedText(
-          line,
-        );
-
-      return (
-        value?.toLowerCase() ===
-          "sponsored" ||
-        value === "प्रायोजित"
-      );
-    });
-
-  const start =
-    sponsoredIndex >= 0
-      ? sponsoredIndex + 1
-      : 0;
-
-  const parts: string[] = [];
-
-  for (
-    let i = start;
-    i < lines.length;
-    i++
-  ) {
-    const candidate =
-      normalizeExtractedText(
-        lines[i],
-      );
-
-    if (!candidate) {
-      continue;
-    }
-
-    if (isDomain(candidate)) {
-      break;
-    }
-
-    if (isPriceLine(candidate)) {
-      continue;
-    }
-
-    if (
-      isLibraryIdLine(candidate)
-    ) {
-      continue;
-    }
-
-    if (
-      isVideoTimeLine(candidate)
-    ) {
-      continue;
-    }
-
-    if (isCTA(candidate)) {
-      continue;
-    }
-
-    if (
-      isStatusLine(candidate)
-    ) {
-      continue;
-    }
-
-    if (
-      isDateOnly(candidate)
-    ) {
-      continue;
-    }
-
-    if (
-      candidate.length >= 8 &&
-      candidate.length <= 4000
-    ) {
-      parts.push(candidate);
-    }
-
-    if (
-      parts.join(" ").length >=
-      4000
-    ) {
-      break;
-    }
-  }
-
-  if (parts.length === 0) {
-    return null;
-  }
-
-  return normalizeWhitespace(
-    parts.join(" "),
-  );
-}
-
-/* =========================================================
- * PRODUCT / HEADLINE
- *
- * Generic scoring.
- * No brand-specific hardcoding.
- * ======================================================= */
-
-function scoreProductCandidate(
-  value: string,
-  links: DomLinkCandidate[],
-  domainIndex: number,
-  index: number,
-): number {
-  let score = 0;
-
-  const text =
-    normalizeWhitespace(value);
-
-  const wordCount =
-    text
-      .split(/\s+/)
-      .filter(Boolean)
-      .length;
-
-  const positionAfterDomain =
-    domainIndex >= 0
-      ? index - domainIndex - 1
-      : 999;
-
-  if (
-    wordCount >= 2 &&
-    wordCount <= 18
-  ) {
-    score += 20;
-  }
-
-  if (
-    text.length >= 5 &&
-    text.length <= 180
-  ) {
-    score += 15;
-  }
-
-  if (
-    domainIndex >= 0 &&
-    index > domainIndex
-  ) {
-    score += 40;
-  }
-
-  if (
-    positionAfterDomain === 0
-  ) {
-    score += 15;
-  } else if (
-    positionAfterDomain === 1
-  ) {
-    score += 8;
-  }
-
-  const isLinkText =
-    links.some(
-      (link) =>
-        link.text.toLowerCase() ===
-        text.toLowerCase(),
-    );
-
-  if (isLinkText) {
-    score += 20;
-  }
-
-  if (isCTA(text)) {
-    score -= 100;
-  }
-
-  if (isDateOnly(text)) {
-    score -= 100;
-  }
-
-  if (isStatusLine(text)) {
-    score -= 100;
-  }
-
-  if (isDomain(text)) {
-    score -= 100;
-  }
-
-  if (isLibraryIdLine(text)) {
-    score -= 100;
-  }
-
-  if (isVideoTimeLine(text)) {
-    score -= 100;
-  }
-
-  if (isPriceLine(text)) {
-    score -= 100;
-  }
-
-  if (looksLikePersonName(text)) {
-    score -= 60;
-  }
-
-  if (isSentenceLike(text)) {
-    score -= 15;
-  }
-
-  if (isOfferLike(text)) {
-    score -= 30;
-  }
-
-  if (
-    /\b(?:ml|mg|gm|g|kg|oz|pack|pcs|piece|combo|kit)\b/i.test(
-      text,
-    )
-  ) {
-    score += 15;
-  }
-
-  /*
-   * Generic product-category signals.
-   * No brand names are hardcoded.
-   */
-  if (
-    /\b(?:shampoo|conditioner|serum|cream|face\s*wash|facewash|lipstick|oil|cleanser|moisturizer|sunscreen|mask|scrub|toner|gel|lotion|body\s*wash|soap|perfume|fragrance|foundation|concealer|powder)\b/i.test(
-      text,
-    )
-  ) {
-    score += 20;
-  }
-
-  return score;
-}
-
-function extractProductName(
-  lines: string[],
-  links: DomLinkCandidate[] = [],
-): string | null {
-  const normalizedLines =
-    lines
-      .map(
-        (line) =>
-          normalizeExtractedText(
-            line,
-          ),
-      )
-      .filter(
-        (
-          line,
-        ): line is string =>
-          Boolean(line),
-      );
-
-  if (
-    normalizedLines.length === 0
-  ) {
-    return null;
-  }
-
-  const domainIndex =
-    normalizedLines.findIndex(
-      isDomain,
-    );
-
-  const indexes =
-    domainIndex >= 0
-      ? Array.from(
-          {
-            length:
-              normalizedLines.length -
-              domainIndex -
-              1,
-          },
-          (_, offset) =>
-            domainIndex +
-            1 +
-            offset,
-        )
-      : Array.from(
-          {
-            length:
-              normalizedLines.length,
-          },
-          (_, index) => index,
-        );
-
-  const candidates: Array<{
-    text: string;
-    score: number;
-  }> = [];
-
-  for (const index of indexes) {
-    const candidate =
-      normalizedLines[index];
-
-    if (
-      candidate.length < 3 ||
-      candidate.length > 500
-    ) {
-      continue;
-    }
-
-    const score =
-      scoreProductCandidate(
-        candidate,
-        links,
-        domainIndex,
-        index,
-      );
-
-    if (score >= 10) {
-      candidates.push({
-        text: candidate,
-        score,
-      });
-    }
-  }
-
-  candidates.sort(
-    (a, b) =>
-      b.score - a.score,
-  );
-
   return (
-    candidates[0]?.text ??
-    null
+    isCTA(text) ||
+    isLibraryIdLine(text) ||
+    isVideoTimeLine(text) ||
+    isStatusLine(text) ||
+    isDateOnly(text) ||
+    isPriceLine(text) ||
+    isDomain(text) ||
+    /^ad library\b/i.test(
+      text,
+    ) ||
+    /^eu transparency\b/i.test(
+      text,
+    ) ||
+    /^this creative and text\b/i.test(
+      text,
+    ) ||
+    /\bads?\s+(?:use|using)\b/i.test(
+      text,
+    )
   );
 }
 
@@ -1442,7 +1083,9 @@ function extractProductName(
  * ======================================================= */
 
 function extractOffer(
-  primaryText: string | null,
+  primaryText:
+    | string
+    | null,
   lines: string[],
 ): string | null {
   const text = [
@@ -1492,8 +1135,444 @@ function extractOffer(
 }
 
 /* =========================================================
+ * ADVERTISER / CREATOR / COLLABORATION
+ * ======================================================= */
+
+function extractAdvertiserIdentity(
+  lines: string[],
+): {
+  advertiserName: string | null;
+  creatorName: string | null;
+  partnershipType: PartnershipType;
+} {
+  const sponsoredIndex =
+    lines.findIndex((line) => {
+      const value =
+        normalizeExtractedText(
+          line,
+        );
+
+      return (
+        value?.toLowerCase() ===
+          "sponsored" ||
+        value === "प्रायोजित"
+      );
+    });
+
+  const identityCandidateIndexes: number[] =
+    sponsoredIndex > 0
+      ? [
+          sponsoredIndex - 1,
+          sponsoredIndex - 2,
+          0,
+        ]
+      : [0, 1, 2];
+
+  for (const index of identityCandidateIndexes) {
+    const candidate =
+      normalizeExtractedText(
+        lines[index],
+      );
+
+    if (!candidate) {
+      continue;
+    }
+
+    if (
+      isGenericMetaText(candidate)
+    ) {
+      continue;
+    }
+
+    const creatorMatch =
+      candidate.match(
+        /^(.+?)\s+(?:के\s+साथ|with|x|×)\s+(.+)$/iu,
+      );
+
+    if (creatorMatch) {
+      return {
+        advertiserName:
+          normalizeWhitespace(
+            creatorMatch[1],
+          ),
+        creatorName:
+          normalizeWhitespace(
+            creatorMatch[2],
+          ),
+        partnershipType:
+          "collaboration",
+      };
+    }
+
+    if (
+      /paid\s+partnership/i.test(
+        candidate,
+      )
+    ) {
+      return {
+        advertiserName:
+          normalizeWhitespace(
+            candidate.replace(
+              /paid\s+partnership.*$/i,
+              "",
+            ),
+          ),
+        creatorName: null,
+        partnershipType:
+          "paid_partnership",
+      };
+    }
+
+    return {
+      advertiserName: candidate,
+      creatorName: null,
+      partnershipType: "direct",
+    };
+  }
+
+  return {
+    advertiserName: null,
+    creatorName: null,
+    partnershipType: "unknown",
+  };
+}
+
+/* =========================================================
+ * PRIMARY TEXT
+ * ======================================================= */
+
+function extractPrimaryText(
+  lines: string[],
+): string | null {
+  const sponsoredIndex =
+    lines.findIndex((line) => {
+      const value =
+        normalizeExtractedText(
+          line,
+        );
+
+      return (
+        value?.toLowerCase() ===
+          "sponsored" ||
+        value === "प्रायोजित"
+      );
+    });
+
+  const start =
+    sponsoredIndex >= 0
+      ? sponsoredIndex + 1
+      : 0;
+
+  const parts: string[] = [];
+
+  for (
+    let index = start;
+    index < lines.length;
+    index++
+  ) {
+    const candidate =
+      normalizeExtractedText(
+        lines[index],
+      );
+
+    if (!candidate) {
+      continue;
+    }
+
+    if (isDomain(candidate)) {
+      break;
+    }
+
+    if (isGenericMetaText(candidate)) {
+      continue;
+    }
+
+    if (
+      isDateOnly(candidate)
+    ) {
+      continue;
+    }
+
+    if (
+      candidate.length >= 8 &&
+      candidate.length <= 4000
+    ) {
+      parts.push(candidate);
+    }
+
+    if (
+      parts.join(" ").length >=
+      4000
+    ) {
+      break;
+    }
+  }
+
+  if (!parts.length) {
+    return null;
+  }
+
+  return normalizeWhitespace(
+    parts.join(" "),
+  );
+}
+
+/* =========================================================
+ * PRODUCT / HEADLINE
+ * ======================================================= */
+
+function scoreProductCandidate(
+  value: string,
+  links: DomLinkCandidate[],
+  domainIndex: number,
+  index: number,
+): number {
+  const text =
+    normalizeWhitespace(value);
+
+  if (
+    text.length < 3 ||
+    text.length > 500
+  ) {
+    return -999;
+  }
+
+  if (
+    isGenericMetaText(text)
+  ) {
+    return -999;
+  }
+
+  if (
+    isDateOnly(text) ||
+    isCTA(text) ||
+    isDomain(text)
+  ) {
+    return -999;
+  }
+
+  let score = 0;
+
+  const wordCount =
+    text
+      .split(/\s+/)
+      .filter(Boolean)
+      .length;
+
+  const positionAfterDomain =
+    domainIndex >= 0
+      ? index -
+        domainIndex -
+        1
+      : 999;
+
+  if (
+    wordCount >= 2 &&
+    wordCount <= 18
+  ) {
+    score += 25;
+  }
+
+  if (
+    text.length >= 5 &&
+    text.length <= 180
+  ) {
+    score += 20;
+  }
+
+  if (
+    domainIndex >= 0 &&
+    index > domainIndex
+  ) {
+    score += 35;
+  }
+
+  if (
+    positionAfterDomain === 0
+  ) {
+    score += 20;
+  } else if (
+    positionAfterDomain === 1
+  ) {
+    score += 10;
+  }
+
+  const linkText =
+    links.some(
+      (link) =>
+        link.text
+          .toLowerCase() ===
+        text.toLowerCase(),
+    );
+
+  if (linkText) {
+    score += 25;
+  }
+
+  if (
+    looksLikePersonName(text)
+  ) {
+    score -= 60;
+  }
+
+  if (
+    isSentenceLike(text)
+  ) {
+    score -= 20;
+  }
+
+  if (
+    isOfferLike(text)
+  ) {
+    score -= 35;
+  }
+
+  if (
+    /\b(?:ml|mg|gm|kg|oz|pack|pcs|piece|combo|kit)\b/i.test(
+      text,
+    )
+  ) {
+    score += 15;
+  }
+
+  if (
+    /\b(?:shampoo|conditioner|serum|cream|face\s*wash|facewash|lipstick|oil|cleanser|moisturizer|sunscreen|mask|scrub|toner|gel|lotion|body\s*wash|soap|perfume|fragrance|foundation|concealer|powder|shoes|shoe|shorts|jacket|shirt|t-shirt|leggings|training|sportswear)\b/i.test(
+      text,
+    )
+  ) {
+    score += 20;
+  }
+
+  return score;
+}
+
+function extractProductName(
+  lines: string[],
+  links: DomLinkCandidate[] = [],
+): string | null {
+  const normalizedLines =
+    lines
+      .map(
+        (line) =>
+          normalizeExtractedText(
+            line,
+          ),
+      )
+      .filter(
+        (
+          line,
+        ): line is string =>
+          Boolean(line),
+      );
+
+  if (!normalizedLines.length) {
+    return null;
+  }
+
+  const domainIndex =
+    normalizedLines.findIndex(
+      isDomain,
+    );
+
+  const indexes =
+    domainIndex >= 0
+      ? Array.from(
+          {
+            length:
+              normalizedLines.length -
+              domainIndex -
+              1,
+          },
+          (_, offset) =>
+            domainIndex +
+            1 +
+            offset,
+        )
+      : normalizedLines.map(
+          (_, index) => index,
+        );
+
+  const candidates: Array<{
+    text: string;
+    score: number;
+  }> = [];
+
+  for (const index of indexes) {
+    const candidate =
+      normalizedLines[index];
+
+    const score =
+      scoreProductCandidate(
+        candidate,
+        links,
+        domainIndex,
+        index,
+      );
+
+    if (score >= 25) {
+      candidates.push({
+        text: candidate,
+        score,
+      });
+    }
+  }
+
+  candidates.sort(
+    (a, b) =>
+      b.score - a.score,
+  );
+
+  return (
+    candidates[0]?.text ??
+    null
+  );
+}
+
+/* =========================================================
  * LANDING PAGE
  * ======================================================= */
+
+function scoreDestination(
+  url: string,
+  anchorText: string,
+): number {
+  const kind =
+    classifyDestination(url);
+
+  let score = 0;
+
+  switch (kind) {
+    case "advertiser":
+      score += 100;
+      break;
+
+    case "app_store":
+      score += 40;
+      break;
+
+    case "social":
+      score -= 100;
+      break;
+
+    case "tracking":
+      score -= 250;
+      break;
+
+    default:
+      score -= 25;
+      break;
+  }
+
+  if (
+    /\b(?:shop|buy|learn|order|get|offer|visit|discover)\b/i.test(
+      anchorText,
+    )
+  ) {
+    score += 25;
+  }
+
+  return score;
+}
 
 function extractLandingPageFromLinks(
   links: DomLinkCandidate[],
@@ -1504,10 +1583,6 @@ function extractLandingPageFromLinks(
   }> = [];
 
   for (const link of links) {
-    if (!link.href) {
-      continue;
-    }
-
     const normalized =
       normalizeUrl(link.href);
 
@@ -1515,33 +1590,12 @@ function extractLandingPageFromLinks(
       continue;
     }
 
-    let score = 0;
-
-    if (
-      isFacebookInternalUrl(
-        normalized,
-      )
-    ) {
-      score -= 100;
-    } else {
-      score += 100;
-    }
-
-    if (isCTA(link.text)) {
-      score += 20;
-    }
-
-    if (
-      /\b(?:shop|buy|learn|order|offer)\b/i.test(
-        link.text,
-      )
-    ) {
-      score += 10;
-    }
-
     candidates.push({
       url: normalized,
-      score,
+      score: scoreDestination(
+        normalized,
+        link.text,
+      ),
     });
   }
 
@@ -1550,10 +1604,17 @@ function extractLandingPageFromLinks(
       b.score - a.score,
   );
 
-  return (
-    candidates[0]?.url ??
-    null
-  );
+  const best =
+    candidates[0];
+
+  if (
+    best &&
+    best.score > 0
+  ) {
+    return best.url;
+  }
+
+  return null;
 }
 
 function extractLandingPage(
@@ -1569,18 +1630,18 @@ function extractLandingPage(
     return fromLinks;
   }
 
-  for (const line of lines) {
-    const text =
+  for (const rawLine of lines) {
+    const line =
       normalizeExtractedText(
-        line,
+        rawLine,
       );
 
-    if (!text) {
+    if (!line) {
       continue;
     }
 
     const explicit =
-      text.match(
+      line.match(
         /https?:\/\/[^\s]+/i,
       );
 
@@ -1592,16 +1653,19 @@ function extractLandingPage(
 
       if (
         normalized &&
-        !isFacebookInternalUrl(
+        classifyDestination(
           normalized,
-        )
+        ) ===
+          "advertiser"
       ) {
         return normalized;
       }
     }
 
-    if (isDomain(text)) {
-      return `https://${text.toLowerCase()}/`;
+    if (
+      isDomain(line)
+    ) {
+      return `https://${line.toLowerCase()}/`;
     }
   }
 
@@ -1609,7 +1673,7 @@ function extractLandingPage(
 }
 
 /* =========================================================
- * CREATIVE TYPE
+ * CREATIVE
  * ======================================================= */
 
 function inferCreativeType(
@@ -1629,12 +1693,6 @@ function inferCreativeType(
 
   const text =
     input.rawLines
-      .map(
-        (line) =>
-          normalizeExtractedText(
-            line,
-          ) ?? "",
-      )
       .join(" ")
       .toLowerCase();
 
@@ -1649,14 +1707,10 @@ function inferCreativeType(
   return "unknown";
 }
 
-/* =========================================================
- * CREATIVE SCORE
- * ======================================================= */
-
 function calculateCreativeScore(
   ad: ScrapedMetaAd,
 ): number {
-  let score = 40;
+  let score = 35;
 
   if (ad.primaryText) {
     score += 10;
@@ -1666,12 +1720,12 @@ function calculateCreativeScore(
     score += 10;
   }
 
-  if (ad.callToAction) {
-    score += 5;
-  }
-
   if (ad.productName) {
     score += 10;
+  }
+
+  if (ad.callToAction) {
+    score += 5;
   }
 
   if (ad.offer) {
@@ -1686,12 +1740,47 @@ function calculateCreativeScore(
     score += 5;
   }
 
+  if (ad.hasImage) {
+    score += 3;
+  }
+
+  if (ad.hasCarousel) {
+    score += 5;
+  }
+
   return Math.min(
     100,
     score,
   );
 }
+/* =========================================================
+ * CTA EXTRACTION
+ * ======================================================= */
 
+function extractCallToAction(
+  lines: string[],
+): string | null {
+  for (const line of lines) {
+    const cleaned =
+      normalizeExtractedText(line);
+
+    if (!cleaned) {
+      continue;
+    }
+
+    if (isCTA(cleaned)) {
+      return (
+        CTA_VALUES.find(
+          (cta) =>
+            cta.toLowerCase() ===
+            cleaned.toLowerCase(),
+        ) ?? cleaned
+      );
+    }
+  }
+
+  return null;
+}
 /* =========================================================
  * NORMALIZATION
  * ======================================================= */
@@ -1730,7 +1819,9 @@ function normalizeScrapedAd(
     normalizeExtractedText(
       input.primaryText,
     ) ??
-    extractPrimaryText(lines);
+    extractPrimaryText(
+      lines,
+    );
 
   const productName =
     normalizeExtractedText(
@@ -1786,18 +1877,22 @@ function normalizeScrapedAd(
       lines,
     );
 
+  const priceLine =
+    lines.find(
+      (line) =>
+        /(?:₹|INR|Rs\.?)\s*[\d,]+/i.test(
+          normalizeExtractedText(
+            line,
+          ) ?? "",
+        ),
+    ) ?? null;
+
   const productPrice =
     typeof input.productPrice ===
     "number"
       ? input.productPrice
       : parsePrice(
-          lines.find((line) =>
-            /(?:₹|INR|Rs\.?)\s*[\d,]+/i.test(
-              normalizeExtractedText(
-                line,
-              ) ?? "",
-            ),
-          ) ?? null,
+          priceLine,
         );
 
   const isActive =
@@ -1810,7 +1905,9 @@ function normalizeScrapedAd(
 
   const creativeType =
     input.creativeType ??
-    inferCreativeType(input);
+    inferCreativeType(
+      input,
+    );
 
   const runningDays =
     calculateRunningDays(
@@ -1818,19 +1915,23 @@ function normalizeScrapedAd(
       lastSeen,
     );
 
-  const normalizedInput: ScrapedMetaAd =
-    {
-      ...input,
-      advertiserName:
-        advertiser,
-      primaryText,
-      headline,
-      productName,
-      callToAction,
-      offer,
-      landingPage,
-      rawLines: lines,
-    };
+  const normalizedInput:
+    ScrapedMetaAd = {
+    ...input,
+    advertiserName:
+      advertiser,
+    creatorName,
+    partnershipType,
+    primaryText,
+    headline,
+    productName,
+    callToAction,
+    firstSeen,
+    lastSeen,
+    landingPage,
+    offer,
+    rawLines: lines,
+  };
 
   return {
     id: input.id,
@@ -1842,7 +1943,9 @@ function normalizeScrapedAd(
     advertiserId: null,
 
     ...(creatorName
-      ? { creatorName }
+      ? {
+          creatorName,
+        }
       : {}),
 
     ...(partnershipType !==
@@ -1857,13 +1960,16 @@ function normalizeScrapedAd(
     creativeType,
 
     imageUrl:
-      input.imageUrl ?? null,
+      input.imageUrl ??
+      null,
 
     videoUrl:
-      input.videoUrl ?? null,
+      input.videoUrl ??
+      null,
 
     thumbnailUrl:
-      input.thumbnailUrl ?? null,
+      input.thumbnailUrl ??
+      null,
 
     primaryText,
 
@@ -1951,19 +2057,39 @@ function normalizeScrapedAd(
 
     metadata: {
       extractionMethod:
-        "playwright-rendered-meta-library",
+        "playwright-rendered-meta-library-v2",
 
       searchQuery: query,
 
       country,
 
       rawLines: lines,
+
+      collaborationDetected:
+        partnershipType ===
+          "creator" ||
+        partnershipType ===
+          "collaboration" ||
+        partnershipType ===
+          "paid_partnership",
+
+      transcriptStatus:
+        creativeType === "video"
+          ? "pending"
+          : "not_video",
+
+      destinationKind:
+        landingPage
+          ? classifyDestination(
+              landingPage,
+            )
+          : "unknown",
     },
   };
 }
 
 /* =========================================================
- * SEARCH RELEVANCE
+ * RELEVANCE
  * ======================================================= */
 
 function normalizeQueryForMatch(
@@ -1972,7 +2098,10 @@ function normalizeQueryForMatch(
   return value
     .toLowerCase()
     .normalize("NFKC")
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(
+      /[^a-z0-9]+/g,
+      " ",
+    )
     .trim();
 }
 
@@ -1996,11 +2125,9 @@ function hostContainsQuery(
   }
 
   try {
-    const parsed =
-      new URL(url);
-
     const host =
-      parsed.hostname
+      new URL(url)
+        .hostname
         .replace(/^www\./i, "")
         .toLowerCase();
 
@@ -2009,7 +2136,9 @@ function hostContainsQuery(
 
     return (
       compactQuery.length >= 3 &&
-      host.includes(compactQuery)
+      host.includes(
+        compactQuery,
+      )
     );
   } catch {
     return false;
@@ -2030,7 +2159,8 @@ function isRelevantToAdvertiser(
       value ?? "",
     );
 
-  const q = normalize(query);
+  const q =
+    normalize(query);
 
   if (!q) {
     return false;
@@ -2102,13 +2232,14 @@ export function buildLibraryUrl(
 }
 
 /* =========================================================
- * SCRAPER
+ * BROWSER-SIDE SCRAPER
  * ======================================================= */
 
 async function scrapeMetaAdLibraryOnce(
   query: string,
   country: string,
-  maxScrolls = DEFAULT_MAX_SCROLLS,
+  maxScrolls =
+    DEFAULT_MAX_SCROLLS,
 ): Promise<ScrapedMetaAd[]> {
   const browser =
     await getMetaBrowser();
@@ -2148,11 +2279,14 @@ async function scrapeMetaAdLibraryOnce(
     );
 
     const response =
-      await page.goto(url, {
-        waitUntil:
-          "domcontentloaded",
-        timeout: 60_000,
-      });
+      await page.goto(
+        url,
+        {
+          waitUntil:
+            "domcontentloaded",
+          timeout: 60_000,
+        },
+      );
 
     console.log(
       "[MetaProvider] HTTP status:",
@@ -2169,12 +2303,8 @@ async function scrapeMetaAdLibraryOnce(
       page.url(),
     );
 
-    /*
-     * Meta may return HTTP 403 while still rendering
-     * usable Ad Library content in Chromium.
-     */
     await page.waitForTimeout(
-      2500,
+      INITIAL_RENDER_WAIT_MS,
     );
 
     /* -----------------------------------------------------
@@ -2185,9 +2315,9 @@ async function scrapeMetaAdLibraryOnce(
     let stableRounds = 0;
 
     for (
-      let i = 0;
-      i < maxScrolls;
-      i++
+      let scroll = 0;
+      scroll < maxScrolls;
+      scroll++
     ) {
       await page.mouse.wheel(
         0,
@@ -2199,46 +2329,42 @@ async function scrapeMetaAdLibraryOnce(
       );
 
       const count =
-        await page.evaluate(() => {
-          const bodyText =
-            document.body?.innerText ??
-            "";
+        await page.evaluate(
+          () => {
+            const text =
+              document.body?.innerText ??
+              "";
 
-          const matches =
-            bodyText.match(
-              /(?:Library ID|लाइब्रेरी ID):\s*\d+/gi,
-            ) ?? [];
+            const matches =
+              text.match(
+                /(?:Library ID|लाइब्रेरी ID):\s*\d+/gi,
+              ) ?? [];
 
-          /*
-           * Use the numeric IDs rather than the complete
-           * "Library ID: ..." strings.
-           */
-          const ids =
-            matches
-              .map((value) => {
-                const match =
-                  value.match(
-                    /(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i,
-                  );
-
-                return (
-                  match?.[1] ??
-                  null
+            const ids =
+              matches
+                .map(
+                  (
+                    value,
+                  ) =>
+                    value.match(
+                      /(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i,
+                    )?.[1] ??
+                    null,
+                )
+                .filter(
+                  (
+                    value,
+                  ): value is string =>
+                    value !== null,
                 );
-              })
-              .filter(
-                (
-                  value,
-                ): value is string =>
-                  value !== null,
-              );
 
-          return new Set(ids).size;
-        });
+            return new Set(ids).size;
+          },
+        );
 
       console.log(
         `[MetaProvider] Scroll ${
-          i + 1
+          scroll + 1
         }: ${count} library IDs`,
       );
 
@@ -2251,10 +2377,12 @@ async function scrapeMetaAdLibraryOnce(
         stableRounds = 0;
       }
 
-      previousCount = count;
+      previousCount =
+        count;
 
       if (
-        count >= TARGET_LIBRARY_IDS
+        count >=
+        TARGET_LIBRARY_IDS
       ) {
         console.log(
           "[MetaProvider] Target library ID count reached:",
@@ -2278,20 +2406,19 @@ async function scrapeMetaAdLibraryOnce(
     }
 
     await page.waitForTimeout(
-      700,
+      POST_SCROLL_WAIT_MS,
     );
 
     /* -----------------------------------------------------
      * EXTRACTION
      *
-     * IMPORTANT:
-     * Every helper used here must exist INSIDE page.evaluate()
-     * because evaluate executes in the browser context.
+     * Everything referenced from inside page.evaluate()
+     * is defined INSIDE page.evaluate().
      * --------------------------------------------------- */
 
     const ads =
       await page.evaluate(
-       (ctaValues: readonly string[]) => {
+        (ctaValues: readonly string[]) => {
           const CTA_SET =
             new Set(
               ctaValues.map(
@@ -2300,9 +2427,9 @@ async function scrapeMetaAdLibraryOnce(
               ),
             );
 
-          /* ---------------------------------------------
-           * BROWSER-SCOPE HELPERS
-           * ------------------------------------------- */
+          /* -----------------------------------------------
+           * TEXT HELPERS
+           * --------------------------------------------- */
 
           const normalizeText = (
             value: string,
@@ -2345,23 +2472,36 @@ async function scrapeMetaAdLibraryOnce(
           const getLibraryId = (
             text: string,
           ): string | null => {
-            const match =
+            return (
               text.match(
                 /(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i,
-              );
-
-            return (
-              match?.[1] ??
+              )?.[1] ??
               null
             );
           };
 
-          const containsLibraryId = (
-            text: string,
-          ): boolean =>
-            /(?:Library ID|लाइब्रेरी ID):\s*\d+/i.test(
-              text,
-            );
+          const countLibraryIds = (
+            element: Element,
+          ): number => {
+            const text =
+              element.textContent ??
+              "";
+
+            const ids =
+              text.match(
+                /(?:Library ID|लाइब्रेरी ID):\s*\d+/gi,
+              ) ?? [];
+
+            return new Set(
+              ids.map(
+                (value) =>
+                  value.match(
+                    /(\d+)/,
+                  )?.[1] ??
+                  "",
+              ),
+            ).size;
+          };
 
           const isDomain = (
             value: string,
@@ -2377,6 +2517,27 @@ async function scrapeMetaAdLibraryOnce(
               value
                 .trim()
                 .toLowerCase(),
+            );
+
+          const isLibraryLine = (
+            value: string,
+          ): boolean =>
+            /^(?:Library ID|लाइब्रेरी ID):\s*\d+$/iu.test(
+              value.trim(),
+            );
+
+          const isVideoTime = (
+            value: string,
+          ): boolean =>
+            /^\d+:\d{2}\s*\/\s*\d+:\d{2}$/i.test(
+              value.trim(),
+            );
+
+          const isStatus = (
+            value: string,
+          ): boolean =>
+            /^(?:Active|Inactive|Image|Video|Carousel|सक्रिय|निष्क्रिय)$/iu.test(
+              value.trim(),
             );
 
           const isDateOnly = (
@@ -2397,72 +2558,97 @@ async function scrapeMetaAdLibraryOnce(
               ) ||
               /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[^\d\s]+\s+\d{4})/u.test(
                 text,
+              ) ||
+              /^Started running on\s+/i.test(
+                text,
+              ) ||
+              /को\s+चलना\s+शुरू\s+हुआ/u.test(
+                text,
               )
             );
           };
 
-          const isStatus = (
+          const isPrice = (
             value: string,
           ): boolean =>
-            /^(?:Active|Inactive|Image|Video|Carousel|सक्रिय|निष्क्रिय)$/iu.test(
+            /^(?:₹|INR|Rs\.?)\s*[\d,]+(?:\.\d+)?$/i.test(
               value.trim(),
             );
 
-          const isVideoTime = (
+          const isPersonLike = (
+            value: string,
+          ): boolean => {
+            const text =
+              value.trim();
+
+            return (
+              /^@[A-Za-z0-9._-]+$/.test(
+                text,
+              ) ||
+              (
+                /^[A-Za-z0-9._-]{3,40}$/.test(
+                  text,
+                ) &&
+                (
+                  text.includes("_") ||
+                  text.includes(".")
+                )
+              )
+            );
+          };
+
+          const isOfferLike = (
             value: string,
           ): boolean =>
-            /^\d+:\d{2}\s*\/\s*\d+:\d{2}$/i.test(
-              value.trim(),
+            /\b\d{1,3}\s*%\s*(?:off|discount)\b/i.test(
+              value,
+            ) ||
+            /\b(?:flat|upto|up to|save)\b.*?\d{1,3}\s*%/i.test(
+              value,
+            ) ||
+            /\b(?:code|coupon)\s*[:\-]?\s*[A-Z0-9_-]+\b/i.test(
+              value,
+            ) ||
+            /\bprice\s*drop\b/i.test(
+              value,
+            ) ||
+            /\bfree\s+shipping\b/i.test(
+              value,
             );
 
-          const isLibraryLine = (
-            value: string,
-          ): boolean =>
-            /^(?:Library ID|लाइब्रेरी ID):\s*\d+$/i.test(
-              value.trim(),
-            );
-
-          /*
-           * IMPORTANT:
-           * This helper is duplicated inside evaluate on purpose.
-           * The page context cannot access Node.js functions.
-           */
-          const looksLikePersonName = (
+          const isNoise = (
             value: string,
           ): boolean => {
             const text =
               value.trim();
 
             if (!text) {
-              return false;
-            }
-
-            if (
-              /^@[A-Za-z0-9._-]+$/.test(
-                text,
-              )
-            ) {
               return true;
             }
 
-            if (
-              /^[A-Za-z0-9._-]{3,40}$/.test(
+            return (
+              isCTA(text) ||
+              isDomain(text) ||
+              isLibraryLine(text) ||
+              isVideoTime(text) ||
+              isStatus(text) ||
+              isDateOnly(text) ||
+              isPrice(text) ||
+              /^ad library\b/i.test(
                 text,
-              ) &&
-              (
-                text.includes("_") ||
-                text.includes(".")
+              ) ||
+              /^eu transparency\b/i.test(
+                text,
+              ) ||
+              /^this creative and text\b/i.test(
+                text,
+              ) ||
+              /\bads?\s+(?:use|using)\b/i.test(
+                text,
               )
-            ) {
-              return true;
-            }
-
-            return false;
+            );
           };
 
-          /*
-           * Same reason: this must be available inside evaluate.
-           */
           const extractPlatformNames = (
             text: string,
           ): string[] => {
@@ -2488,30 +2674,31 @@ async function scrapeMetaAdLibraryOnce(
           const detectHasCarousel = (
             card: Element,
           ): boolean => {
-            const selectors = [
-              '[aria-label*="carousel" i]',
-              '[data-testid*="carousel" i]',
-              '[role="group"][aria-roledescription="carousel"]',
-            ];
-
             return Boolean(
               card.querySelector(
-                selectors.join(","),
+                [
+                  '[aria-label*="carousel" i]',
+                  '[data-testid*="carousel" i]',
+                  '[role="group"][aria-roledescription="carousel"]',
+                ].join(","),
               ),
             );
           };
 
-          const isFacebookInternalUrl = (
+          const classifyDestination = (
             href: string,
-          ): boolean => {
+          ): DestinationKind => {
             try {
-              const url =
-                new URL(href);
-
               const host =
-                url.hostname.toLowerCase();
+                new URL(href)
+                  .hostname
+                  .toLowerCase()
+                  .replace(
+                    /^www\./,
+                    "",
+                  );
 
-              return (
+              if (
                 host ===
                   "facebook.com" ||
                 host.endsWith(
@@ -2522,15 +2709,102 @@ async function scrapeMetaAdLibraryOnce(
                 host.endsWith(
                   ".instagram.com",
                 )
-              );
+              ) {
+                return "social";
+              }
+
+              if (
+                host ===
+                  "doubleclick.net" ||
+                host.endsWith(
+                  ".doubleclick.net",
+                ) ||
+                host ===
+                  "googleadservices.com" ||
+                host.endsWith(
+                  ".googleadservices.com",
+                ) ||
+                host ===
+                  "googlesyndication.com" ||
+                host.endsWith(
+                  ".googlesyndication.com",
+                ) ||
+                host ===
+                  "l.facebook.com"
+              ) {
+                return "tracking";
+              }
+
+              if (
+                host ===
+                  "play.google.com" ||
+                host ===
+                  "itunes.apple.com" ||
+                host ===
+                  "apps.apple.com"
+              ) {
+                return "app_store";
+              }
+
+              return "advertiser";
             } catch {
-              return false;
+              return "unknown";
             }
           };
 
-          /* ---------------------------------------------
-           * FIND CARD CONTAINERS
-           * ------------------------------------------- */
+          const scoreDestination = (
+            href: string,
+            text: string,
+          ): number => {
+            const kind =
+              classifyDestination(
+                href,
+              );
+
+            let score = 0;
+
+            if (
+              kind ===
+              "advertiser"
+            ) {
+              score += 100;
+            }
+
+            if (
+              kind ===
+              "app_store"
+            ) {
+              score += 40;
+            }
+
+            if (
+              kind ===
+              "social"
+            ) {
+              score -= 100;
+            }
+
+            if (
+              kind ===
+              "tracking"
+            ) {
+              score -= 250;
+            }
+
+            if (
+              /\b(?:shop|buy|learn|order|get|offer|visit|discover)\b/i.test(
+                text,
+              )
+            ) {
+              score += 25;
+            }
+
+            return score;
+          };
+
+          /* -----------------------------------------------
+           * FIND CARD BOUNDARIES
+           * --------------------------------------------- */
 
           const candidateCards =
             new Map<
@@ -2544,22 +2818,20 @@ async function scrapeMetaAdLibraryOnce(
               NodeFilter.SHOW_TEXT,
             );
 
-          let currentNode =
+          let node =
             walker.nextNode();
 
-          while (currentNode) {
-            const rawText =
-              currentNode.textContent ??
+          while (node) {
+            const raw =
+              node.textContent ??
               "";
 
-            if (
-              rawText &&
-              containsLibraryId(
-                rawText,
-              )
-            ) {
+            const libraryId =
+              getLibraryId(raw);
+
+            if (libraryId) {
               let current =
-                currentNode.parentElement;
+                node.parentElement;
 
               let best:
                 | Element
@@ -2567,7 +2839,7 @@ async function scrapeMetaAdLibraryOnce(
 
               for (
                 let depth = 0;
-                depth < 12 &&
+                depth < 14 &&
                 current;
                 depth++
               ) {
@@ -2575,16 +2847,25 @@ async function scrapeMetaAdLibraryOnce(
                   current.textContent?.trim() ??
                   "";
 
+                const idCount =
+                  countLibraryIds(
+                    current,
+                  );
+
                 if (
+                  idCount === 1 &&
                   text.length >=
-                    100 &&
+                    80 &&
                   text.length <=
-                    30_000 &&
-                  containsLibraryId(
-                    text,
-                  )
+                    25_000
                 ) {
                   best = current;
+                }
+
+                if (
+                  idCount > 1
+                ) {
+                  break;
                 }
 
                 current =
@@ -2592,164 +2873,133 @@ async function scrapeMetaAdLibraryOnce(
               }
 
               if (best) {
-                const libraryId =
+                const id =
                   getLibraryId(
                     best.textContent ??
                       "",
                   );
 
                 if (
-                  libraryId &&
-                  !candidateCards.has(
-                    libraryId,
-                  )
+                  id &&
+                  !candidateCards.has(id)
                 ) {
                   candidateCards.set(
-                    libraryId,
+                    id,
                     best,
                   );
                 }
               }
             }
 
-            currentNode =
+            node =
               walker.nextNode();
           }
 
-          /* ---------------------------------------------
-           * FALLBACK CARD DETECTION
-           * ------------------------------------------- */
+          /* -----------------------------------------------
+           * FALLBACK
+           * --------------------------------------------- */
 
           if (
             candidateCards.size ===
             0
           ) {
-            const possibleContainers =
+            const elements =
               Array.from(
                 document.querySelectorAll(
                   [
-                    '[data-testid]',
                     '[role="article"]',
                     "article",
+                    '[data-testid*="ad" i]',
+                    '[data-testid*="card" i]',
                   ].join(","),
                 ),
               );
 
-            for (const element of possibleContainers) {
+            for (const element of elements) {
               const text =
                 element.textContent?.trim() ??
                 "";
 
-              if (
-                text.length >=
-                  100 &&
-                text.length <=
-                  30_000 &&
-                containsLibraryId(
+              const id =
+                getLibraryId(
                   text,
-                )
-              ) {
-                const libraryId =
-                  getLibraryId(text);
+                );
 
-                if (
-                  libraryId &&
-                  !candidateCards.has(
-                    libraryId,
-                  )
-                ) {
-                  candidateCards.set(
-                    libraryId,
-                    element,
-                  );
-                }
+              if (
+                !id ||
+                text.length < 80
+              ) {
+                continue;
               }
+
+              candidateCards.set(
+                id,
+                element,
+              );
             }
           }
 
-          /* ---------------------------------------------
-           * EXTRACT ADS
-           * ------------------------------------------- */
-
-          const seen =
-            new Set<string>();
+          /* -----------------------------------------------
+           * EXTRACT
+           * --------------------------------------------- */
 
           const results:
             Array<{
               id: string;
-
               advertiserName:
                 | string
                 | null;
-
               creatorName:
                 | string
                 | null;
-
               partnershipType:
                 PartnershipType;
-
               primaryText:
                 | string
                 | null;
-
               headline:
                 | string
                 | null;
-
               productName:
                 | string
                 | null;
-
               callToAction:
                 | string
                 | null;
-
               firstSeen:
                 | string
                 | null;
-
               lastSeen:
                 | string
                 | null;
-
               landingPage:
                 | string
                 | null;
-
               isActive: boolean;
-
               publisherPlatforms:
                 string[];
-
               hasVideo: boolean;
-
               hasImage: boolean;
-
               hasCarousel: boolean;
-
               videoUrl:
                 | string
                 | null;
-
               imageUrl:
                 | string
                 | null;
-
               thumbnailUrl:
                 | string
                 | null;
-
               videoDurationSeconds:
                 | number
                 | null;
-
               rawLines: string[];
             }> = [];
 
-          for (const card of Array.from(
-            candidateCards.values(),
-          )) {
+          const seen =
+            new Set<string>();
+
+          for (const card of candidateCards.values()) {
             const rawText =
               card.textContent?.trim() ??
               "";
@@ -2759,11 +3009,8 @@ async function scrapeMetaAdLibraryOnce(
                 rawText,
               );
 
-            if (!id) {
-              continue;
-            }
-
             if (
+              !id ||
               seen.has(id)
             ) {
               continue;
@@ -2771,11 +3018,10 @@ async function scrapeMetaAdLibraryOnce(
 
             seen.add(id);
 
-            const htmlCard =
-              card as HTMLElement;
-
             const rawLines =
-              htmlCard.innerText
+              (
+                card as HTMLElement
+              ).innerText
                 .split(/\r?\n/)
                 .map(
                   normalizeText,
@@ -2783,7 +3029,7 @@ async function scrapeMetaAdLibraryOnce(
                 .filter(Boolean);
 
             /* -------------------------------------------
-             * ADVERTISER
+             * ADVERTISER / CREATOR
              * ----------------------------------------- */
 
             const sponsoredIndex =
@@ -2795,15 +3041,9 @@ async function scrapeMetaAdLibraryOnce(
                     "प्रायोजित",
               );
 
-            const advertiserLine =
-              sponsoredIndex > 0
-                ? rawLines[
-                    sponsoredIndex - 1
-                  ] ?? null
-                : null;
-
-            let advertiserName =
-              advertiserLine;
+            let advertiserName:
+              | string
+              | null = null;
 
             let creatorName:
               | string
@@ -2811,14 +3051,34 @@ async function scrapeMetaAdLibraryOnce(
 
             let partnershipType:
               PartnershipType =
-              "direct";
+              "unknown";
 
-            if (
-              advertiserLine
-            ) {
+            const identityIndexes =
+              sponsoredIndex > 0
+                ? [
+                    sponsoredIndex - 1,
+                    sponsoredIndex - 2,
+                    0,
+                  ]
+                : [0, 1, 2];
+
+            for (const index of identityIndexes) {
+              const candidate =
+                normalizeText(
+                  rawLines[index] ??
+                    "",
+                );
+
+              if (
+                !candidate ||
+                isNoise(candidate)
+              ) {
+                continue;
+              }
+
               const creatorMatch =
-                advertiserLine.match(
-                  /^(.+?)\s+(?:के\s+साथ|with)\s+(.+)$/iu,
+                candidate.match(
+                  /^(.+?)\s+(?:के\s+साथ|with|x|×)\s+(.+)$/iu,
                 );
 
               if (
@@ -2831,15 +3091,35 @@ async function scrapeMetaAdLibraryOnce(
                   creatorMatch[2].trim();
 
                 partnershipType =
-                  "creator";
-              }
-            }
+                  "collaboration";
 
-            if (
-              !advertiserName
-            ) {
+                break;
+              }
+
+              if (
+                /paid\s+partnership/i.test(
+                  candidate,
+                )
+              ) {
+                advertiserName =
+                  candidate.replace(
+                    /paid\s+partnership.*$/i,
+                    "",
+                  ).trim();
+
+                partnershipType =
+                  "paid_partnership";
+
+                break;
+              }
+
+              advertiserName =
+                candidate;
+
               partnershipType =
-                "unknown";
+                "direct";
+
+              break;
             }
 
             /* -------------------------------------------
@@ -2851,16 +3131,21 @@ async function scrapeMetaAdLibraryOnce(
                 ? sponsoredIndex + 1
                 : 0;
 
-            const primaryParts: string[] =
-              [];
+            const primaryParts:
+              string[] = [];
 
             for (
-              let i = startIndex;
-              i < rawLines.length;
-              i++
+              let index = startIndex;
+              index <
+              rawLines.length;
+              index++
             ) {
               const line =
-                rawLines[i];
+                rawLines[index];
+
+              if (!line) {
+                continue;
+              }
 
               if (
                 isDomain(line)
@@ -2869,46 +3154,15 @@ async function scrapeMetaAdLibraryOnce(
               }
 
               if (
-                /^(?:₹|INR|Rs\.?)\s*[\d,]+/i.test(
-                  line,
-                )
-              ) {
-                continue;
-              }
-
-              if (
-                isLibraryLine(line)
-              ) {
-                continue;
-              }
-
-              if (
-                isVideoTime(line)
-              ) {
-                continue;
-              }
-
-              if (
-                isCTA(line)
-              ) {
-                continue;
-              }
-
-              if (
-                isStatus(line)
-              ) {
-                continue;
-              }
-
-              if (
-                isDateOnly(line)
+                isNoise(line)
               ) {
                 continue;
               }
 
               if (
                 line.length >= 8 &&
-                line.length <= 4000
+                line.length <=
+                  4000
               ) {
                 primaryParts.push(
                   line,
@@ -2918,15 +3172,14 @@ async function scrapeMetaAdLibraryOnce(
               if (
                 primaryParts
                   .join(" ")
-                  .length >=
-                4000
+                  .length >= 4000
               ) {
                 break;
               }
             }
 
             const primaryText =
-              primaryParts.length > 0
+              primaryParts.length
                 ? primaryParts.join(
                     " ",
                   )
@@ -2936,49 +3189,49 @@ async function scrapeMetaAdLibraryOnce(
              * LINKS
              * ----------------------------------------- */
 
-            const links: DomLinkCandidate[] =
+            const links =
               Array.from(
                 card.querySelectorAll(
                   "a[href]",
                 ),
               )
-                .map((anchor) => {
-                  const href =
-                    anchor.getAttribute(
-                      "href",
-                    );
+                .map(
+                  (
+                    anchor,
+                  ) => {
+                    const href =
+                      anchor.getAttribute(
+                        "href",
+                      );
 
-                  if (!href) {
-                    return null;
-                  }
+                    if (
+                      !href ||
+                      href.startsWith(
+                        "javascript:",
+                      )
+                    ) {
+                      return null;
+                    }
 
-                  if (
-                    href.startsWith(
-                      "javascript:",
-                    )
-                  ) {
-                    return null;
-                  }
+                    try {
+                      return {
+                        href:
+                          new URL(
+                            href,
+                            window.location.href,
+                          ).toString(),
 
-                  try {
-                    const absoluteUrl =
-                      new URL(
-                        href,
-                        window.location.href,
-                      ).toString();
-
-                    return {
-                      href: absoluteUrl,
-                      text:
-                        normalizeText(
-                          anchor.textContent ??
-                            "",
-                        ),
-                    };
-                  } catch {
-                    return null;
-                  }
-                })
+                        text:
+                          normalizeText(
+                            anchor.textContent ??
+                              "",
+                          ),
+                      };
+                    } catch {
+                      return null;
+                    }
+                  },
+                )
                 .filter(
                   (
                     value,
@@ -3004,24 +3257,26 @@ async function scrapeMetaAdLibraryOnce(
                         domainIndex -
                         1,
                     },
-                    (_, offset) =>
+                    (
+                      _,
+                      offset,
+                    ) =>
                       domainIndex +
                       1 +
                       offset,
                   )
-                : Array.from(
-                    {
-                      length:
-                        rawLines.length,
-                    },
-                    (_, index) =>
+                : rawLines.map(
+                    (
+                      _,
                       index,
+                    ) => index,
                   );
 
-            const productCandidates: Array<{
-              text: string;
-              score: number;
-            }> = [];
+            const productCandidates:
+              Array<{
+                text: string;
+                score: number;
+              }> = [];
 
             for (const index of candidateIndexes) {
               const line =
@@ -3035,20 +3290,23 @@ async function scrapeMetaAdLibraryOnce(
                 continue;
               }
 
+              if (
+                isNoise(line)
+              ) {
+                continue;
+              }
+
               let score = 0;
 
               const wordCount =
                 line
-                  .split(/\s+/)
-                  .filter(Boolean)
+                  .split(
+                    /\s+/,
+                  )
+                  .filter(
+                    Boolean,
+                  )
                   .length;
-
-              const linkText =
-                links.some(
-                  (link) =>
-                    link.text.toLowerCase() ===
-                    line.toLowerCase(),
-                );
 
               const positionAfterDomain =
                 domainIndex >= 0
@@ -3061,115 +3319,69 @@ async function scrapeMetaAdLibraryOnce(
                 wordCount >= 2 &&
                 wordCount <= 18
               ) {
-                score += 20;
+                score += 25;
               }
 
               if (
                 line.length >= 5 &&
                 line.length <= 180
               ) {
-                score += 15;
+                score += 20;
               }
 
               if (
                 domainIndex >= 0 &&
                 index > domainIndex
               ) {
-                score += 40;
-              }
-
-              if (linkText) {
-                score += 20;
+                score += 35;
               }
 
               if (
                 positionAfterDomain ===
                 0
               ) {
-                score += 15;
+                score += 20;
               } else if (
                 positionAfterDomain ===
                 1
               ) {
-                score += 8;
-              }
-
-              if (isCTA(line)) {
-                score -= 100;
+                score += 10;
               }
 
               if (
-                isDateOnly(line)
-              ) {
-                score -= 100;
-              }
-
-              if (
-                isStatus(line)
-              ) {
-                score -= 100;
-              }
-
-              if (
-                isDomain(line)
-              ) {
-                score -= 100;
-              }
-
-              if (
-                isLibraryLine(line)
-              ) {
-                score -= 100;
-              }
-
-              if (
-                isVideoTime(line)
-              ) {
-                score -= 100;
-              }
-
-              if (
-                /^(?:₹|INR|Rs\.?)\s*[\d,]+/i.test(
-                  line,
+                links.some(
+                  (link) =>
+                    link.text
+                      .toLowerCase() ===
+                    line.toLowerCase(),
                 )
               ) {
-                score -= 100;
+                score += 25;
               }
 
-              /*
-               * FIX:
-               * This function now exists inside page.evaluate().
-               */
               if (
-                looksLikePersonName(
-                  line,
-                )
+                isPersonLike(line)
               ) {
                 score -= 60;
               }
 
               if (
-                line.length > 120 ||
+                isOfferLike(line)
+              ) {
+                score -= 35;
+              }
+
+              if (
+                line.length > 140 ||
                 /[.!?]\s+/.test(
                   line,
                 )
               ) {
-                score -= 15;
+                score -= 20;
               }
 
               if (
-                /\b\d{1,3}\s*%\s*(?:off|discount)\b/i.test(
-                  line,
-                ) ||
-                /\b(?:price\s*drop|free\s+shipping)\b/i.test(
-                  line,
-                )
-              ) {
-                score -= 30;
-              }
-
-              if (
-                /\b(?:ml|mg|gm|g|kg|oz|pack|pcs|piece|combo|kit)\b/i.test(
+                /\b(?:ml|mg|gm|kg|oz|pack|pcs|piece|combo|kit)\b/i.test(
                   line,
                 )
               ) {
@@ -3177,14 +3389,16 @@ async function scrapeMetaAdLibraryOnce(
               }
 
               if (
-                /\b(?:shampoo|conditioner|serum|cream|face\s*wash|facewash|lipstick|oil|cleanser|moisturizer|sunscreen|mask|scrub|toner|gel|lotion|body\s*wash|soap|perfume|fragrance|foundation|concealer|powder)\b/i.test(
+                /\b(?:shampoo|conditioner|serum|cream|face\s*wash|facewash|lipstick|oil|cleanser|moisturizer|sunscreen|mask|scrub|toner|gel|lotion|body\s*wash|soap|perfume|fragrance|foundation|concealer|powder|shoes|shoe|shorts|jacket|shirt|t-shirt|leggings|training|sportswear)\b/i.test(
                   line,
                 )
               ) {
                 score += 20;
               }
 
-              if (score >= 10) {
+              if (
+                score >= 25
+              ) {
                 productCandidates.push(
                   {
                     text: line,
@@ -3203,6 +3417,9 @@ async function scrapeMetaAdLibraryOnce(
               productCandidates[0]
                 ?.text ??
               null;
+
+            const headline =
+              productName;
 
             /* -------------------------------------------
              * CTA
@@ -3293,55 +3510,32 @@ async function scrapeMetaAdLibraryOnce(
              * LANDING PAGE
              * ----------------------------------------- */
 
-            let landingPage:
-              | string
-              | null = null;
-
-            const scoredLinks =
+            const destinationCandidates =
               links
-                .map((link) => {
-                  try {
-                    const url =
-                      new URL(
-                        link.href,
-                        window.location.href,
-                      );
+                .map(
+                  (
+                    link,
+                  ) => {
+                    try {
+                      const url =
+                        new URL(
+                          link.href,
+                          window.location.href,
+                        ).toString();
 
-                    const isInternal =
-                      isFacebookInternalUrl(
-                        url.toString(),
-                      );
-
-                    let score =
-                      isInternal
-                        ? -100
-                        : 100;
-
-                    if (
-                      CTA_SET.has(
-                        link.text
-                          .toLowerCase(),
-                      )
-                    ) {
-                      score += 20;
+                      return {
+                        url,
+                        score:
+                          scoreDestination(
+                            url,
+                            link.text,
+                          ),
+                      };
+                    } catch {
+                      return null;
                     }
-
-                    if (
-                      /\b(?:shop|buy|learn|order|offer)\b/i.test(
-                        link.text,
-                      )
-                    ) {
-                      score += 10;
-                    }
-
-                    return {
-                      url: url.toString(),
-                      score,
-                    };
-                  } catch {
-                    return null;
-                  }
-                })
+                  },
+                )
                 .filter(
                   (
                     value,
@@ -3357,13 +3551,19 @@ async function scrapeMetaAdLibraryOnce(
                     a.score,
                 );
 
+            let landingPage:
+              | string
+              | null = null;
+
+            const bestDestination =
+              destinationCandidates[0];
+
             if (
-              scoredLinks.length > 0 &&
-              scoredLinks[0].score >
-                0
+              bestDestination &&
+              bestDestination.score > 0
             ) {
               landingPage =
-                scoredLinks[0].url;
+                bestDestination.url;
             }
 
             if (!landingPage) {
@@ -3380,17 +3580,16 @@ async function scrapeMetaAdLibraryOnce(
                         explicit[0],
                       );
 
-                    const host =
-                      url.hostname
-                        .toLowerCase();
+                    const kind =
+                      classifyDestination(
+                        url.toString(),
+                      );
 
                     if (
-                      !host.includes(
-                        "facebook.com",
-                      ) &&
-                      !host.includes(
-                        "instagram.com",
-                      )
+                      kind ===
+                        "advertiser" ||
+                      kind ===
+                        "app_store"
                     ) {
                       landingPage =
                         url.toString();
@@ -3492,7 +3691,7 @@ async function scrapeMetaAdLibraryOnce(
             }
 
             /* -------------------------------------------
-             * STATUS / PLATFORMS
+             * STATUS
              * ----------------------------------------- */
 
             const joinedText =
@@ -3500,10 +3699,6 @@ async function scrapeMetaAdLibraryOnce(
                 .join(" ")
                 .toLowerCase();
 
-            /*
-             * Meta may omit an explicit "Active" label.
-             * Only explicit "inactive" should make it false.
-             */
             const isActive =
               !joinedText.includes(
                 "inactive",
@@ -3512,17 +3707,13 @@ async function scrapeMetaAdLibraryOnce(
                 "निष्क्रिय",
               );
 
-            /*
-             * FIX:
-             * This helper also exists inside evaluate.
-             */
             const publisherPlatforms =
               extractPlatformNames(
                 joinedText,
               );
 
             /* -------------------------------------------
-             * PUSH RESULT
+             * SAVE
              * ----------------------------------------- */
 
             results.push({
@@ -3536,8 +3727,7 @@ async function scrapeMetaAdLibraryOnce(
 
               primaryText,
 
-              headline:
-                productName,
+              headline,
 
               productName,
 
@@ -3590,13 +3780,14 @@ async function scrapeMetaAdLibraryOnce(
 }
 
 /* =========================================================
- * SCRAPER WITH RETRY
+ * RETRY
  * ======================================================= */
 
 async function scrapeMetaAdLibrary(
   query: string,
   country: string,
-  maxScrolls = DEFAULT_MAX_SCROLLS,
+  maxScrolls =
+    DEFAULT_MAX_SCROLLS,
 ): Promise<ScrapedMetaAd[]> {
   const maxAttempts = 3;
 
@@ -3633,7 +3824,9 @@ async function scrapeMetaAdLibrary(
         `[MetaProvider] Attempt ${attempt} failed`,
       );
 
-      if (error instanceof Error) {
+      if (
+        error instanceof Error
+      ) {
         console.error(
           "name:",
           error.name,
@@ -3646,8 +3839,9 @@ async function scrapeMetaAdLibrary(
 
         console.error(
           "code:",
-          (error as NodeJS.ErrnoException)
-            .code,
+          (
+            error as NodeJS.ErrnoException
+          ).code,
         );
 
         console.error(
@@ -3670,10 +3864,6 @@ async function scrapeMetaAdLibrary(
     if (
       attempt < maxAttempts
     ) {
-      console.log(
-        "[MetaProvider] Resetting Chromium before retry...",
-      );
-
       await resetMetaBrowser();
 
       await new Promise<void>(
@@ -3720,12 +3910,13 @@ export async function scrapeMetaAdLibraryForTest(
       normalizedCountry,
     );
 
-  return scraped.map((ad) =>
-    normalizeScrapedAd(
-      ad,
-      normalizedQuery,
-      normalizedCountry,
-    ),
+  return scraped.map(
+    (ad) =>
+      normalizeScrapedAd(
+        ad,
+        normalizedQuery,
+        normalizedCountry,
+      ),
   );
 }
 
@@ -3765,7 +3956,9 @@ function getCachedMetaAds(
   key: string,
 ): CompetitorAd[] | null {
   const cached =
-    metaProviderCache.get(key);
+    metaProviderCache.get(
+      key,
+    );
 
   if (!cached) {
     return null;
@@ -3792,14 +3985,24 @@ function setCachedMetaAds(
   key: string,
   ads: CompetitorAd[],
 ): void {
-  metaProviderCache.set(key, {
-    ads,
-    createdAt: Date.now(),
-  });
+  if (!ads.length) {
+    return;
+  }
+
+  metaProviderCache.set(
+    key,
+    {
+      ads,
+      createdAt: Date.now(),
+    },
+  );
 }
 
 /* =========================================================
  * DEDUPLICATION
+ *
+ * Keep separate Library IDs.
+ * Only collapse true duplicate cards.
  * ======================================================= */
 
 function normalizeFingerprintPart(
@@ -3823,29 +4026,47 @@ function buildCreativeFingerprint(
     normalizeFingerprintPart(
       ad.advertiserName,
     ),
-
     normalizeFingerprintPart(
       ad.headline,
     ),
-
-    normalizeFingerprintPart(
-      ad.productName,
-    ),
-
     normalizeFingerprintPart(
       ad.primaryText,
     ),
-
     normalizeFingerprintPart(
       ad.callToAction,
     ),
-
     normalizeFingerprintPart(
       ad.landingPage,
     ),
-
-    ad.creativeType ?? "",
+    ad.creativeType ??
+      "",
+    normalizeFingerprintPart(
+      ad.imageUrl,
+    ),
+    normalizeFingerprintPart(
+      ad.videoUrl,
+    ),
   ].join("|");
+}
+
+function chooseBetterDuplicate(
+  a: CompetitorAd,
+  b: CompetitorAd,
+): CompetitorAd {
+  const score = (
+    ad: CompetitorAd,
+  ) =>
+    (ad.creativeScore ?? 0) +
+    (ad.runningDays ?? 0) *
+      0.1 +
+    (ad.imageUrl ? 2 : 0) +
+    (ad.videoUrl ? 4 : 0) +
+    (ad.landingPage ? 2 : 0) +
+    (ad.primaryText ? 2 : 0);
+
+  return score(b) > score(a)
+    ? b
+    : a;
 }
 
 /* =========================================================
@@ -3927,51 +4148,43 @@ export const metaProvider: AdProvider =
         scraped.length,
       );
 
-      console.log(
-        "[MetaProvider] Sample advertisers:",
-        scraped
-          .slice(0, 10)
-          .map((ad) => ({
-            id: ad.id,
-            advertiserName:
-              ad.advertiserName,
-            creatorName:
-              ad.creatorName,
-            headline:
-              ad.headline,
-            productName:
-              ad.productName,
-          })),
-      );
-
       /* -----------------------------------------------
        * NORMALIZE
        * --------------------------------------------- */
 
       let ads =
-        scraped.map((ad) =>
-          normalizeScrapedAd(
-            ad,
-            query,
-            country,
-          ),
+        scraped.map(
+          (ad) =>
+            normalizeScrapedAd(
+              ad,
+              query,
+              country,
+            ),
         );
 
       console.log(
         "[MetaProvider] Normalized sample:",
         ads
           .slice(0, 10)
-          .map((ad) => ({
-            id: ad.id,
-            advertiserName:
-              ad.advertiserName,
-            landingPage:
-              ad.landingPage,
-            headline:
-              ad.headline,
-            productName:
-              ad.productName,
-          })),
+          .map(
+            (ad) => ({
+              id: ad.id,
+              advertiserName:
+                ad.advertiserName,
+              creatorName:
+                ad.creatorName,
+              partnershipType:
+                ad.partnershipType,
+              headline:
+                ad.headline,
+              productName:
+                ad.productName,
+              landingPage:
+                ad.landingPage,
+              creativeType:
+                ad.creativeType,
+            }),
+          ),
       );
 
       /* -----------------------------------------------
@@ -3979,31 +4192,17 @@ export const metaProvider: AdProvider =
        * --------------------------------------------- */
 
       if (
-        mode === "advertiser"
+        mode ===
+        "advertiser"
       ) {
-        const matchingAds =
-          ads.filter((ad) =>
-            isRelevantToAdvertiser(
-              ad,
-              query,
-            ),
-          );
-
-        console.log(
-          "[MetaProvider] Advertiser matches:",
-          matchingAds
-            .slice(0, 10)
-            .map((ad) => ({
-              id: ad.id,
-              advertiserName:
-                ad.advertiserName,
-              landingPage:
-                ad.landingPage,
-            })),
-        );
-
         ads =
-          matchingAds;
+          ads.filter(
+            (ad) =>
+              isRelevantToAdvertiser(
+                ad,
+                query,
+              ),
+          );
 
         console.log(
           "[MetaProvider] Ads after relevance filter:",
@@ -4013,6 +4212,11 @@ export const metaProvider: AdProvider =
 
       /* -----------------------------------------------
        * DEDUPE
+       *
+       * IMPORTANT:
+       * The Library ID is NOT part of the fingerprint.
+       * But we still preserve separate creative variants
+       * unless the actual creative fingerprint is identical.
        * --------------------------------------------- */
 
       const unique =
@@ -4037,31 +4241,13 @@ export const metaProvider: AdProvider =
             fingerprint,
             ad,
           );
-
-          continue;
-        }
-
-        const existingScore =
-          (existing.creativeScore ??
-            0) +
-          (existing.runningDays ??
-            0) *
-            0.1;
-
-        const newScore =
-          (ad.creativeScore ??
-            0) +
-          (ad.runningDays ??
-            0) *
-            0.1;
-
-        if (
-          newScore >
-          existingScore
-        ) {
+        } else {
           unique.set(
             fingerprint,
-            ad,
+            chooseBetterDuplicate(
+              existing,
+              ad,
+            ),
           );
         }
       }
@@ -4080,24 +4266,37 @@ export const metaProvider: AdProvider =
        * SORT
        * --------------------------------------------- */
 
-      ads.sort((a, b) => {
-        const aScore =
-          (a.creativeScore ?? 0) +
-          (a.runningDays ?? 0) *
-            0.5 +
-          (a.isActive ? 20 : 0);
+      ads.sort(
+        (a, b) => {
+          const aScore =
+            (a.creativeScore ??
+              0) +
+            (a.runningDays ??
+              0) *
+              0.5 +
+            (a.isActive
+              ? 20
+              : 0);
 
-        const bScore =
-          (b.creativeScore ?? 0) +
-          (b.runningDays ?? 0) *
-            0.5 +
-          (b.isActive ? 20 : 0);
+          const bScore =
+            (b.creativeScore ??
+              0) +
+            (b.runningDays ??
+              0) *
+              0.5 +
+            (b.isActive
+              ? 20
+              : 0);
 
-        return bScore - aScore;
-      });
+          return (
+            bScore -
+            aScore
+          );
+        },
+      );
 
       /* -----------------------------------------------
-       * CACHE ONLY NON-EMPTY RESULTS
+       * CACHE ONLY SUCCESSFUL NON-EMPTY RESULT
        * --------------------------------------------- */
 
       if (ads.length > 0) {
@@ -4116,10 +4315,6 @@ export const metaProvider: AdProvider =
           query,
         );
       }
-
-      /* -----------------------------------------------
-       * RETURN
-       * --------------------------------------------- */
 
       console.log(
         "[MetaProvider] Returning full result set:",
