@@ -20,6 +20,19 @@ import type {
   CompetitorAd,
 } from "../types";
 
+import {
+  cleanText,
+  normalizeExtractedText,
+  normalizeWhitespace,
+  repairMojibake,
+} from "../meta/text";
+
+import {
+  isDomain,
+  isFacebookInternalUrl,
+  normalizeUrl,
+  unwrapFacebookRedirect,
+} from "../meta/url";
 /* =========================================================
  * TYPES
  * ======================================================= */
@@ -372,157 +385,17 @@ async function safeCloseContext(
  * TEXT
  * ======================================================= */
 
-function cleanText(
-  value: unknown,
-): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
 
-  const cleaned =
-    value
-      .replace(/\u200B/g, "")
-      .replace(/\u200C/g, "")
-      .replace(/\u200D/g, "")
-      .replace(/\uFEFF/g, "")
-      .replace(/\u00A0/g, " ")
-      .replace(/\r/g, " ")
-      .replace(/\n/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
 
-  return cleaned.length > 0
-    ? cleaned
-    : null;
-}
 
-function repairMojibake(
-  value: string | null,
-): string | null {
-  if (!value) {
-    return null;
-  }
-
-  if (
-    !/[ÃÂà¤à¥]/.test(value) &&
-    !value.includes("�")
-  ) {
-    return value;
-  }
-
-  try {
-    const bytes =
-      Uint8Array.from(
-        Array.from(
-          value,
-          (character) =>
-            character.charCodeAt(0) &
-            0xff,
-        ),
-      );
-
-    const repaired =
-      new TextDecoder("utf-8", {
-        fatal: false,
-      }).decode(bytes);
-
-    if (
-      repaired &&
-      repaired !== value &&
-      !repaired.includes("�")
-    ) {
-      return repaired;
-    }
-  } catch {
-    // Preserve original text.
-  }
-
-  return value;
-}
-
-function normalizeExtractedText(
-  value: unknown,
-): string | null {
-  return repairMojibake(
-    cleanText(value),
-  );
-}
-
-function normalizeWhitespace(
-  value?: string | null,
-): string {
-  return (value ?? "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 /* =========================================================
  * URL
  * ======================================================= */
 
-function unwrapFacebookRedirect(
-  value: string | null,
-): string | null {
-  const text =
-    normalizeExtractedText(value);
 
-  if (!text) {
-    return null;
-  }
 
-  try {
-    const url = new URL(text);
 
-    if (
-      url.hostname ===
-        "l.facebook.com" &&
-      url.pathname === "/l.php"
-    ) {
-      const destination =
-        url.searchParams.get("u");
-
-      if (destination) {
-        try {
-          return decodeURIComponent(
-            destination,
-          );
-        } catch {
-          return destination;
-        }
-      }
-    }
-
-    return url.toString();
-  } catch {
-    return text;
-  }
-}
-
-function normalizeUrl(
-  value: unknown,
-): string | null {
-  const text =
-    normalizeExtractedText(value);
-
-  if (!text) {
-    return null;
-  }
-
-  const unwrapped =
-    unwrapFacebookRedirect(text);
-
-  if (!unwrapped) {
-    return null;
-  }
-
-  try {
-    return new URL(
-      unwrapped,
-    ).toString();
-  } catch {
-    return null;
-  }
-}
 
 function classifyDestination(
   value: string,
@@ -569,28 +442,8 @@ function classifyDestination(
   }
 }
 
-function isFacebookInternalUrl(
-  value: string,
-): boolean {
-  return (
-    classifyDestination(value) ===
-    "social"
-  );
-}
 
-function isDomain(
-  value: string,
-): boolean {
-  const text = value.trim();
 
-  if (!text) {
-    return false;
-  }
-
-  return /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(
-    text,
-  );
-}
 
 /* =========================================================
  * PRICE
