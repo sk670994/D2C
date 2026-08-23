@@ -149,8 +149,10 @@ type ZwirkAdSpySnapshot = {
 export type AdSpySectionProps = {
   query: string;
   country: string;
+  platform?: "meta" | "google" | "linkedin";
   onQueryChange: (query: string) => void;
   onCountryChange: (country: string) => void;
+  onPlatformChange?: (platform: "meta" | "google" | "linkedin") => void;
   onResultCountChange?: (count: number) => void;
 };
 
@@ -1132,8 +1134,10 @@ function publishAdSpySnapshot(
 export function AdSpySection({
   query,
   country,
+  platform = "meta",
   onQueryChange,
   onCountryChange,
+  onPlatformChange,
   onResultCountChange,
 }: AdSpySectionProps) {
   const [page, setPage] =
@@ -1185,7 +1189,7 @@ export function AdSpySection({
             pageToLoad
           ),
           limit: String(limit),
-          platform: "meta",
+          platform,
           mode: "advertiser",
         });
 
@@ -1579,7 +1583,7 @@ export function AdSpySection({
                 ? `${totalResults.toLocaleString(
                     "en-IN"
                   )} ads found`
-                : "Meta Ad Library"}
+                : platform === "google" ? "Google Ads Transparency" : platform === "linkedin" ? "LinkedIn Ad Library" : "Meta Ad Library"}
             </Badge>
           </div>
 
@@ -1595,7 +1599,7 @@ export function AdSpySection({
             creatives, offers,
             longevity signals and
             creative patterns from
-            the Meta Ad Library.
+            {platform === "google" ? " Google Ads Transparency Center." : platform === "linkedin" ? " LinkedIn Ad Library." : " the Meta Ad Library."}
           </p>
         </div>
       </div>
@@ -1614,6 +1618,15 @@ export function AdSpySection({
             alignItems: "end",
           }}
         >
+          <Label className="input-row">
+            <span>Platform</span>
+            <select value={platform} onChange={(event) => onPlatformChange?.(event.target.value as "meta" | "google" | "linkedin")}>
+              <option value="meta">Meta (Facebook + Instagram)</option>
+              <option value="google">Google + YouTube</option>
+              <option value="linkedin">LinkedIn</option>
+            </select>
+          </Label>
+
           <Label className="input-row">
             <span>
               Brand or keyword
@@ -1779,7 +1792,7 @@ export function AdSpySection({
               fontWeight: 600,
             }}
           >
-            Searching Meta Ad Library...
+            Searching {platform === "google" ? "Google Ads Transparency Center" : platform === "linkedin" ? "LinkedIn Ad Library" : "Meta Ad Library"}...
           </p>
 
           <p
@@ -1847,7 +1860,7 @@ export function AdSpySection({
           >
             Enter a brand or
             keyword to discover
-            public Meta
+            public {platform === "google" ? "Google and YouTube" : platform === "linkedin" ? "LinkedIn" : "Meta"}
             creatives, offers,
             formats and
             longevity signals.

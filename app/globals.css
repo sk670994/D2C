@@ -58,6 +58,75 @@ body {
   min-height: 100%;
 }
 
+.app-loading { min-height: 100vh; display: grid; place-items: center; color: var(--text-muted); }
+.adspy-workspace { width: min(1440px, calc(100% - 48px)); margin: 0 auto; padding: 20px 0 64px; }
+.app-topbar { min-height: 64px; padding: 10px 12px 10px 18px; display: flex; align-items: center; gap: 24px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--surface-strong) 84%, transparent); box-shadow: 0 12px 36px rgba(18, 29, 44, .09); backdrop-filter: blur(18px); }
+.app-brand { display: inline-flex; align-items: center; gap: 9px; font-weight: 800; letter-spacing: -.04em; font-size: 1.1rem; }
+.app-brand-mark { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 8px; background: linear-gradient(135deg, #7c5cff, #22c3a6); color: white; font-size: .82rem; letter-spacing: 0; }
+.app-nav { display: flex; align-items: center; gap: 4px; }
+.app-nav a { padding: 8px 11px; border-radius: 8px; color: var(--text-muted); font-size: .88rem; font-weight: 700; }
+.app-nav a:hover, .app-nav a.active { color: var(--text); background: color-mix(in srgb, var(--brand) 12%, transparent); }
+.app-topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.app-user { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: .78rem; }
+.adspy-page-hero { display: flex; justify-content: space-between; gap: 36px; padding: 62px 28px 42px; align-items: end; }
+.adspy-page-hero h1 { margin: 7px 0 14px; max-width: 720px; font-size: clamp(2.2rem, 4vw, 4.4rem); letter-spacing: -.065em; }
+.adspy-page-hero p:not(.eyebrow) { max-width: 650px; margin: 0; color: var(--text-muted); font-size: 1.04rem; }
+.adspy-hero-actions { display: grid; gap: 10px; justify-items: end; color: var(--text-muted); font-size: .78rem; white-space: nowrap; }
+.adspy-workspace .adspy-section { position: relative; padding: 28px; border: 1px solid var(--line); border-radius: 22px; background: color-mix(in srgb, var(--surface-strong) 82%, transparent); box-shadow: var(--shadow); }
+.adspy-workspace .adspy-section > .section-head h3 { font-size: 1.35rem; letter-spacing: -.035em; }
+.adspy-workspace .adspy-section .surface { box-shadow: none; background: color-mix(in srgb, var(--bg-1) 44%, var(--surface-strong)); }
+.adspy-workspace .adspy-section .editor-grid { grid-template-columns: 184px minmax(260px, 1fr) 96px auto; gap: 12px; }
+@media (max-width: 860px) { .adspy-workspace { width: min(100% - 24px, 1440px); padding-top: 12px; } .app-topbar { gap: 12px; padding: 9px 10px; } .app-nav, .app-user { display: none; } .adspy-page-hero { display: grid; padding: 40px 8px 28px; gap: 20px; } .adspy-hero-actions { justify-items: start; } .adspy-workspace .adspy-section { padding: 16px; } .adspy-workspace .adspy-section .editor-grid { grid-template-columns: 1fr; } }
+
+/* AdSpy is intentionally a denser, creative-first workspace rather than a dashboard card. */
+.adspy-workspace {
+  --bg-0: #080b14;
+  --bg-1: #0d1220;
+  --bg-2: #121a2d;
+  --surface: rgba(17, 24, 42, .82);
+  --surface-strong: #12192a;
+  --line: rgba(148, 163, 184, .17);
+  --text: #f1f5f9;
+  --text-muted: #94a3b8;
+  --brand: #a78bfa;
+  --button-bg: #8b5cf6;
+  --button-fg: #fff;
+  --shadow: 0 24px 65px rgba(0, 0, 0, .35);
+  position: relative;
+  isolation: isolate;
+}
+.adspy-workspace::before { content: ""; position: fixed; inset: 0; z-index: -1; background: radial-gradient(circle at 15% 0%, rgba(124, 58, 237, .2), transparent 31%), radial-gradient(circle at 85% 16%, rgba(14, 165, 233, .13), transparent 26%), #080b14; }
+.adspy-workspace .app-topbar { border-color: rgba(148,163,184,.15); background: rgba(9, 13, 25, .76); box-shadow: none; }
+.adspy-workspace .app-brand { color: #fff; }
+.adspy-workspace .app-brand-mark { box-shadow: 0 0 0 5px rgba(139,92,246,.12); }
+.adspy-workspace .app-nav a { color: #94a3b8; }
+.adspy-workspace .app-nav a:hover, .adspy-workspace .app-nav a.active { color: #fff; background: rgba(139,92,246,.16); }
+.adspy-workspace .adspy-page-hero { padding: 70px 34px 46px; }
+.adspy-workspace .adspy-page-hero h1 { color: #f8fafc; text-wrap: balance; }
+.adspy-workspace .adspy-page-hero .eyebrow { color: #c4b5fd; font-size: .7rem; font-weight: 800; letter-spacing: .14em; }
+.adspy-workspace .adspy-hero-actions { padding: 16px; border: 1px solid rgba(148,163,184,.15); border-radius: 14px; background: rgba(15, 23, 42, .58); }
+.adspy-workspace .adspy-section { border-color: rgba(148,163,184,.16); background: linear-gradient(145deg, rgba(19,26,46,.96), rgba(10,15,28,.94)); box-shadow: 0 26px 70px rgba(0,0,0,.28); }
+.adspy-workspace .adspy-section::before { content: ""; display: block; height: 3px; margin: -28px -28px 26px; border-radius: 22px 22px 0 0; background: linear-gradient(90deg, #8b5cf6, #38bdf8, transparent 72%); }
+.adspy-workspace .adspy-section .surface { border-color: rgba(148,163,184,.14); background: rgba(15,23,42,.72); }
+.adspy-workspace .adspy-section .editor-grid { align-items: end; }
+.adspy-workspace .adspy-section .input-row > span { color: #94a3b8; font-size: .72rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.adspy-workspace .adspy-section input, .adspy-workspace .adspy-section select { min-height: 43px; border-color: rgba(148,163,184,.2); background: rgba(2,6,23,.48); color: #f8fafc; }
+.adspy-workspace .adspy-section button { min-height: 43px; border-radius: 10px; box-shadow: none; }
+.adspy-workspace .adspy-section .ui-button-default { background: linear-gradient(135deg, #8b5cf6, #6366f1); }
+.adspy-workspace .adspy-section .ui-button-secondary { background: rgba(30,41,59,.72); color: #e2e8f0; border-color: rgba(148,163,184,.2); }
+.adspy-workspace .adspy-section .ui-badge { border-color: rgba(148,163,184,.18); background: rgba(51,65,85,.45); color: #cbd5e1; }
+.adspy-workspace .adspy-section h3, .adspy-workspace .adspy-section h4, .adspy-workspace .adspy-section strong { color: #f8fafc; }
+.adspy-workspace .adspy-section .muted-text { color: #94a3b8; }
+.adspy-workspace .adspy-section .fix-grid { grid-template-columns: repeat(auto-fill, minmax(265px, 1fr)); }
+.adspy-workspace .adspy-section .fix-card { border: 1px solid rgba(148,163,184,.16); border-radius: 14px; background: rgba(15,23,42,.78); box-shadow: none; transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease; }
+.adspy-workspace .adspy-section .fix-card:hover { transform: translateY(-4px); border-color: rgba(167,139,250,.62); box-shadow: 0 18px 32px rgba(0,0,0,.25); }
+.adspy-workspace .adspy-section .fix-card > div:first-child { background: linear-gradient(145deg, #1e293b, #0f172a) !important; }
+.adspy-workspace .adspy-section .fix-card [style*="var(--muted"] { background: rgba(51,65,85,.45) !important; }
+.adspy-workspace .adspy-section [style*="grid-template-columns: repeat(4"] > .surface,
+.adspy-workspace .adspy-section [style*="grid-template-columns: repeat(3"] > .surface { border: 1px solid rgba(148,163,184,.14); background: linear-gradient(145deg, rgba(30,41,59,.68), rgba(15,23,42,.68)); }
+.adspy-workspace .adspy-section [style*="grid-template-columns: repeat(4"] strong { display: block; margin: 5px 0 1px; font-size: 1.55rem !important; letter-spacing: -.05em; }
+@media (max-width: 860px) { .adspy-workspace .adspy-page-hero { padding: 44px 8px 28px; } .adspy-workspace .adspy-section::before { margin: -16px -16px 20px; } }
+
 body {
   font-family: var(--font-sans);
   font-weight: var(--font-weight-body);

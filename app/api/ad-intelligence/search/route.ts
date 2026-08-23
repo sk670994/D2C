@@ -7,7 +7,8 @@ import type {
   AdSearchMode,
 } from "@/lib/ad-intelligence/provider";
 
-import { metaProvider } from "@/lib/ad-intelligence/providers/meta";
+import { adProviders } from "@/lib/ad-intelligence/providers";
+import type { AdPlatform } from "@/lib/ad-intelligence/types";
 
 import {
   enrichAds,
@@ -90,12 +91,12 @@ export async function GET(request: NextRequest) {
         "meta"
       );
 
-    if (platform !== "meta") {
+    if (platform !== "meta" && platform !== "google" && platform !== "linkedin") {
       return NextResponse.json(
         {
           success: false,
           error: `Unsupported platform: ${platform}`,
-          supportedPlatforms: ["meta"],
+          supportedPlatforms: ["meta", "google", "linkedin"],
         },
         {
           status: 400,
@@ -137,13 +138,13 @@ export async function GET(request: NextRequest) {
     // 4. PROVIDER
     // ------------------------------------------------------------
 
-    const provider = metaProvider;
+    const provider = adProviders[platform as AdPlatform];
 
     if (!provider) {
       return NextResponse.json(
         {
           success: false,
-          error: "Meta provider is not available.",
+          error: `${platform} provider is not available.`,
         },
         {
           status: 500,
@@ -158,12 +159,12 @@ export async function GET(request: NextRequest) {
     const searchInput: AdSearchInput = {
       query,
       country,
-      platform: "meta",
+      platform: platform as AdPlatform,
       mode,
     };
 
     console.info(
-      `[AdIntelligenceSearch] Searching Meta: ${query} (${country})`
+      `[AdIntelligenceSearch] Searching ${platform}: ${query} (${country})`
     );
 
     // ------------------------------------------------------------
@@ -229,7 +230,7 @@ export async function GET(request: NextRequest) {
         userId: user.id,
         query,
         country,
-        platform: "meta",
+        platform: platform as "meta" | "google" | "linkedin",
         ads: rankedAds,
         intelligence: summary,
       });
@@ -300,7 +301,7 @@ export async function GET(request: NextRequest) {
         success: true,
         query,
         country,
-        platform: "meta",
+        platform: platform as AdPlatform,
         mode,
 
         count: paginatedAds.length,

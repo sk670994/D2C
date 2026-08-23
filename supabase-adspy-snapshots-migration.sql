@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS public.adspy_snapshots (
   country TEXT NOT NULL DEFAULT 'IN',
 
   platform TEXT NOT NULL
-    CHECK (platform IN ('meta')),
+    CHECK (platform IN ('meta', 'google', 'linkedin')),
 
   -- Complete ranked AdSpy result set.
   -- This intentionally stores the full result set, not only

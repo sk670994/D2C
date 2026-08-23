@@ -18,7 +18,6 @@ import { DashboardInsightsSection } from "@/components/dashboard/DashboardInsigh
 import { DashboardCommandRail, DashboardExecutionControls, DashboardHero } from "@/components/dashboard/DashboardChrome";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { AdSpySection } from "@/components/dashboard/AdSpySection";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,7 +27,6 @@ const sectionOptions = [
   { id: "all", label: "All" },
   { id: "unit", label: "Unit Economics" },
   { id: "ad", label: "Ad Metrics" },
-  { id: "adspy", label: "AdSpy" },
   { id: "scale", label: "Scale Planner" },
   { id: "pnl", label: "Monthly P&L" }
 ] as const;
@@ -533,7 +531,6 @@ export default function DashboardPage() {
       performance: connectedAccounts.length > 0 ? "Connected" : "Not Connected",
       library: metaLibraryAds.length > 0 || googleLibraryInfo ? "Ready" : "Not Searched",
       market: metaLibraryAds.length > 0 || shopifyResearch ? "Ready" : "Not Searched",
-      adspy: connectedAccounts.length > 0 || metaLibraryAds.length > 0 || shopifyResearch ? "Ready" : "Not Searched",
       scale: report.scalePlanner.readiness === "READY TO SCALE" ? "Ready" : "Hold",
       pnl: report.monthlyPnl.netProfitMarginPct >= 0.1 ? "Healthy" : "Low Margin"
     };
@@ -881,7 +878,7 @@ setReport(merged);
         setSelectedSection("ad");
         break;
       case "go-adspy":
-        setSelectedSection("adspy");
+        router.push("/adspy");
         break;
       case "go-zwirk":
         router.push("/zwirk");
@@ -1008,14 +1005,6 @@ setReport(merged);
       ];
     }
 
-    if (id === "adspy") {
-      return [
-        ...getSectionMetrics("performance", data),
-        ...getSectionMetrics("library", data),
-        ...getSectionMetrics("market", data)
-      ];
-    }
-
     if (id === "library") {
       return [
         {
@@ -1087,7 +1076,6 @@ setReport(merged);
     if (id === "performance") return { connectedAccounts, adMetricsCount: adMetrics.length };
     if (id === "library") return { adLibraryQuery, adLibraryCountry, metaLibraryCount: metaLibraryAds.length };
     if (id === "market") return { adLibraryQuery, adLibraryCountry, shopifyStoreUrl, shopifyResearch };
-    if (id === "adspy") return { connectedAccounts, adMetricsCount: adMetrics.length, adLibraryQuery, adLibraryCountry, metaLibraryCount: metaLibraryAds.length, shopifyStoreUrl, shopifyResearch };
     if (id === "scale") return reportInput.scalePlannerInput;
     return {
       note: "Monthly P&L is derived from other sections",
@@ -1593,22 +1581,6 @@ setReport(merged);
       );
     }
 
-  if (id === "adspy") {
-  return (
-    <AdSpySection
-      query={adLibraryQuery}
-      country={adLibraryCountry}
-      onQueryChange={setAdLibraryQuery}
-      onCountryChange={setAdLibraryCountry}
-   onResultCountChange={(count: number) => {
-        if (count === 0) {
-          setMetaLibraryError("");
-        }
-      }}
-    />
-  );
-}
-
     if (id === "library") {
       return (
         <div className="editor-grid">
@@ -1797,7 +1769,7 @@ setReport(merged);
   ];
 
   const filteredCommands = commands.filter((c) => c.label.toLowerCase().includes(paletteQuery.toLowerCase()));
-  const sectionSequence: ActiveSection[] = ["unit", "ad", "adspy", "scale", "pnl"];
+  const sectionSequence: ActiveSection[] = ["unit", "ad", "scale", "pnl"];
   const adminEmail = (process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? "").trim().toLowerCase();
   const isAdmin = !!adminEmail && userEmail.toLowerCase() === adminEmail;
   const completedSections = sectionSequence.filter((id) => statusTone(sectionStatus[id]) === "good").length;
