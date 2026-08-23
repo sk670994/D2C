@@ -91,6 +91,7 @@ export function DashboardHero({
       </div>
       <div className="hero-meta">
         <span className="muted-text">{userEmail ? `Signed in as ${userName ? `${userName} (${userEmail})` : userEmail}` : "Not signed in"}</span>
+        <Link href="/adspy"><Button type="button" variant="secondary">Open AdSpy</Button></Link>
         <Link href="/zwirk" onClick={onOpenZwirk}><Button type="button">Open ZWIRK</Button></Link>
         <ThemeToggle />
         {userEmail ? <SignOutButton /> : <Link href="/login"><Button type="button" variant="secondary">Sign In</Button></Link>}

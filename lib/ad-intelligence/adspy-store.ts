@@ -1,6 +1,6 @@
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 
-export type AdSpyPlatform = "meta";
+export type AdSpyPlatform = "meta" | "google" | "linkedin";
 
 export type SaveAdSpySnapshotInput = {
   userId: string;
