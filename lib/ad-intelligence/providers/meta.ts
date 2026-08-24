@@ -20,6 +20,35 @@ import type {
   CompetitorAd,
 } from "../types";
 
+import {
+  cleanText,
+  normalizeExtractedText,
+  normalizeWhitespace,
+  repairMojibake,
+} from "../meta/text";
+
+import {
+  isDomain,
+  isFacebookInternalUrl,
+  normalizeUrl,
+  unwrapFacebookRedirect,
+} from "../meta/url";
+
+
+import {
+  parsePrice,
+  parseDate,
+  extractDateRange,
+  calculateRunningDays,
+  isCTA,
+  extractOffer,
+  extractAdvertiserIdentity,
+  extractPrimaryText,
+  extractCallToAction,
+  extractActiveStatus,
+} from "../meta/parser";
+
+
 /* =========================================================
  * TYPES
  * ======================================================= */
@@ -372,157 +401,17 @@ async function safeCloseContext(
  * TEXT
  * ======================================================= */
 
-function cleanText(
-  value: unknown,
-): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
 
-  const cleaned =
-    value
-      .replace(/\u200B/g, "")
-      .replace(/\u200C/g, "")
-      .replace(/\u200D/g, "")
-      .replace(/\uFEFF/g, "")
-      .replace(/\u00A0/g, " ")
-      .replace(/\r/g, " ")
-      .replace(/\n/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
 
-  return cleaned.length > 0
-    ? cleaned
-    : null;
-}
 
-function repairMojibake(
-  value: string | null,
-): string | null {
-  if (!value) {
-    return null;
-  }
-
-  if (
-    !/[ÃÂà¤à¥]/.test(value) &&
-    !value.includes("�")
-  ) {
-    return value;
-  }
-
-  try {
-    const bytes =
-      Uint8Array.from(
-        Array.from(
-          value,
-          (character) =>
-            character.charCodeAt(0) &
-            0xff,
-        ),
-      );
-
-    const repaired =
-      new TextDecoder("utf-8", {
-        fatal: false,
-      }).decode(bytes);
-
-    if (
-      repaired &&
-      repaired !== value &&
-      !repaired.includes("�")
-    ) {
-      return repaired;
-    }
-  } catch {
-    // Preserve original text.
-  }
-
-  return value;
-}
-
-function normalizeExtractedText(
-  value: unknown,
-): string | null {
-  return repairMojibake(
-    cleanText(value),
-  );
-}
-
-function normalizeWhitespace(
-  value?: string | null,
-): string {
-  return (value ?? "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 /* =========================================================
  * URL
  * ======================================================= */
 
-function unwrapFacebookRedirect(
-  value: string | null,
-): string | null {
-  const text =
-    normalizeExtractedText(value);
 
-  if (!text) {
-    return null;
-  }
 
-  try {
-    const url = new URL(text);
 
-    if (
-      url.hostname ===
-        "l.facebook.com" &&
-      url.pathname === "/l.php"
-    ) {
-      const destination =
-        url.searchParams.get("u");
-
-      if (destination) {
-        try {
-          return decodeURIComponent(
-            destination,
-          );
-        } catch {
-          return destination;
-        }
-      }
-    }
-
-    return url.toString();
-  } catch {
-    return text;
-  }
-}
-
-function normalizeUrl(
-  value: unknown,
-): string | null {
-  const text =
-    normalizeExtractedText(value);
-
-  if (!text) {
-    return null;
-  }
-
-  const unwrapped =
-    unwrapFacebookRedirect(text);
-
-  if (!unwrapped) {
-    return null;
-  }
-
-  try {
-    return new URL(
-      unwrapped,
-    ).toString();
-  } catch {
-    return null;
-  }
-}
 
 function classifyDestination(
   value: string,
@@ -569,61 +458,14 @@ function classifyDestination(
   }
 }
 
-function isFacebookInternalUrl(
-  value: string,
-): boolean {
-  return (
-    classifyDestination(value) ===
-    "social"
-  );
-}
 
-function isDomain(
-  value: string,
-): boolean {
-  const text = value.trim();
 
-  if (!text) {
-    return false;
-  }
-
-  return /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(
-    text,
-  );
-}
 
 /* =========================================================
  * PRICE
  * ======================================================= */
 
-function parsePrice(
-  value: unknown,
-): number | null {
-  const text =
-    normalizeExtractedText(value);
 
-  if (!text) {
-    return null;
-  }
-
-  const match =
-    text.match(
-      /(?:₹|INR|Rs\.?)\s*([\d,]+(?:\.\d+)?)/i,
-    );
-
-  if (!match) {
-    return null;
-  }
-
-  const number =
-    Number(
-      match[1].replace(/,/g, ""),
-    );
-
-  return Number.isFinite(number)
-    ? number
-    : null;
-}
 
 /* =========================================================
  * DATE
@@ -703,72 +545,7 @@ function createValidDate(
   return date;
 }
 
-function parseDate(
-  value:
-    | string
-    | null
-    | undefined,
-): Date | null {
-  const cleaned =
-    normalizeExtractedText(value);
 
-  if (!cleaned) {
-    return null;
-  }
-
-  let match =
-    cleaned.match(
-      /^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/i,
-    );
-
-  if (match) {
-    const month =
-      MONTHS[
-        match[2].toLowerCase()
-      ];
-
-    if (month !== undefined) {
-      return createValidDate(
-        Number(match[3]),
-        month,
-        Number(match[1]),
-      );
-    }
-  }
-
-  match =
-    cleaned.match(
-      /^(\d{1,2})\s+([^\d\s]+)\s+(\d{4})$/u,
-    );
-
-  if (match) {
-    const month =
-      HINDI_MONTHS[
-        match[2]
-      ];
-
-    if (month !== undefined) {
-      return createValidDate(
-        Number(match[3]),
-        month,
-        Number(match[1]),
-      );
-    }
-  }
-
-  const native =
-    new Date(cleaned);
-
-  if (
-    !Number.isNaN(
-      native.getTime(),
-    )
-  ) {
-    return native;
-  }
-
-  return null;
-}
 
 function isDateOnly(
   value: string,
@@ -798,151 +575,15 @@ function isDateOnly(
   );
 }
 
-function extractDateRange(
-  lines: string[],
-): {
-  firstSeen: string | null;
-  lastSeen: string | null;
-} {
-  const englishRange =
-    /(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i;
 
-  const hindiRange =
-    /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[^\d\s]+\s+\d{4})/u;
 
-  const englishStarted =
-    /Started running on\s+(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i;
 
-  const hindiStarted =
-    /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s+को\s+चलना\s+शुरू\s+हुआ/u;
-
-  for (const rawLine of lines) {
-    const line =
-      normalizeExtractedText(
-        rawLine,
-      );
-
-    if (!line) {
-      continue;
-    }
-
-    let match =
-      line.match(
-        englishRange,
-      );
-
-    if (match) {
-      return {
-        firstSeen: match[1],
-        lastSeen: match[2],
-      };
-    }
-
-    match =
-      line.match(
-        hindiRange,
-      );
-
-    if (match) {
-      return {
-        firstSeen: match[1],
-        lastSeen: match[2],
-      };
-    }
-
-    match =
-      line.match(
-        englishStarted,
-      );
-
-    if (match) {
-      return {
-        firstSeen: match[1],
-        lastSeen: null,
-      };
-    }
-
-    match =
-      line.match(
-        hindiStarted,
-      );
-
-    if (match) {
-      return {
-        firstSeen: match[1],
-        lastSeen: null,
-      };
-    }
-  }
-
-  return {
-    firstSeen: null,
-    lastSeen: null,
-  };
-}
-
-function calculateRunningDays(
-  firstSeen:
-    | string
-    | null
-    | undefined,
-  lastSeen:
-    | string
-    | null
-    | undefined,
-): number {
-  const start =
-    parseDate(firstSeen);
-
-  if (!start) {
-    return 0;
-  }
-
-  const end =
-    parseDate(lastSeen) ??
-    new Date();
-
-  const startDay =
-    new Date(
-      start.getFullYear(),
-      start.getMonth(),
-      start.getDate(),
-    );
-
-  const endDay =
-    new Date(
-      end.getFullYear(),
-      end.getMonth(),
-      end.getDate(),
-    );
-
-  const diff =
-    endDay.getTime() -
-    startDay.getTime();
-
-  if (diff < 0) {
-    return 0;
-  }
-
-  return (
-    Math.floor(
-      diff /
-        (1000 * 60 * 60 * 24),
-    ) + 1
-  );
-}
 
 /* =========================================================
  * LINE HELPERS
  * ======================================================= */
 
-function isCTA(
-  value: string,
-): boolean {
-  return CTA_SET.has(
-    value.trim().toLowerCase(),
-  );
-}
+
 
 function isLibraryIdLine(
   value: string,
@@ -1008,6 +649,43 @@ function isOfferLike(
       value,
     )
   );
+}
+
+function isValidExtractedOffer(
+  value: string | null | undefined,
+): boolean {
+  const text =
+    value?.trim() ?? "";
+
+  if (!text) {
+    return false;
+  }
+
+  const percentageMatches =
+    [
+      ...text.matchAll(
+        /\b(\d{1,3})\s*%\s*(?:off|discount)\b/gi,
+      ),
+    ];
+
+  for (
+    const match of percentageMatches
+  ) {
+    const percentage =
+      Number(match[1]);
+
+    if (
+      !Number.isFinite(
+        percentage,
+      ) ||
+      percentage <= 0 ||
+      percentage > 100
+    ) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function looksLikePersonName(
@@ -1082,240 +760,15 @@ function isGenericMetaText(
  * OFFER
  * ======================================================= */
 
-function extractOffer(
-  primaryText:
-    | string
-    | null,
-  lines: string[],
-): string | null {
-  const text = [
-    primaryText ?? "",
-    ...lines,
-  ]
-    .map(
-      (value) =>
-        normalizeExtractedText(
-          value,
-        ) ?? "",
-    )
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
 
-  if (!text) {
-    return null;
-  }
-
-  const patterns = [
-    /\bflat\s+\d{1,3}%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
-    /\bup\s*to\s+\d{1,3}%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
-    /\bupto\s+\d{1,3}%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
-    /\b\d{1,3}%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
-    /\b\d{1,3}%\s*discount\b/i,
-    /\buse\s+code[:\s]+[A-Z0-9_-]+\b/i,
-    /\bprice\s*drop\b/i,
-    /\bsale\s+is\s+live\b/i,
-    /\bfree\s+shipping\b/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match =
-      text.match(pattern);
-
-    if (match) {
-      return (
-        normalizeExtractedText(
-          match[0],
-        ) ?? null
-      );
-    }
-  }
-
-  return null;
-}
 
 /* =========================================================
  * ADVERTISER / CREATOR / COLLABORATION
  * ======================================================= */
 
-function extractAdvertiserIdentity(
-  lines: string[],
-): {
-  advertiserName: string | null;
-  creatorName: string | null;
-  partnershipType: PartnershipType;
-} {
-  const sponsoredIndex =
-    lines.findIndex((line) => {
-      const value =
-        normalizeExtractedText(
-          line,
-        );
-
-      return (
-        value?.toLowerCase() ===
-          "sponsored" ||
-        value === "प्रायोजित"
-      );
-    });
-
-  const identityCandidateIndexes: number[] =
-    sponsoredIndex > 0
-      ? [
-          sponsoredIndex - 1,
-          sponsoredIndex - 2,
-          0,
-        ]
-      : [0, 1, 2];
-
-  for (const index of identityCandidateIndexes) {
-    const candidate =
-      normalizeExtractedText(
-        lines[index],
-      );
-
-    if (!candidate) {
-      continue;
-    }
-
-    if (
-      isGenericMetaText(candidate)
-    ) {
-      continue;
-    }
-
-    const creatorMatch =
-      candidate.match(
-        /^(.+?)\s+(?:के\s+साथ|with|x|×)\s+(.+)$/iu,
-      );
-
-    if (creatorMatch) {
-      return {
-        advertiserName:
-          normalizeWhitespace(
-            creatorMatch[1],
-          ),
-        creatorName:
-          normalizeWhitespace(
-            creatorMatch[2],
-          ),
-        partnershipType:
-          "collaboration",
-      };
-    }
-
-    if (
-      /paid\s+partnership/i.test(
-        candidate,
-      )
-    ) {
-      return {
-        advertiserName:
-          normalizeWhitespace(
-            candidate.replace(
-              /paid\s+partnership.*$/i,
-              "",
-            ),
-          ),
-        creatorName: null,
-        partnershipType:
-          "paid_partnership",
-      };
-    }
-
-    return {
-      advertiserName: candidate,
-      creatorName: null,
-      partnershipType: "direct",
-    };
-  }
-
-  return {
-    advertiserName: null,
-    creatorName: null,
-    partnershipType: "unknown",
-  };
-}
-
-/* =========================================================
+/*=========================================================
  * PRIMARY TEXT
  * ======================================================= */
-
-function extractPrimaryText(
-  lines: string[],
-): string | null {
-  const sponsoredIndex =
-    lines.findIndex((line) => {
-      const value =
-        normalizeExtractedText(
-          line,
-        );
-
-      return (
-        value?.toLowerCase() ===
-          "sponsored" ||
-        value === "प्रायोजित"
-      );
-    });
-
-  const start =
-    sponsoredIndex >= 0
-      ? sponsoredIndex + 1
-      : 0;
-
-  const parts: string[] = [];
-
-  for (
-    let index = start;
-    index < lines.length;
-    index++
-  ) {
-    const candidate =
-      normalizeExtractedText(
-        lines[index],
-      );
-
-    if (!candidate) {
-      continue;
-    }
-
-    if (isDomain(candidate)) {
-      break;
-    }
-
-    if (isGenericMetaText(candidate)) {
-      continue;
-    }
-
-    if (
-      isDateOnly(candidate)
-    ) {
-      continue;
-    }
-
-    if (
-      candidate.length >= 8 &&
-      candidate.length <= 4000
-    ) {
-      parts.push(candidate);
-    }
-
-    if (
-      parts.join(" ").length >=
-      4000
-    ) {
-      break;
-    }
-  }
-
-  if (!parts.length) {
-    return null;
-  }
-
-  return normalizeWhitespace(
-    parts.join(" "),
-  );
-}
 
 /* =========================================================
  * PRODUCT / HEADLINE
@@ -1757,60 +1210,12 @@ function calculateCreativeScore(
  * CTA EXTRACTION
  * ======================================================= */
 
-function extractCallToAction(
-  lines: string[],
-): string | null {
-  for (const line of lines) {
-    const cleaned =
-      normalizeExtractedText(line);
-
-    if (!cleaned) {
-      continue;
-    }
-
-    if (isCTA(cleaned)) {
-      return (
-        CTA_VALUES.find(
-          (cta) =>
-            cta.toLowerCase() ===
-            cleaned.toLowerCase(),
-        ) ?? cleaned
-      );
-    }
-  }
-
-  return null;
-}
 
 /* =========================================================
  * ACTIVE STATUS
  * ======================================================= */
 
-function extractActiveStatus(
-  lines: string[],
-): boolean {
-  const text = lines
-    .map(
-      (line) =>
-        normalizeExtractedText(line) ?? "",
-    )
-    .join(" ")
-    .toLowerCase();
 
-  // Explicit inactive signals.
-  if (
-    text.includes("inactive") ||
-    text.includes("निष्क्रिय")
-  ) {
-    return false;
-  }
-
-  // Meta frequently does not expose a literal
-  // "Active" label inside the rendered card.
-  // Since the ad was returned by the Ad Library,
-  // treat an unspecified status as active.
-  return true;
-}
 /* =========================================================
  * NORMALIZATION
  * ======================================================= */
@@ -1898,14 +1303,20 @@ function normalizeScrapedAd(
       lines,
     );
 
-  const offer =
+  const normalizedInputOffer =
     normalizeExtractedText(
       input.offer,
-    ) ??
-    extractOffer(
-      primaryText,
-      lines,
     );
+
+  const offer =
+    isValidExtractedOffer(
+      normalizedInputOffer,
+    )
+      ? normalizedInputOffer
+      : extractOffer(
+          primaryText,
+          lines,
+        );
 
   const priceLine =
     lines.find(
