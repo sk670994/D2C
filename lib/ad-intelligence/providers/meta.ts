@@ -1748,103 +1748,119 @@ async function scrapeMetaAdLibraryOnce(
       INITIAL_RENDER_WAIT_MS,
     );
 
-    /* -----------------------------------------------------
-     * SCROLL
-     * --------------------------------------------------- */
+/* -----------------------------------------------------
+ * SCROLL
+ * --------------------------------------------------- */
 
-    let previousCount = 0;
-    let stableRounds = 0;
+let previousCount = 0;
+let stableRounds = 0;
 
-    for (
-      let scroll = 0;
-      scroll < maxScrolls;
-      scroll++
-    ) {
-      await page.mouse.wheel(
-        0,
-        2200,
-      );
+const SCROLL_WAIT_MS = 350;
+const STABLE_ROUNDS_REQUIRED = 2;
 
-      await page.waitForTimeout(
-        650,
-      );
+for (
+  let scroll = 0;
+  scroll < maxScrolls;
+  scroll++
+) {
+  await page.mouse.wheel(
+    0,
+    2200,
+  );
 
-      const count =
-        await page.evaluate(
-          () => {
-            const text =
-              document.body?.innerText ??
-              "";
+  /*
+   * Give Meta enough time to append newly-loaded
+   * creatives, but do not blindly wait 650ms every time.
+   */
+  await page.waitForTimeout(
+    SCROLL_WAIT_MS,
+  );
 
-            const matches =
-              text.match(
-                /(?:Library ID|लाइब्रेरी ID):\s*\d+/gi,
-              ) ?? [];
+  const count =
+    await page.evaluate(
+      () => {
+        const text =
+          document.body?.textContent ??
+          "";
 
-            const ids =
-              matches
-                .map(
-                  (
-                    value,
-                  ) =>
-                    value.match(
-                      /(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i,
-                    )?.[1] ??
-                    null,
-                )
-                .filter(
-                  (
-                    value,
-                  ): value is string =>
-                    value !== null,
-                );
+        const matches =
+          text.match(
+            /(?:Library ID|à¤²à¤¾à¤‡à¤¬à¥à¤°à¥‡à¤°à¥€ ID):\s*\d+/gi,
+          ) ?? [];
 
-            return new Set(ids).size;
-          },
-        );
+        const ids =
+          matches
+            .map(
+              (
+                value,
+              ) =>
+                value.match(
+                  /(?:Library ID|à¤²à¤¾à¤‡à¤¬à¥à¤°à¥‡à¤°à¥€ ID):\s*(\d+)/i,
+                )?.[1] ??
+                null,
+            )
+            .filter(
+              (
+                value,
+              ): value is string =>
+                value !== null,
+            );
 
-      console.log(
-        `[MetaProvider] Scroll ${
-          scroll + 1
-        }: ${count} library IDs`,
-      );
+        return new Set(ids).size;
+      },
+    );
 
-      if (
-        count ===
-        previousCount
-      ) {
-        stableRounds++;
-      } else {
-        stableRounds = 0;
-      }
+  console.log(
+    `[MetaProvider] Scroll ${
+      scroll + 1
+    }: ${count} library IDs`,
+  );
 
-      previousCount =
-        count;
+  if (
+    count ===
+    previousCount
+  ) {
+    stableRounds++;
+  } else {
+    stableRounds = 0;
+  }
 
-      if (
-        count >=
-        TARGET_LIBRARY_IDS
-      ) {
-        console.log(
-          "[MetaProvider] Target library ID count reached:",
-          count,
-        );
+  previousCount =
+    count;
 
-        break;
-      }
+  /*
+   * Stop immediately once we have reached the desired
+   * number of Library IDs.
+   */
+  if (
+    count >=
+    TARGET_LIBRARY_IDS
+  ) {
+    console.log(
+      "[MetaProvider] Target library ID count reached:",
+      count,
+    );
 
-      if (
-        stableRounds >= 4 &&
-        count > 0
-      ) {
-        console.log(
-          "[MetaProvider] Library ID count stabilized:",
-          count,
-        );
+    break;
+  }
 
-        break;
-      }
-    }
+  /*
+   * Meta has stopped loading new IDs.
+   * Two consecutive unchanged rounds are enough.
+   */
+  if (
+    stableRounds >=
+      STABLE_ROUNDS_REQUIRED &&
+    count > 0
+  ) {
+    console.log(
+      "[MetaProvider] Library ID count stabilized:",
+      count,
+    );
+
+    break;
+  }
+}
 
     await page.waitForTimeout(
       POST_SCROLL_WAIT_MS,

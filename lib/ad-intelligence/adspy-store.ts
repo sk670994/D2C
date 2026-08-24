@@ -1,6 +1,9 @@
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 
-export type AdSpyPlatform = "meta" | "google" | "linkedin";
+export type AdSpyPlatform =
+  | "meta"
+  | "google"
+  | "linkedin";
 
 export type SaveAdSpySnapshotInput = {
   userId: string;
@@ -42,17 +45,25 @@ function mapSnapshotRow(
     query: row.query,
     country: row.country,
     platform: row.platform,
-    ads: Array.isArray(row.ads) ? row.ads : [],
-    intelligence: row.intelligence ?? {},
-    createdAt: row.created_at,
+    ads: Array.isArray(row.ads)
+      ? row.ads
+      : [],
+    intelligence:
+      row.intelligence ?? {},
+    createdAt:
+      row.created_at,
   };
 }
+
+/* =========================================================
+ * SAVE
+ * ======================================================= */
 
 /**
  * Persist one complete AdSpy search result.
  *
- * We intentionally save the full ranked result set, not only the
- * paginated 20 ads shown in the UI.
+ * We intentionally save the full ranked result set, not only
+ * the paginated 20 ads shown in the UI.
  */
 export async function saveAdSpySnapshot(
   input: SaveAdSpySnapshotInput
@@ -68,10 +79,14 @@ export async function saveAdSpySnapshot(
     .insert({
       user_id: input.userId,
       query: input.query.trim(),
-      country: input.country.trim().toUpperCase(),
+      country:
+        input.country
+          .trim()
+          .toUpperCase(),
       platform: input.platform,
       ads: input.ads,
-      intelligence: input.intelligence,
+      intelligence:
+        input.intelligence,
     })
     .select(
       "id,user_id,query,country,platform,ads,intelligence,created_at"
@@ -88,6 +103,10 @@ export async function saveAdSpySnapshot(
     data as AdSpySnapshotRow
   );
 }
+
+/* =========================================================
+ * LATEST SNAPSHOT
+ * ======================================================= */
 
 /**
  * Get the newest snapshot for a user.
@@ -108,23 +127,32 @@ export async function getLatestAdSpySnapshot(
     .select(
       "id,user_id,query,country,platform,ads,intelligence,created_at"
     )
-    .eq("user_id", input.userId)
+    .eq(
+      "user_id",
+      input.userId
+    )
     .order("created_at", {
       ascending: false,
     })
     .limit(1);
 
-  if (input.query?.trim()) {
+  if (
+    input.query?.trim()
+  ) {
     request = request.eq(
       "query",
       input.query.trim()
     );
   }
 
-  if (input.country?.trim()) {
+  if (
+    input.country?.trim()
+  ) {
     request = request.eq(
       "country",
-      input.country.trim().toUpperCase()
+      input.country
+        .trim()
+        .toUpperCase()
     );
   }
 
@@ -147,13 +175,123 @@ export async function getLatestAdSpySnapshot(
   }
 
   if (!data) {
-    return null;
-  }
+  console.info(
+    "[AdSpyStore] No snapshot found:",
+    {
+      userId: input.userId,
+      query: input.query,
+      country: input.country,
+      platform: input.platform,
+    }
+  );
 
+  return null;
+}
+
+console.info(
+  "[AdSpyStore] Snapshot found:",
+  {
+    id: data.id,
+    userId: data.user_id,
+    query: data.query,
+    country: data.country,
+    platform: data.platform,
+    createdAt: data.created_at,
+    adCount:
+      Array.isArray(data.ads)
+        ? data.ads.length
+        : 0,
+  }
+);
+
+return mapSnapshotRow(
+  data as AdSpySnapshotRow
+);
   return mapSnapshotRow(
     data as AdSpySnapshotRow
   );
 }
+
+/* =========================================================
+ * FRESH SNAPSHOT
+ * ======================================================= */
+
+/**
+ * Get the newest snapshot only when it is recent enough
+ * to be reused as a fast result.
+ *
+ * Default freshness window: 5 minutes.
+ *
+ * This does not scrape Meta. It only checks existing
+ * persisted snapshot data.
+ */
+export async function getFreshAdSpySnapshot(
+  input: {
+    userId: string;
+    query: string;
+    country: string;
+    platform: AdSpyPlatform;
+    maxAgeMinutes?: number;
+  }
+): Promise<AdSpySnapshot | null> {
+  const snapshot =
+    await getLatestAdSpySnapshot({
+      userId: input.userId,
+      query: input.query,
+      country: input.country,
+      platform: input.platform,
+    });
+
+  if (!snapshot) {
+    return null;
+  }
+
+  const createdAt =
+    new Date(
+      snapshot.createdAt
+    ).getTime();
+
+  if (!Number.isFinite(createdAt)) {
+    return null;
+  }
+
+  const maxAgeMinutes =
+    Number.isFinite(
+      input.maxAgeMinutes
+    ) &&
+    (input.maxAgeMinutes ?? 0) > 0
+      ? input.maxAgeMinutes!
+      : 5;
+
+  const maxAgeMs =
+    maxAgeMinutes *
+    60 *
+    1000;
+
+  const ageMs =
+    Date.now() -
+    createdAt;
+
+  /*
+   * Future timestamps are not considered fresh.
+   */
+  if (ageMs < 0) {
+    return null;
+  }
+
+  /*
+   * Snapshot is too old.
+   */
+  if (ageMs > maxAgeMs) {
+    return null;
+  }
+
+  return snapshot;
+}
+
+/* =========================================================
+ * HISTORY
+ * ======================================================= */
 
 /**
  * Get historical AdSpy snapshots.
@@ -176,7 +314,10 @@ export async function getAdSpySnapshotHistory(
     await createServerAuthClient();
 
   const safeLimit = Math.min(
-    Math.max(input.limit ?? 10, 1),
+    Math.max(
+      input.limit ?? 10,
+      1
+    ),
     100
   );
 
@@ -185,23 +326,32 @@ export async function getAdSpySnapshotHistory(
     .select(
       "id,user_id,query,country,platform,ads,intelligence,created_at"
     )
-    .eq("user_id", input.userId)
+    .eq(
+      "user_id",
+      input.userId
+    )
     .order("created_at", {
       ascending: false,
     })
     .limit(safeLimit);
 
-  if (input.query?.trim()) {
+  if (
+    input.query?.trim()
+  ) {
     request = request.eq(
       "query",
       input.query.trim()
     );
   }
 
-  if (input.country?.trim()) {
+  if (
+    input.country?.trim()
+  ) {
     request = request.eq(
       "country",
-      input.country.trim().toUpperCase()
+      input.country
+        .trim()
+        .toUpperCase()
     );
   }
 
@@ -225,5 +375,7 @@ export async function getAdSpySnapshotHistory(
 
   return (
     (data ?? []) as AdSpySnapshotRow[]
-  ).map(mapSnapshotRow);
+  ).map(
+    mapSnapshotRow
+  );
 }

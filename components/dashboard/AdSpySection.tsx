@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import AdSpyLoadingExperience from "@/components/dashboard/AdSpyLoadingExperience";
 
 type AdSpyAd = {
   id: string;
@@ -304,48 +305,127 @@ function safeAverage(
   );
 }
 
+function isValidOfferValue(
+  value?: string | null
+): boolean {
+  const text =
+    normalizeWhitespace(
+      value
+    );
+
+  if (!text) {
+    return false;
+  }
+
+  /*
+   * Validate every percentage offer
+   * before allowing it into the UI.
+   *
+   * Valid:
+   *   10% off
+   *   25% discount
+   *   100% off
+   *
+   * Invalid:
+   *   315% off
+   *   415% off
+   */
+  const percentageMatches =
+    Array.from(
+      text.matchAll(
+        /\b(\d{1,3})\s*%\s*(?:off|discount)\b/gi
+      )
+    );
+
+  for (
+    const match of percentageMatches
+  ) {
+    const percentage =
+      Number(
+        match[1]
+      );
+
+    if (
+      !Number.isFinite(
+        percentage
+      ) ||
+      percentage <= 0 ||
+      percentage > 100
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function getTopOffers(
   ads: AdSpyAd[]
 ): Array<{
   offer: string;
   count: number;
 }> {
-  const counts = new Map<
-    string,
-    number
-  >();
+  const counts =
+    new Map<
+      string,
+      number
+    >();
 
   for (const ad of ads) {
     const offer =
-      normalizeWhitespace(ad.offer);
+      normalizeWhitespace(
+        ad.offer
+      );
 
-    if (!offer) {
+    if (
+      !offer ||
+      !isValidOfferValue(
+        offer
+      )
+    ) {
       continue;
     }
 
     counts.set(
       offer,
-      (counts.get(offer) ?? 0) + 1
+      (
+        counts.get(
+          offer
+        ) ?? 0
+      ) + 1
     );
   }
 
   return Array.from(
     counts.entries()
   )
-    .map(([offer, count]) => ({
-      offer,
-      count,
-    }))
-    .sort((a, b) => {
-      if (b.count !== a.count) {
-        return b.count - a.count;
-      }
+    .map(
+      ([offer, count]) => ({
+        offer,
+        count,
+      })
+    )
+    .sort(
+      (a, b) => {
+        if (
+          b.count !==
+          a.count
+        ) {
+          return (
+            b.count -
+            a.count
+          );
+        }
 
-      return a.offer.localeCompare(
-        b.offer
-      );
-    })
-    .slice(0, 5);
+        return a.offer.localeCompare(
+          b.offer
+        );
+      }
+    )
+    .slice(
+      0,
+      5
+    );
 }
 
 function getTopCreators(
@@ -1810,40 +1890,11 @@ export function AdSpySection({
         </div>
       ) : null}
 
-      {loading ? (
-        <div
-          className="surface"
-          style={{
-            padding: 28,
-            borderRadius: 14,
-            textAlign:
-              "center",
-            marginBottom: 20,
-          }}
-        >
-          <p
-            style={{
-              margin: 0,
-              fontWeight: 600,
-            }}
-          >
-            Searching {platform === "google" ? "Google Ads Transparency Center" : platform === "linkedin" ? "LinkedIn Ad Library" : "Meta Ad Library"}...
-          </p>
-
-          <p
-            className="muted-text"
-            style={{
-              margin:
-                "7px 0 0",
-            }}
-          >
-            Loading, scoring
-            and ranking
-            competitor
-            creatives.
-          </p>
-        </div>
-      ) : null}
+     {loading ? (
+  <AdSpyLoadingExperience
+    platform={platform}
+  />
+) : null}
 
       {!loading &&
       ads.length === 0 &&
