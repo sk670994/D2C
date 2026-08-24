@@ -585,60 +585,200 @@ function getHookPatterns(
     .slice(0, 5);
 }
 
+function isMetaPlaceholder(
+  value?: string | null
+): boolean {
+  const text =
+    normalizeWhitespace(
+      value
+    ).toLowerCase();
+
+  if (!text) {
+    return true;
+  }
+
+  return (
+    text ===
+      "this ad has multiple versions" ||
+    text ===
+      "this ad has multiple versions." ||
+    text.includes(
+      "this ad has multiple versions"
+    ) ||
+    text.includes(
+      "more than one version"
+    ) ||
+    text.includes(
+      "एक से अधिक वर्जन"
+    ) ||
+    text.includes(
+      "एक से अधिक संस्करण"
+    ) ||
+    text.includes(
+      "इस विज्ञापन के एक से अधिक वर्जन"
+    ) ||
+    text.includes(
+      "इस विज्ञापन के एक से अधिक संस्करण"
+    ) ||
+    text.includes(
+      "इस क्रिएटिव और टेक्स्ट का उपयोग करता है"
+    )
+  );
+}
+
 function familyNameForAd(
   ad: AdSpyAd
 ): string {
-  const product = normalizeWhitespace(ad.productName);
-  const headline = normalizeWhitespace(ad.headline);
-  const primary = normalizeWhitespace(ad.primaryText);
-  const creator = normalizeWhitespace(ad.creatorName);
-  const offer = normalizeWhitespace(ad.offer);
+  const product =
+    normalizeWhitespace(
+      ad.productName
+    );
 
-  const source = normalizeWhitespace(
-    `${product} ${headline} ${primary}`
-  );
+  const headline =
+    normalizeWhitespace(
+      ad.headline
+    );
+
+  const primary =
+    normalizeWhitespace(
+      ad.primaryText
+    );
+
+  const creator =
+    normalizeWhitespace(
+      ad.creatorName
+    );
+
+  const offer =
+    normalizeWhitespace(
+      ad.offer
+    );
 
   /*
-   * Generic grouping only.
-   * Do not hardcode Mamaearth/Nykaa/Nike/etc.
-   * The first available meaningful product/title becomes the family.
+   * 1. Prefer a real product name.
+   *
+   * Meta placeholder values are explicitly ignored.
    */
-  if (product && !looksLikeDateText(product)) {
-    return product
-      .replace(
-        /\s*[-–|]\s*\d+(?:\.\d+)?\s*(?:ml|g|kg|gm|mg|oz|pcs?|units?|pack|packs)\b/gi,
-        ""
+  if (
+    product &&
+    !looksLikeDateText(product) &&
+    !isMetaPlaceholder(product)
+  ) {
+    return (
+      product
+        .replace(
+          /\s*[-–|]\s*\d+(?:\.\d+)?\s*(?:ml|g|kg|gm|mg|oz|pcs?|units?|pack|packs)\b/gi,
+          ""
+        )
+        .replace(
+          /\s+/g,
+          " "
+        )
+        .trim()
+        .slice(
+          0,
+          70
+        ) ||
+      product.slice(
+        0,
+        70
       )
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 70) || product.slice(0, 70);
+    );
   }
 
-  if (headline && !looksLikeDateText(headline)) {
-    return headline.slice(0, 70);
+  /*
+   * 2. Prefer a real headline.
+   */
+  if (
+    headline &&
+    !looksLikeDateText(
+      headline
+    ) &&
+    !isMetaPlaceholder(
+      headline
+    )
+  ) {
+    return headline.slice(
+      0,
+      70
+    );
   }
 
-  const hook = getHookText(ad);
-  if (hook) {
-    const compactHook = hook
-      .replace(/https?:\/\/\S+/gi, "")
-      .replace(/\s+/g, " ")
-      .trim();
+  /*
+   * 3. Placeholder title:
+   *    derive the family name from primary copy.
+   */
+  if (primary) {
+    const cleaned =
+      primary
+        .replace(
+          /https?:\/\/\S+/gi,
+          ""
+        )
+        .replace(
+          /\s+/g,
+          " "
+        )
+        .trim();
 
-    if (compactHook) {
-      return compactHook.slice(0, 70);
+    const sentences =
+      cleaned
+        .split(
+          /[.!?]\s+/
+        )
+        .map(
+          (part) =>
+            part.trim()
+        )
+        .filter(
+          (part) =>
+            part.length >= 4
+        );
+
+    const useful =
+      sentences.find(
+        (part) =>
+          !/^(?:shop now|buy now|learn more|click here)$/i.test(
+            part
+          )
+      );
+
+    if (useful) {
+      return useful.slice(
+        0,
+        70
+      );
+    }
+
+    if (cleaned) {
+      return cleaned.slice(
+        0,
+        70
+      );
     }
   }
 
+  /*
+   * 4. Creator fallback.
+   */
   if (creator) {
-    return `Creator: ${creator}`.slice(0, 70);
+    return `Creator: ${creator}`.slice(
+      0,
+      70
+    );
   }
 
+  /*
+   * 5. Offer fallback.
+   */
   if (offer) {
-    return `Offer-led: ${offer}`.slice(0, 70);
+    return `Offer-led: ${offer}`.slice(
+      0,
+      70
+    );
   }
 
-  return source.slice(0, 70) || "Other creatives";
+  return "Other creatives";
 }
 
 function buildCreativeFamilies(
