@@ -28,6 +28,16 @@ import {
 import {
   getLatestAdSpySnapshot,
   saveAdSpySnapshot,
+
+  getFreshSharedAdSpyCache,
+  ensureSharedAdSpyCache,
+  claimSharedAdSpyJob,
+  completeSharedAdSpyJob,
+  failSharedAdSpyJob,
+
+  type AdSpyPlatform,
+  type AdSpySearchMode,
+  type SharedAdSpyCache,
 } from "@/lib/ad-intelligence/adspy-store";
 
 import type {
@@ -47,22 +57,37 @@ export const dynamic = "force-dynamic";
  * ======================================================= */
 
 /*
- * Reuse a persisted AdSpy snapshot for 5 minutes.
+ * Shared AdSpy intelligence is reusable for 5 minutes.
  *
- * This is intentionally conservative for now.
- * We can later introduce:
- *
- * - stale-while-revalidate
- * - Redis / Upstash
- * - background refresh
- *
- * without changing the frontend contract.
+ * User-specific snapshots remain available for history.
  */
-const FRESH_SNAPSHOT_MAX_AGE_MS =
-  5 * 60 * 1000;
+const SHARED_CACHE_MAX_AGE_MINUTES = 5;
+
+/*
+ * When another request already owns the scrape job,
+ * wait for the shared result for a bounded amount of time.
+ *
+ * This prevents a second user from starting another scraper.
+ *
+ * Important:
+ * This is a transitional synchronous bridge.
+ * Later we should move the UI to a true async search-job model.
+ */
+const SHARED_JOB_WAIT_TIMEOUT_MS =
+  20_000;
+
+const SHARED_JOB_POLL_INTERVAL_MS =
+  1_000;
+
+/*
+ * Do not let a failed provider execution become
+ * a valid shared result containing zero ads.
+ */
+const EMPTY_PROVIDER_RESULT_IS_FAILURE =
+  true;
 
 /* =========================================================
- * STORED SNAPSHOT TYPES
+ * TYPES
  * ======================================================= */
 
 type SnapshotCacheResult = {
@@ -72,12 +97,38 @@ type SnapshotCacheResult = {
   ageMs: number;
 };
 
+type SearchResponseOptions = {
+  query: string;
+  country: string;
+  platform: AdPlatform;
+  mode: AdSearchMode;
+
+  ads: EnrichedCompetitorAd[];
+
+  summary: AdSearchSummary;
+
+  page: number;
+  limit: number;
+
+  cacheHit: boolean;
+  stale: boolean;
+  cacheAgeMs: number;
+
+  fetchedAt: string;
+
+  scrapeDurationMs?: number;
+  analysisDurationMs?: number;
+  totalDurationMs?: number;
+
+  sharedCacheKey?: string;
+};
+
 /* =========================================================
- * HELPERS
+ * NORMALIZATION HELPERS
  * ======================================================= */
 
 function normalizeStoredAds(
-  value: unknown
+  value: unknown,
 ): EnrichedCompetitorAd[] {
   if (!Array.isArray(value)) {
     return [];
@@ -87,7 +138,7 @@ function normalizeStoredAds(
 }
 
 function normalizeStoredSummary(
-  value: unknown
+  value: unknown,
 ): AdSearchSummary | null {
   if (
     !value ||
@@ -99,17 +150,21 @@ function normalizeStoredSummary(
   return value as AdSearchSummary;
 }
 
+/* =========================================================
+ * DATE HELPERS
+ * ======================================================= */
+
 function getSnapshotAgeMs(
-  createdAt: string
+  createdAt: string,
 ): number {
   const timestamp =
     new Date(
-      createdAt
+      createdAt,
     ).getTime();
 
   if (
     !Number.isFinite(
-      timestamp
+      timestamp,
     )
   ) {
     return Number.POSITIVE_INFINITY;
@@ -120,8 +175,7 @@ function getSnapshotAgeMs(
     timestamp;
 
   /*
-   * Never treat a future-dated snapshot
-   * as fresh.
+   * Never treat a future timestamp as fresh.
    */
   if (age < 0) {
     return Number.POSITIVE_INFINITY;
@@ -131,20 +185,26 @@ function getSnapshotAgeMs(
 }
 
 function isFreshSnapshot(
-  createdAt: string
+  createdAt: string,
 ): boolean {
   return (
     getSnapshotAgeMs(
-      createdAt
+      createdAt,
     ) <=
-    FRESH_SNAPSHOT_MAX_AGE_MS
+    SHARED_CACHE_MAX_AGE_MINUTES *
+      60 *
+      1000
   );
 }
+
+/* =========================================================
+ * PAGINATION
+ * ======================================================= */
 
 function paginateAds(
   ads: EnrichedCompetitorAd[],
   page: number,
-  limit: number
+  limit: number,
 ) {
   const total =
     ads.length;
@@ -153,7 +213,7 @@ function paginateAds(
     total === 0
       ? 0
       : Math.ceil(
-          total / limit
+          total / limit,
         );
 
   const safePage =
@@ -161,7 +221,7 @@ function paginateAds(
       ? 1
       : Math.min(
           page,
-          totalPages
+          totalPages,
         );
 
   const startIndex =
@@ -175,7 +235,7 @@ function paginateAds(
   const paginatedAds =
     ads.slice(
       startIndex,
-      endIndex
+      endIndex,
     );
 
   const hasNextPage =
@@ -197,30 +257,343 @@ function paginateAds(
 
   return {
     paginatedAds,
+
     total,
+
     totalPages,
+
     safePage,
+
     hasNextPage,
+
     hasPreviousPage,
+
     nextPage,
+
     previousPage,
   };
 }
 
 /* =========================================================
+ * PLATFORM HELPERS
+ * ======================================================= */
+
+function isAdSpyPlatform(
+  value: string,
+): value is AdSpyPlatform {
+  return (
+    value === "meta" ||
+    value === "google" ||
+    value === "linkedin"
+  );
+}
+
+function normalizeMode(
+  value: string | null,
+): AdSearchMode {
+  return value === "keyword"
+    ? "keyword"
+    : "advertiser";
+}
+
+/* =========================================================
+ * SHARED JOB WAITING
+ * ======================================================= */
+
+/**
+ * When User A is already scraping BEARDO and User B
+ * arrives a moment later, User B waits for the shared
+ * result instead of starting another Meta scrape.
+ */
+async function waitForSharedJob(
+  input: {
+    query: string;
+    country: string;
+    platform: AdSpyPlatform;
+    mode: AdSearchMode;
+  },
+): Promise<SharedAdSpyCache | null> {
+  const startedAt =
+    Date.now();
+
+  while (
+    Date.now() -
+      startedAt <
+    SHARED_JOB_WAIT_TIMEOUT_MS
+  ) {
+    const sharedCache =
+      await getFreshSharedAdSpyCache({
+        query:
+          input.query,
+
+        country:
+          input.country,
+
+        platform:
+          input.platform,
+
+        mode:
+          input.mode,
+
+        maxAgeMinutes:
+          SHARED_CACHE_MAX_AGE_MINUTES,
+      });
+
+    if (sharedCache) {
+      return sharedCache;
+    }
+
+    /*
+     * If the job has failed, stop immediately.
+     *
+     * We deliberately fetch the raw cache to distinguish
+     * running from failed.
+     */
+    const current =
+      await ensureSharedAdSpyCache({
+        query:
+          input.query,
+
+        country:
+          input.country,
+
+        platform:
+          input.platform,
+
+        mode:
+          input.mode,
+      });
+
+    if (
+      current.status ===
+      "failed"
+    ) {
+      return null;
+    }
+
+    /*
+     * If nobody is running it anymore and it is not ready,
+     * return so the caller can attempt to claim it.
+     */
+    if (
+      current.status !==
+      "running"
+    ) {
+      return null;
+    }
+
+    await new Promise<void>(
+      (resolve) =>
+        setTimeout(
+          resolve,
+          SHARED_JOB_POLL_INTERVAL_MS,
+        ),
+    );
+  }
+
+  return null;
+}
+
+/* =========================================================
+ * SAVE USER SNAPSHOT SAFELY
+ * ======================================================= */
+
+async function persistUserSnapshotSafely(
+  input: {
+    userId: string;
+    query: string;
+    country: string;
+    platform: AdSpyPlatform;
+    ads: EnrichedCompetitorAd[];
+    intelligence: AdSearchSummary;
+  },
+): Promise<void> {
+  /*
+   * Never write empty results produced by a failed provider.
+   */
+  if (
+    EMPTY_PROVIDER_RESULT_IS_FAILURE &&
+    input.ads.length === 0
+  ) {
+    console.warn(
+      "[AdIntelligenceSearch] Skipping user snapshot save for empty result.",
+      {
+        query:
+          input.query,
+        country:
+          input.country,
+        platform:
+          input.platform,
+      },
+    );
+
+    return;
+  }
+
+  try {
+    await saveAdSpySnapshot({
+      userId:
+        input.userId,
+
+      query:
+        input.query,
+
+      country:
+        input.country,
+
+      platform:
+        input.platform,
+
+      ads:
+        input.ads,
+
+      intelligence:
+        input.intelligence,
+    });
+
+    console.info(
+      "[AdIntelligenceSearch] Saved user AdSpy snapshot:",
+      {
+        userId:
+          input.userId,
+
+        query:
+          input.query,
+
+        ads:
+          input.ads.length,
+      },
+    );
+  } catch (error) {
+    /*
+     * User snapshot failure must not destroy the actual
+     * shared AdSpy result.
+     */
+    console.error(
+      "[AdIntelligenceSearch] Failed to persist user snapshot:",
+      error,
+    );
+  }
+}
+
+/* =========================================================
+ * RESPONSE BUILDER
+ * ======================================================= */
+
+function buildSearchResponse(
+  options: SearchResponseOptions,
+): NextResponse {
+  const pagination =
+    paginateAds(
+      options.ads,
+      options.page,
+      options.limit,
+    );
+
+  return NextResponse.json(
+    {
+      success: true,
+
+      query:
+        options.query,
+
+      country:
+        options.country,
+
+      platform:
+        options.platform,
+
+      mode:
+        options.mode,
+
+      count:
+        pagination
+          .paginatedAds
+          .length,
+
+      pagination: {
+        page:
+          pagination.safePage,
+
+        limit:
+          options.limit,
+
+        total:
+          pagination.total,
+
+        totalPages:
+          pagination.totalPages,
+
+        hasNextPage:
+          pagination.hasNextPage,
+
+        hasPreviousPage:
+          pagination.hasPreviousPage,
+
+        nextPage:
+          pagination.nextPage,
+
+        previousPage:
+          pagination.previousPage,
+      },
+
+      /*
+       * Summary is for the COMPLETE dataset,
+       * not only the current page.
+       */
+      summary:
+        options.summary,
+
+      /*
+       * Existing frontend continues to render the
+       * requested page only.
+       */
+      ads:
+        pagination
+          .paginatedAds,
+
+      meta: {
+        cacheHit:
+          options.cacheHit,
+
+        stale:
+          options.stale,
+
+        cacheAgeMs:
+          options.cacheAgeMs,
+
+        fetchedAt:
+          options.fetchedAt,
+
+        scrapeDurationMs:
+          options.scrapeDurationMs ??
+          0,
+
+        analysisDurationMs:
+          options.analysisDurationMs ??
+          0,
+
+        totalDurationMs:
+          options.totalDurationMs ??
+          0,
+
+        sharedCacheKey:
+          options.sharedCacheKey ??
+          null,
+      },
+    },
+    {
+      status: 200,
+    },
+  );
+}
+
+/* =========================================================
  * GET /api/ad-intelligence/search
- *
- * Examples:
- *
- * /api/ad-intelligence/search?q=Mamaearth
- * /api/ad-intelligence/search?q=Mamaearth&page=2
- * /api/ad-intelligence/search?q=Mamaearth&page=2&limit=20
- * /api/ad-intelligence/search?q=Mamaearth&mode=keyword
- * /api/ad-intelligence/search?q=Mamaearth&country=IN&platform=meta
  * ======================================================= */
 
 export async function GET(
-  request: NextRequest
+  request: NextRequest,
 ) {
   const requestStartedAt =
     Date.now();
@@ -247,19 +620,24 @@ export async function GET(
       !user
     ) {
       console.warn(
-        "[AdIntelligenceSearch] Unauthorized request."
+        "[AdIntelligenceSearch] Unauthorized request.",
       );
 
       return NextResponse.json(
         {
-          success: false,
-          error: "Unauthorized",
+          success:
+            false,
+
+          error:
+            "Unauthorized",
+
           message:
             "You must be signed in to use AdSpy.",
         },
         {
-          status: 401,
-        }
+          status:
+            401,
+        },
       );
     }
 
@@ -272,51 +650,60 @@ export async function GET(
         .searchParams;
 
     const query =
-      searchParams
-        .get("q")
-        ?.trim() ??
-      "";
+      (
+        searchParams.get("q") ??
+        ""
+      ).trim();
 
     if (!query) {
       return NextResponse.json(
         {
-          success: false,
+          success:
+            false,
+
           error:
             "Missing required query parameter: q",
         },
         {
-          status: 400,
-        }
+          status:
+            400,
+        },
       );
     }
 
     const country =
       (
-        searchParams
-          .get("country")
-          ?.trim() ||
+        searchParams.get(
+          "country",
+        ) ??
         "IN"
-      ).toUpperCase();
+      )
+        .trim()
+        .toUpperCase();
 
-    const platform =
+    const platformValue =
       (
-        searchParams
-          .get("platform")
-          ?.trim()
-          .toLowerCase() ||
+        searchParams.get(
+          "platform",
+        ) ??
         "meta"
-      );
+      )
+        .trim()
+        .toLowerCase();
 
     if (
-      platform !== "meta" &&
-      platform !== "google" &&
-      platform !== "linkedin"
+      !isAdSpyPlatform(
+        platformValue,
+      )
     ) {
       return NextResponse.json(
         {
-          success: false,
+          success:
+            false,
+
           error:
-            `Unsupported platform: ${platform}`,
+            `Unsupported platform: ${platformValue}`,
+
           supportedPlatforms: [
             "meta",
             "google",
@@ -324,21 +711,21 @@ export async function GET(
           ],
         },
         {
-          status: 400,
-        }
+          status:
+            400,
+        },
       );
     }
 
-    const rawMode =
-      searchParams
-        .get("mode")
-        ?.trim()
-        .toLowerCase();
+    const platform =
+      platformValue;
 
-    const mode: AdSearchMode =
-      rawMode === "keyword"
-        ? "keyword"
-        : "advertiser";
+    const mode =
+      normalizeMode(
+        searchParams.get(
+          "mode",
+        ),
+      );
 
     /* -----------------------------------------------------
      * 3. PAGINATION
@@ -346,253 +733,713 @@ export async function GET(
 
     const rawPage =
       Number(
-        searchParams
-          .get("page") ??
-          "1"
+        searchParams.get(
+          "page",
+        ) ??
+        "1",
       );
 
     const page =
       Number.isFinite(
-        rawPage
+        rawPage,
       ) &&
       rawPage >= 1
         ? Math.floor(
-            rawPage
+            rawPage,
           )
         : 1;
 
     const rawLimit =
       Number(
-        searchParams
-          .get("limit") ??
-          "20"
+        searchParams.get(
+          "limit",
+        ) ??
+        "20",
       );
 
     const limit =
       Number.isFinite(
-        rawLimit
+        rawLimit,
       ) &&
       rawLimit >= 1
         ? Math.min(
             Math.floor(
-              rawLimit
+              rawLimit,
             ),
-            100
+            100,
           )
         : 20;
 
-    /* -----------------------------------------------------
-     * 4. FAST PATH — RECENT SNAPSHOT
-     *
-     * This is the first performance improvement.
-     *
-     * IMPORTANT:
-     * We still authenticate before reading the snapshot,
-     * because snapshots belong to the authenticated user.
-     * --------------------------------------------------- */
-
     console.info(
-      `[AdIntelligenceSearch] Checking recent snapshot: ${query} (${country})`
+      "[AdIntelligenceSearch] Search request:",
+      {
+        userId:
+          user.id,
+
+        query,
+
+        country,
+
+        platform,
+
+        mode,
+
+        page,
+
+        limit,
+      },
     );
 
+    /* -----------------------------------------------------
+     * 4. SHARED CACHE FAST PATH
+     *
+     * This is the key multi-user change.
+     *
+     * User A may have generated this result.
+     * User B can now reuse it.
+     * User C can reuse it.
+     * User D can reuse it.
+     * --------------------------------------------------- */
+
     try {
-      const latestSnapshot =
-        await getLatestAdSpySnapshot(
+      const sharedCache =
+        await getFreshSharedAdSpyCache({
+          query,
+
+          country,
+
+          platform,
+
+          mode,
+
+          maxAgeMinutes:
+            SHARED_CACHE_MAX_AGE_MINUTES,
+        });
+
+      if (sharedCache) {
+        const sharedAds =
+          normalizeStoredAds(
+            sharedCache.ads,
+          );
+
+        const sharedSummary =
+          normalizeStoredSummary(
+            sharedCache.intelligence,
+          ) ??
+          buildAdSearchSummary(
+            sharedAds,
+          );
+
+        const ageMs =
+          getSnapshotAgeMs(
+            sharedCache.updatedAt,
+          );
+
+        console.info(
+          "[AdIntelligenceSearch] Shared cache HIT:",
           {
+            query,
+
+            country,
+
+            platform,
+
+            ads:
+              sharedAds.length,
+
+            ageMs,
+
+            cacheKey:
+              sharedCache.cacheKey,
+          },
+        );
+
+        /*
+         * Preserve user-specific history on page 1 only.
+         * This avoids generating one history record per pagination request.
+         */
+        if (
+          page === 1 &&
+          sharedAds.length > 0
+        ) {
+          await persistUserSnapshotSafely({
             userId:
               user.id,
+
             query,
+
             country,
-            platform:
-              platform as
-                | "meta"
-                | "google"
-                | "linkedin",
-          }
-        );
+
+            platform,
+
+            ads:
+              sharedAds,
+
+            intelligence:
+              sharedSummary,
+          });
+        }
+
+        return buildSearchResponse({
+          query,
+
+          country,
+
+          platform,
+
+          mode,
+
+          ads:
+            sharedAds,
+
+          summary:
+            sharedSummary,
+
+          page,
+
+          limit,
+
+          cacheHit:
+            true,
+
+          stale:
+            false,
+
+          cacheAgeMs:
+            ageMs,
+
+          fetchedAt:
+            sharedCache.updatedAt,
+
+          totalDurationMs:
+            Date.now() -
+            requestStartedAt,
+
+          sharedCacheKey:
+            sharedCache.cacheKey,
+        });
+      }
+    } catch (sharedCacheError) {
+      /*
+       * Shared-cache problems should not make AdSpy unusable.
+       *
+       * We can still fall back to the provider.
+       */
+      console.warn(
+        "[AdIntelligenceSearch] Shared cache lookup failed. Falling back:",
+        sharedCacheError,
+      );
+    }
+
+    /* -----------------------------------------------------
+     * 5. USER-SPECIFIC SNAPSHOT FALLBACK
+     *
+     * Existing history/cache behavior remains.
+     * This protects backward compatibility.
+     * --------------------------------------------------- */
+
+    try {
+      console.info(
+        "[AdIntelligenceSearch] Checking user snapshot:",
+        {
+          userId:
+            user.id,
+
+          query,
+
+          country,
+
+          platform,
+        },
+      );
+
+      const latestSnapshot =
+        await getLatestAdSpySnapshot({
+          userId:
+            user.id,
+
+          query,
+
+          country,
+
+          platform,
+        });
 
       if (
         latestSnapshot &&
         isFreshSnapshot(
-          latestSnapshot.createdAt
+          latestSnapshot.createdAt,
         )
       ) {
         const cachedAds =
           normalizeStoredAds(
-            latestSnapshot.ads
+            latestSnapshot.ads,
           );
 
         const cachedSummary =
           normalizeStoredSummary(
-            latestSnapshot
-              .intelligence
+            latestSnapshot.intelligence,
           );
 
         /*
-         * Only use the snapshot as a cache hit
-         * when it actually contains a usable result.
+         * Only treat a non-empty snapshot as a
+         * successful cache hit.
          */
         if (
           cachedAds.length > 0
         ) {
           const ageMs =
             getSnapshotAgeMs(
-              latestSnapshot.createdAt
-            );
-
-          const pagination =
-            paginateAds(
-              cachedAds,
-              page,
-              limit
+              latestSnapshot.createdAt,
             );
 
           console.info(
-            `[AdIntelligenceSearch] Fresh snapshot hit: ${query} (${cachedAds.length} ads, ${ageMs}ms old)`
-          );
-
-          return NextResponse.json(
+            "[AdIntelligenceSearch] User snapshot HIT:",
             {
-              success: true,
-
               query,
-              country,
 
-              platform:
-                platform as AdPlatform,
-
-              mode,
-
-              count:
-                pagination
-                  .paginatedAds
-                  .length,
-
-              pagination: {
-                page:
-                  pagination.safePage,
-
-                limit,
-
-                total:
-                  pagination.total,
-
-                totalPages:
-                  pagination.totalPages,
-
-                hasNextPage:
-                  pagination
-                    .hasNextPage,
-
-                hasPreviousPage:
-                  pagination
-                    .hasPreviousPage,
-
-                nextPage:
-                  pagination
-                    .nextPage,
-
-                previousPage:
-                  pagination
-                    .previousPage,
-              },
-
-              /*
-               * Existing frontend compatibility.
-               */
-              summary:
-                cachedSummary ??
-                buildAdSearchSummary(
-                  cachedAds
-                ),
+              userId:
+                user.id,
 
               ads:
-                pagination
-                  .paginatedAds,
+                cachedAds.length,
 
-              /*
-               * New metadata for the future loading/cache UI.
-               */
-              meta: {
-                cacheHit: true,
-                stale: false,
-                cacheAgeMs:
-                  ageMs,
-                fetchedAt:
-                  latestSnapshot.createdAt,
-              },
+              ageMs,
             },
-            {
-              status: 200,
-            }
           );
+
+          return buildSearchResponse({
+            query,
+
+            country,
+
+            platform,
+
+            mode,
+
+            ads:
+              cachedAds,
+
+            summary:
+              cachedSummary ??
+              buildAdSearchSummary(
+                cachedAds,
+              ),
+
+            page,
+
+            limit,
+
+            cacheHit:
+              true,
+
+            stale:
+              false,
+
+            cacheAgeMs:
+              ageMs,
+
+            fetchedAt:
+              latestSnapshot.createdAt,
+
+            totalDurationMs:
+              Date.now() -
+              requestStartedAt,
+          });
         }
       }
-
-      console.info(
-        `[AdIntelligenceSearch] No fresh usable snapshot found: ${query}`
-      );
-    } catch (cacheError) {
-      /*
-       * Cache/storage failures must NEVER prevent
-       * a fresh AdSpy search.
-       */
+    } catch (snapshotError) {
       console.warn(
-        "[AdIntelligenceSearch] Snapshot lookup failed; continuing with fresh search.",
-        cacheError
+        "[AdIntelligenceSearch] User snapshot lookup failed. Continuing:",
+        snapshotError,
       );
     }
 
     /* -----------------------------------------------------
-     * 5. PROVIDER
+     * 6. PROVIDER VALIDATION
      * --------------------------------------------------- */
 
     const provider =
       adProviders[
-        platform as AdPlatform
+        platform
       ];
 
     if (!provider) {
       return NextResponse.json(
         {
-          success: false,
+          success:
+            false,
+
           error:
             `${platform} provider is not available.`,
         },
         {
-          status: 500,
-        }
+          status:
+            500,
+        },
       );
     }
 
     /* -----------------------------------------------------
-     * 6. BUILD SEARCH INPUT
+     * 7. SHARED CACHE RECORD
      * --------------------------------------------------- */
 
-    const searchInput: AdSearchInput =
-      {
-        query,
-        country,
-        platform:
-          platform as AdPlatform,
-        mode,
-      };
+    let sharedCache:
+      SharedAdSpyCache;
+
+    try {
+      sharedCache =
+        await ensureSharedAdSpyCache({
+          query,
+
+          country,
+
+          platform,
+
+          mode,
+        });
+    } catch (error) {
+      console.error(
+        "[AdIntelligenceSearch] Failed to initialize shared cache:",
+        error,
+      );
+
+      /*
+       * We cannot safely coordinate concurrent scraping
+       * without the shared cache, so fall back to the
+       * existing direct provider behavior.
+       */
+      sharedCache =
+        null as never;
+    }
+
+    /* -----------------------------------------------------
+     * 8. CLAIM SINGLE SHARED JOB
+     * --------------------------------------------------- */
+
+    let ownsSharedJob =
+      false;
+
+    let claimedLeaseUntil:
+      | string
+      | null =
+      null;
+
+    let sharedCacheKey =
+      sharedCache?.cacheKey ??
+      null;
+
+    if (sharedCache) {
+      try {
+        const claim =
+          await claimSharedAdSpyJob({
+            query,
+
+            country,
+
+            platform,
+
+            mode,
+          });
+
+        sharedCache =
+          claim.cache;
+
+        sharedCacheKey =
+          claim.cache.cacheKey;
+
+        ownsSharedJob =
+          claim.claimed;
+
+        claimedLeaseUntil =
+          claim.leaseUntil;
+
+        console.info(
+          "[AdIntelligenceSearch] Shared job decision:",
+          {
+            query,
+
+            cacheKey:
+              sharedCache.cacheKey,
+
+            claimed:
+              claim.claimed,
+
+            status:
+              claim.cache.status,
+
+            leaseUntil:
+              claim.leaseUntil,
+          },
+        );
+      } catch (claimError) {
+        console.error(
+          "[AdIntelligenceSearch] Shared job claim failed:",
+          claimError,
+        );
+
+        ownsSharedJob =
+          false;
+      }
+    }
+
+    /* -----------------------------------------------------
+     * 9. ANOTHER REQUEST OWNS THE JOB
+     * --------------------------------------------------- */
+
+    if (
+      sharedCache &&
+      !ownsSharedJob
+    ) {
+      console.info(
+        "[AdIntelligenceSearch] Another request owns this search. Waiting for shared result:",
+        {
+          query,
+
+          cacheKey:
+            sharedCache.cacheKey,
+        },
+      );
+
+      try {
+        const completed =
+          await waitForSharedJob({
+            query,
+
+            country,
+
+            platform,
+
+            mode,
+          });
+
+        if (completed) {
+          const completedAds =
+            normalizeStoredAds(
+              completed.ads,
+            );
+
+          const completedSummary =
+            normalizeStoredSummary(
+              completed.intelligence,
+            ) ??
+            buildAdSearchSummary(
+              completedAds,
+            );
+
+          if (
+            completedAds.length > 0
+          ) {
+            const ageMs =
+              getSnapshotAgeMs(
+                completed.updatedAt,
+              );
+
+            /*
+             * Save this user's history on the
+             * first page only.
+             */
+            if (
+              page === 1
+            ) {
+              await persistUserSnapshotSafely({
+                userId:
+                  user.id,
+
+                query,
+
+                country,
+
+                platform,
+
+                ads:
+                  completedAds,
+
+                intelligence:
+                  completedSummary,
+              });
+            }
+
+            return buildSearchResponse({
+              query,
+
+              country,
+
+              platform,
+
+              mode,
+
+              ads:
+                completedAds,
+
+              summary:
+                completedSummary,
+
+              page,
+
+              limit,
+
+              cacheHit:
+                true,
+
+              stale:
+                false,
+
+              cacheAgeMs:
+                ageMs,
+
+              fetchedAt:
+                completed.updatedAt,
+
+              totalDurationMs:
+                Date.now() -
+                requestStartedAt,
+
+              sharedCacheKey:
+                completed.cacheKey,
+            });
+          }
+        }
+
+        /*
+         * If waiting timed out, return a clear response
+         * rather than silently starting another expensive
+         * concurrent Meta scrape.
+         */
+        return NextResponse.json(
+          {
+            success:
+              false,
+
+            error:
+              "AdSpy search is already running.",
+
+            message:
+              "Another search for this brand is currently collecting fresh competitor data. Please retry in a few seconds.",
+
+            retryable:
+              true,
+
+            meta: {
+              sharedJob:
+                true,
+
+              cacheKey:
+                sharedCache.cacheKey,
+            },
+          },
+          {
+            status:
+              409,
+          },
+        );
+      } catch (waitError) {
+        console.error(
+          "[AdIntelligenceSearch] Shared job wait failed:",
+          waitError,
+        );
+
+        return NextResponse.json(
+          {
+            success:
+              false,
+
+            error:
+              "Another AdSpy search is currently running.",
+
+            message:
+              "Please retry in a few seconds.",
+
+            retryable:
+              true,
+          },
+          {
+            status:
+              409,
+          },
+        );
+      }
+    }
+
+    /* -----------------------------------------------------
+     * 10. BUILD SEARCH INPUT
+     * --------------------------------------------------- */
+
+    const searchInput:
+      AdSearchInput = {
+      query,
+
+      country,
+
+      platform,
+
+      mode,
+    };
 
     console.info(
-      `[AdIntelligenceSearch] Fresh search: ${platform}: ${query} (${country})`
+      "[AdIntelligenceSearch] Starting provider:",
+      {
+        provider:
+          platform,
+
+        query,
+
+        country,
+
+        mode,
+
+        ownsSharedJob,
+      },
     );
 
     /* -----------------------------------------------------
-     * 7. SCRAPE PROVIDER
+     * 11. PROVIDER SEARCH
      * --------------------------------------------------- */
 
     const scrapeStartedAt =
       Date.now();
 
-    const providerResult =
-      await provider.search(
-        searchInput
-      );
+    let providerResult;
+
+    try {
+      providerResult =
+        await provider.search(
+          searchInput,
+        );
+    } catch (providerError) {
+      /*
+       * If this request owns the shared job,
+       * mark that job failed so another request can
+       * safely retry later.
+       */
+      if (
+        sharedCache &&
+        ownsSharedJob &&
+        claimedLeaseUntil
+      ) {
+        try {
+          await failSharedAdSpyJob({
+            cacheKey:
+              sharedCache.cacheKey,
+
+            leaseUntil:
+              claimedLeaseUntil,
+
+            errorMessage:
+              providerError instanceof Error
+                ? providerError.message
+                : "Provider search failed.",
+          });
+        } catch (failError) {
+          console.error(
+            "[AdIntelligenceSearch] Failed to mark shared job failed:",
+            failError,
+          );
+        }
+      }
+
+      throw providerError;
+    }
 
     const scrapeDurationMs =
       Date.now() -
@@ -603,11 +1450,105 @@ export async function GET(
       [];
 
     console.info(
-      `[AdIntelligenceSearch] Provider returned ${scrapedAds.length} ads in ${scrapeDurationMs}ms.`
+      "[AdIntelligenceSearch] Provider returned:",
+      {
+        ads:
+          scrapedAds.length,
+
+        durationMs:
+          scrapeDurationMs,
+
+        query,
+
+        platform,
+      },
     );
 
     /* -----------------------------------------------------
-     * 8. ENRICH / RANK
+     * 12. EMPTY PROVIDER RESULT
+     * --------------------------------------------------- */
+
+    if (
+      EMPTY_PROVIDER_RESULT_IS_FAILURE &&
+      scrapedAds.length === 0
+    ) {
+      const message =
+        `Provider returned 0 ads for "${query}".`;
+
+      /*
+       * IMPORTANT:
+       *
+       * Do NOT save zero-result provider failures
+       * as valid user/shared snapshots.
+       */
+      if (
+        sharedCache &&
+        ownsSharedJob &&
+        claimedLeaseUntil
+      ) {
+        try {
+          await failSharedAdSpyJob({
+            cacheKey:
+              sharedCache.cacheKey,
+
+            leaseUntil:
+              claimedLeaseUntil,
+
+            errorMessage:
+              message,
+          });
+        } catch (failError) {
+          console.error(
+            "[AdIntelligenceSearch] Failed to mark empty provider result as failed:",
+            failError,
+          );
+        }
+      }
+
+      console.warn(
+        "[AdIntelligenceSearch] Empty provider result; refusing to cache as valid data:",
+        {
+          query,
+
+          platform,
+
+          country,
+        },
+      );
+
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            "No usable ads were returned.",
+
+          message:
+            "The provider did not return usable competitor data. Please retry shortly.",
+
+          retryable:
+            true,
+
+          meta: {
+            cacheHit:
+              false,
+
+            providerEmpty:
+              true,
+
+            scrapeDurationMs,
+          },
+        },
+        {
+          status:
+            502,
+        },
+      );
+    }
+
+    /* -----------------------------------------------------
+     * 13. ENRICH / RANK
      * --------------------------------------------------- */
 
     const analysisStartedAt =
@@ -616,35 +1557,35 @@ export async function GET(
     const enrichedAds =
       enrichAds(
         scrapedAds,
-        query
+        query,
       );
 
     /*
-     * Preserve the existing behavior:
-     *
-     * provider result
-     *   ↓
-     * enrichment
-     *   ↓
-     * rankedAds
-     *
-     * The existing provider already returns the relevant
-     * ordered dataset.
+     * Provider already returns the relevant ordered
+     * dataset.
      */
     const rankedAds =
-      [...enrichedAds];
+      [
+        ...enrichedAds,
+      ];
 
     console.info(
-      `[AdIntelligenceSearch] Enriched ${rankedAds.length} ads.`
+      "[AdIntelligenceSearch] Enriched:",
+      {
+        ads:
+          rankedAds.length,
+
+        query,
+      },
     );
 
     /* -----------------------------------------------------
-     * 9. BUILD INTELLIGENCE SUMMARY
+     * 14. BUILD INTELLIGENCE SUMMARY
      * --------------------------------------------------- */
 
     const summary =
       buildAdSearchSummary(
-        rankedAds
+        rankedAds,
       );
 
     const analysisDurationMs =
@@ -652,153 +1593,173 @@ export async function GET(
       analysisStartedAt;
 
     /* -----------------------------------------------------
-     * 10. SAVE COMPLETE SNAPSHOT
+     * 15. COMPLETE SHARED CACHE
      * --------------------------------------------------- */
 
-    try {
-      await saveAdSpySnapshot(
-        {
-          userId:
-            user.id,
-
-          query,
-
-          country,
-
-          platform:
-            platform as
-              | "meta"
-              | "google"
-              | "linkedin",
-
-          /*
-           * IMPORTANT:
-           * Save the complete ranked dataset.
-           */
-          ads:
-            rankedAds,
-
-          /*
-           * Save the complete intelligence summary.
-           */
-          intelligence:
-            summary,
-        }
-      );
-
-      console.info(
-        `[AdIntelligenceSearch] Saved AdSpy snapshot: ${query} (${rankedAds.length} ads)`
-      );
-    } catch (
-      snapshotError
+    if (
+      sharedCache &&
+      ownsSharedJob &&
+      claimedLeaseUntil
     ) {
-      /*
-       * Snapshot storage should NEVER break AdSpy.
-       */
-      console.error(
-        "[AdIntelligenceSearch] Failed to persist AdSpy snapshot:",
-        snapshotError
-      );
+      try {
+        const completed =
+          await completeSharedAdSpyJob({
+            cacheKey:
+              sharedCache.cacheKey,
+
+            leaseUntil:
+              claimedLeaseUntil,
+
+            ads:
+              rankedAds,
+
+            intelligence:
+              summary,
+          });
+
+        sharedCache =
+          completed;
+
+        console.info(
+          "[AdIntelligenceSearch] Shared AdSpy cache completed:",
+          {
+            cacheKey:
+              completed.cacheKey,
+
+            ads:
+              rankedAds.length,
+          },
+        );
+      } catch (sharedCompleteError) {
+        /*
+         * Do not destroy an otherwise valid result because
+         * cache persistence failed.
+         */
+        console.error(
+          "[AdIntelligenceSearch] Failed to complete shared cache:",
+          sharedCompleteError,
+        );
+      }
     }
 
     /* -----------------------------------------------------
-     * 11. PAGINATION
+     * 16. USER SNAPSHOT
+     * --------------------------------------------------- */
+
+    /*
+     * Save only page 1 as user history.
+     *
+     * Pagination requests should not create duplicate snapshots.
+     */
+    if (
+      page === 1
+    ) {
+      await persistUserSnapshotSafely({
+        userId:
+          user.id,
+
+        query,
+
+        country,
+
+        platform,
+
+        ads:
+          rankedAds,
+
+        intelligence:
+          summary,
+      });
+    }
+
+    /* -----------------------------------------------------
+     * 17. PAGINATION
      * --------------------------------------------------- */
 
     const pagination =
       paginateAds(
         rankedAds,
         page,
-        limit
+        limit,
       );
 
     /* -----------------------------------------------------
-     * 12. RESPONSE
+     * 18. RESPONSE
      * --------------------------------------------------- */
 
     const totalDurationMs =
       Date.now() -
       requestStartedAt;
 
-    return NextResponse.json(
+    console.info(
+      "[AdIntelligenceSearch] Completed search:",
       {
-        success: true,
-
         query,
 
         country,
 
-        platform:
-          platform as AdPlatform,
+        platform,
 
-        mode,
+        totalAds:
+          rankedAds.length,
 
-        count:
+        page:
+
+          pagination.safePage,
+
+        pageSize:
           pagination
             .paginatedAds
             .length,
 
-        pagination: {
-          page:
-            pagination.safePage,
+        scrapeDurationMs,
 
-          limit,
+        analysisDurationMs,
 
-          total:
-            pagination.total,
-
-          totalPages:
-            pagination.totalPages,
-
-          hasNextPage:
-            pagination
-              .hasNextPage,
-
-          hasPreviousPage:
-            pagination
-              .hasPreviousPage,
-
-          nextPage:
-            pagination.nextPage,
-
-          previousPage:
-            pagination.previousPage,
-        },
-
-        /*
-         * Summary represents the COMPLETE matching result set,
-         * not just the current page.
-         */
-        summary,
-
-        /*
-         * Current frontend continues to consume only
-         * the requested page.
-         */
-        ads:
-          pagination
-            .paginatedAds,
-
-        /*
-         * New metadata.
-         *
-         * This does not break the existing frontend.
-         */
-        meta: {
-          cacheHit: false,
-          stale: false,
-          cacheAgeMs: 0,
-          fetchedAt:
-            new Date().toISOString(),
-          scrapeDurationMs,
-          analysisDurationMs,
-          totalDurationMs,
-        },
+        totalDurationMs,
       },
-      {
-        status: 200,
-      }
     );
+
+    return buildSearchResponse({
+      query,
+
+      country,
+
+      platform,
+
+      mode,
+
+      ads:
+        rankedAds,
+
+      summary,
+
+      page,
+
+      limit,
+
+      cacheHit:
+        false,
+
+      stale:
+        false,
+
+      cacheAgeMs:
+        0,
+
+      fetchedAt:
+        new Date().toISOString(),
+
+      scrapeDurationMs,
+
+      analysisDurationMs,
+
+      totalDurationMs,
+
+      sharedCacheKey:
+        sharedCacheKey ??
+        undefined,
+    });
   } catch (
     error: unknown
   ) {
@@ -814,12 +1775,13 @@ export async function GET(
       typeof error ===
       "string"
     ) {
-      message = error;
+      message =
+        error;
     } else {
       try {
         message =
           JSON.stringify(
-            error
+            error,
           );
       } catch {
         message =
@@ -828,21 +1790,34 @@ export async function GET(
     }
 
     console.error(
-      `[AdIntelligenceSearch] ${message}`
+      "[AdIntelligenceSearch] Search failed:",
+      {
+        message,
+
+        stack:
+          error instanceof Error
+            ? error.stack
+            : undefined,
+      },
     );
 
     return NextResponse.json(
       {
-        success: false,
+        success:
+          false,
 
         error:
           "Failed to search ad intelligence.",
 
         message,
+
+        retryable:
+          true,
       },
       {
-        status: 500,
-      }
+        status:
+          500,
+      },
     );
   }
 }

@@ -272,7 +272,7 @@ async function getMetaBrowser(): Promise<Browser> {
         return metaBrowser;
       }
     } catch {
-      // Continue by recreating browser.
+      // Browser is no longer usable.
     }
 
     metaBrowser = null;
@@ -319,12 +319,7 @@ async function getMetaBrowser(): Promise<Browser> {
       }
 
       console.log(
-        "[MetaProvider] Launching reusable Chromium",
-      );
-
-      console.log(
-        "[MetaProvider] executablePath:",
-        executablePath,
+        "[MetaProvider] Launching Chromium",
       );
 
       const browser =
@@ -337,13 +332,11 @@ async function getMetaBrowser(): Promise<Browser> {
       browser.on(
         "disconnected",
         () => {
-          console.log(
+          console.warn(
             "[MetaProvider] Chromium disconnected",
           );
 
-          if (
-            metaBrowser === browser
-          ) {
+          if (metaBrowser === browser) {
             metaBrowser = null;
           }
         },
@@ -359,7 +352,6 @@ async function getMetaBrowser(): Promise<Browser> {
 
   return metaBrowserPromise;
 }
-
 async function resetMetaBrowser(): Promise<void> {
   const browser = metaBrowser;
 
@@ -1682,7 +1674,7 @@ async function scrapeMetaAdLibraryOnce(
   maxScrolls =
     DEFAULT_MAX_SCROLLS,
 ): Promise<ScrapedMetaAd[]> {
-  const browser =
+  let browser =
     await getMetaBrowser();
 
   let context:
@@ -1690,6 +1682,18 @@ async function scrapeMetaAdLibraryOnce(
     | null = null;
 
   try {
+    if (!browser.isConnected()) {
+      console.warn(
+        "[MetaProvider] Chromium disconnected before context creation; acquiring a fresh browser.",
+      );
+
+      if (metaBrowser === browser) {
+        metaBrowser = null;
+      }
+
+      browser = await getMetaBrowser();
+    }
+
     context =
       await browser.newContext({
         locale: "en-IN",
@@ -1705,8 +1709,54 @@ async function scrapeMetaAdLibraryOnce(
         },
       });
 
-    const page =
-      await context.newPage();
+    let page;
+
+    try {
+      page = await context.newPage();
+    } catch (pageError) {
+      console.warn(
+        "[MetaProvider] page creation failed:",
+        pageError,
+      );
+
+      await safeCloseContext(context);
+      context = null;
+
+      let connected = false;
+
+      try {
+        connected = browser.isConnected();
+      } catch {
+        connected = false;
+      }
+
+      if (!connected) {
+        if (metaBrowser === browser) {
+          metaBrowser = null;
+        }
+
+        browser = await getMetaBrowser();
+
+        context =
+          await browser.newContext({
+            locale: "en-IN",
+
+            viewport: {
+              width: 1440,
+              height: 1000,
+            },
+
+            extraHTTPHeaders: {
+              "Accept-Language":
+                "en-IN,en;q=0.9",
+            },
+          });
+
+        page = await context.newPage();
+      } else {
+        throw pageError;
+      }
+    }
 
     const url =
       buildLibraryUrl(
@@ -1748,119 +1798,103 @@ async function scrapeMetaAdLibraryOnce(
       INITIAL_RENDER_WAIT_MS,
     );
 
-/* -----------------------------------------------------
- * SCROLL
- * --------------------------------------------------- */
+    /* -----------------------------------------------------
+     * SCROLL
+     * --------------------------------------------------- */
 
-let previousCount = 0;
-let stableRounds = 0;
+    let previousCount = 0;
+    let stableRounds = 0;
 
-const SCROLL_WAIT_MS = 350;
-const STABLE_ROUNDS_REQUIRED = 2;
+    for (
+      let scroll = 0;
+      scroll < maxScrolls;
+      scroll++
+    ) {
+      await page.mouse.wheel(
+        0,
+        2200,
+      );
 
-for (
-  let scroll = 0;
-  scroll < maxScrolls;
-  scroll++
-) {
-  await page.mouse.wheel(
-    0,
-    2200,
-  );
+      await page.waitForTimeout(
+        650,
+      );
 
-  /*
-   * Give Meta enough time to append newly-loaded
-   * creatives, but do not blindly wait 650ms every time.
-   */
-  await page.waitForTimeout(
-    SCROLL_WAIT_MS,
-  );
+      const count =
+        await page.evaluate(
+          () => {
+            const text =
+              document.body?.innerText ??
+              "";
 
-  const count =
-    await page.evaluate(
-      () => {
-        const text =
-          document.body?.textContent ??
-          "";
+            const matches =
+              text.match(
+                /(?:Library ID|लाइब्रेरी ID):\s*\d+/gi,
+              ) ?? [];
 
-        const matches =
-          text.match(
-            /(?:Library ID|à¤²à¤¾à¤‡à¤¬à¥à¤°à¥‡à¤°à¥€ ID):\s*\d+/gi,
-          ) ?? [];
+            const ids =
+              matches
+                .map(
+                  (
+                    value,
+                  ) =>
+                    value.match(
+                      /(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i,
+                    )?.[1] ??
+                    null,
+                )
+                .filter(
+                  (
+                    value,
+                  ): value is string =>
+                    value !== null,
+                );
 
-        const ids =
-          matches
-            .map(
-              (
-                value,
-              ) =>
-                value.match(
-                  /(?:Library ID|à¤²à¤¾à¤‡à¤¬à¥à¤°à¥‡à¤°à¥€ ID):\s*(\d+)/i,
-                )?.[1] ??
-                null,
-            )
-            .filter(
-              (
-                value,
-              ): value is string =>
-                value !== null,
-            );
+            return new Set(ids).size;
+          },
+        );
 
-        return new Set(ids).size;
-      },
-    );
+      console.log(
+        `[MetaProvider] Scroll ${
+          scroll + 1
+        }: ${count} library IDs`,
+      );
 
-  console.log(
-    `[MetaProvider] Scroll ${
-      scroll + 1
-    }: ${count} library IDs`,
-  );
+      if (
+        count ===
+        previousCount
+      ) {
+        stableRounds++;
+      } else {
+        stableRounds = 0;
+      }
 
-  if (
-    count ===
-    previousCount
-  ) {
-    stableRounds++;
-  } else {
-    stableRounds = 0;
-  }
+      previousCount =
+        count;
 
-  previousCount =
-    count;
+      if (
+        count >=
+        TARGET_LIBRARY_IDS
+      ) {
+        console.log(
+          "[MetaProvider] Target library ID count reached:",
+          count,
+        );
 
-  /*
-   * Stop immediately once we have reached the desired
-   * number of Library IDs.
-   */
-  if (
-    count >=
-    TARGET_LIBRARY_IDS
-  ) {
-    console.log(
-      "[MetaProvider] Target library ID count reached:",
-      count,
-    );
+        break;
+      }
 
-    break;
-  }
+      if (
+        stableRounds >= 4 &&
+        count > 0
+      ) {
+        console.log(
+          "[MetaProvider] Library ID count stabilized:",
+          count,
+        );
 
-  /*
-   * Meta has stopped loading new IDs.
-   * Two consecutive unchanged rounds are enough.
-   */
-  if (
-    stableRounds >=
-      STABLE_ROUNDS_REQUIRED &&
-    count > 0
-  ) {
-    console.log(
-      "[MetaProvider] Library ID count stabilized:",
-      count,
-    );
-
-    break;
-  }
-}
+        break;
+      }
+    }
 
     await page.waitForTimeout(
       POST_SCROLL_WAIT_MS,
@@ -3321,7 +3355,16 @@ async function scrapeMetaAdLibrary(
     if (
       attempt < maxAttempts
     ) {
-      await resetMetaBrowser();
+      try {
+        if (
+          metaBrowser &&
+          !metaBrowser.isConnected()
+        ) {
+          metaBrowser = null;
+        }
+      } catch {
+        metaBrowser = null;
+      }
 
       await new Promise<void>(
         (resolve) =>
