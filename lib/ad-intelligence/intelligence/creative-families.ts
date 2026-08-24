@@ -66,17 +66,24 @@ export type CreativeFamily = {
  * GENERIC / PLACEHOLDER META HEADLINES
  * ======================================================= */
 
-const PLACEHOLDER_HEADLINES = new Set([
-  "this ad has multiple versions",
-  "this ad has multiple versions.",
-  "this ad has multiple versions using this creative",
-  "multiple versions of this ad",
-  "इस विज्ञापन के एक से अधिक वर्जन है",
-  "इस विज्ञापन के एक से अधिक वर्जन हैं",
-  "इस विज्ञापन के एक से अधिक संस्करण हैं",
-  "इस विज्ञापन के एक से अधिक संस्करण है",
-  "3 विज्ञापन इस क्रिएटिव और टेक्स्ट का उपयोग करता है",
-]);
+const PLACEHOLDER_HEADLINES =
+  new Set([
+    "this ad has multiple versions",
+    "this ad has multiple versions.",
+    "this ad has multiple versions using this creative",
+    "multiple versions of this ad",
+
+    "इस विज्ञापन के एक से अधिक वर्जन है",
+    "इस विज्ञापन के एक से अधिक वर्जन हैं",
+    "इस विज्ञापन के एक से अधिक संस्करण हैं",
+    "इस विज्ञापन के एक से अधिक संस्करण है",
+
+    "3 विज्ञापन इस क्रिएटिव और टेक्स्ट का उपयोग करता है",
+  ]);
+
+/* =========================================================
+ * NORMALIZATION
+ * ======================================================= */
 
 function normalizeText(
   value:
@@ -95,8 +102,15 @@ function compactText(
   value: string,
 ): string {
   return normalizeText(value)
-    .replace(/[^a-z0-9]+/g, "");
+    .replace(
+      /[^a-z0-9]+/g,
+      "",
+    );
 }
+
+/* =========================================================
+ * PLACEHOLDER DETECTION
+ * ======================================================= */
 
 function isPlaceholderHeadline(
   value:
@@ -208,7 +222,9 @@ function tokenize(
 
   return new Set(
     normalized
-      .split(/[^a-z0-9]+/i)
+      .split(
+        /[^a-z0-9]+/i,
+      )
       .map((token) =>
         token.trim(),
       )
@@ -244,8 +260,12 @@ function jaccardSimilarity(
 
   let intersection = 0;
 
-  for (const token of aTokens) {
-    if (bTokens.has(token)) {
+  for (
+    const token of aTokens
+  ) {
+    if (
+      bTokens.has(token)
+    ) {
       intersection++;
     }
   }
@@ -281,7 +301,10 @@ function getLandingDomain(
   try {
     return new URL(url)
       .hostname
-      .replace(/^www\./i, "")
+      .replace(
+        /^www\./i,
+        "",
+      )
       .toLowerCase();
   } catch {
     return null;
@@ -362,17 +385,22 @@ function sameCreator(
  * - same landing domain helps
  * - identical placeholders do NOT create similarity
  * ======================================================= */
+
 function familySimilarity(
   a: CompetitorAd,
   b: CompetitorAd,
 ): number {
   let score = 0;
 
-  if (sameAdvertiser(a, b)) {
+  if (
+    sameAdvertiser(a, b)
+  ) {
     score += 30;
   }
 
-  if (sameCreator(a, b)) {
+  if (
+    sameCreator(a, b)
+  ) {
     score += 12;
   }
 
@@ -563,7 +591,189 @@ function getPreferredFamilyName(
   }
 
   /*
-   * 2. Most common meaningful headline.
+   * 2. Extract a short product/creative name from
+   *    meaningful primary text.
+   *
+   * This is important for Meta ads where the headline
+   * may only say:
+   *
+   * "This ad has multiple versions"
+   *
+   * while the actual product/message appears in the
+   * primary text.
+   */
+  const primaryTexts =
+    ads
+      .map(
+        getMeaningfulPrimaryText,
+      )
+      .filter(
+        (
+          value,
+        ): value is string =>
+          Boolean(value),
+      );
+
+  if (
+    primaryTexts.length > 0
+  ) {
+    /*
+     * Prefer a short sentence/phrase that looks like
+     * a named product or creative.
+     *
+     * This is deliberately generic. We do not hard-code
+     * Nike, Aero-FIT, Jordan, or any other brand.
+     */
+    const candidates =
+      primaryTexts
+        .map((text) => {
+          const cleaned =
+            text
+              .replace(
+                /\s+/g,
+                " ",
+              )
+              .trim();
+
+          /*
+           * Remove URLs.
+           */
+          const withoutUrl =
+            cleaned
+              .replace(
+                /https?:\/\/\S+/gi,
+                "",
+              )
+              .trim();
+
+          if (!withoutUrl) {
+            return null;
+          }
+
+          /*
+           * Split long copy into sentence-like chunks.
+           */
+          const parts =
+            withoutUrl
+              .split(
+                /[.!?]\s+|[.!?]+$/,
+              )
+              .map(
+                (part) =>
+                  part.trim(),
+              )
+              .filter(
+                (part) =>
+                  part.length >= 4 &&
+                  part.length <= 120,
+              );
+
+          if (
+            parts.length === 0
+          ) {
+            return withoutUrl;
+          }
+
+          /*
+           * Prefer sentence fragments that look like a
+           * named product/creative instead of generic CTA
+           * or promotional language.
+           */
+          const namedCandidate =
+            parts.find(
+              (part) => {
+                const normalized =
+                  normalizeText(
+                    part,
+                  );
+
+                /*
+                 * Product-like names often contain:
+                 * - multiple words
+                 * - a model/edition marker
+                 * - a capitalized-name pattern in the
+                 *   original text
+                 *
+                 * We avoid brand-specific dictionaries.
+                 */
+                const wordCount =
+                  part
+                    .split(
+                      /\s+/,
+                    )
+                    .filter(
+                      Boolean,
+                    ).length;
+
+                const hasNumber =
+                  /\d/.test(
+                    part,
+                  );
+
+                const hasModelMarker =
+                  /\b(?:pro|max|plus|air|ultra|lite|classic|edition|series|model|collection|kit|pack|set)\b/i.test(
+                    part,
+                  );
+
+                const looksPromotional =
+                  /\b(?:shop now|buy now|learn more|sign up|get started|click|visit|discover|sale|discount|off|free shipping|free delivery|limited time|don't miss|dont miss|code|coupon)\b/i.test(
+                    normalized,
+                  );
+
+                return (
+                  wordCount >= 2 &&
+                  wordCount <= 14 &&
+                  !looksPromotional &&
+                  (
+                    hasNumber ||
+                    hasModelMarker
+                  )
+                );
+              },
+            );
+
+          /*
+           * If nothing looks like a named product,
+           * prefer the shortest useful sentence that
+           * is not obviously just a CTA.
+           */
+          if (namedCandidate) {
+            return namedCandidate;
+          }
+
+          const nonPromotional =
+            parts.find(
+              (part) =>
+                !/\b(?:shop now|buy now|learn more|sign up|get started|click|visit|sale|discount|free shipping|free delivery|limited time)\b/i.test(
+                  part,
+                ),
+            );
+
+          return (
+            nonPromotional ??
+            parts[0] ??
+            withoutUrl
+          );
+        })
+        .filter(
+          (
+            value,
+          ): value is string =>
+            Boolean(value),
+        );
+
+    const common =
+      findCommonValue(
+        candidates,
+      );
+
+    if (common) {
+      return common;
+    }
+  }
+
+  /*
+   * 3. Most common meaningful headline.
    */
   const headlines = ads
     .map(
@@ -590,35 +800,34 @@ function getPreferredFamilyName(
   }
 
   /*
-   * 3. Most common primary text.
+   * 4. Shortest meaningful primary text.
+   *
+   * Fallback for families where the same message is present
+   * but no obvious product phrase can be extracted.
    */
-  const primaryTexts =
-    ads
-      .map(
-        getMeaningfulPrimaryText,
-      )
-      .filter(
-        (
-          value,
-        ): value is string =>
-          Boolean(value),
-      );
-
   if (
     primaryTexts.length > 0
   ) {
-    const common =
-      findCommonValue(
-        primaryTexts,
-      );
+    const shortest =
+      [...primaryTexts].sort(
+        (a, b) =>
+          a.length -
+          b.length,
+      )[0];
 
-    if (common) {
-      return common;
+    if (shortest) {
+      return shortest.length >
+        120
+        ? `${shortest.slice(
+            0,
+            117,
+          )}...`
+        : shortest;
     }
   }
 
   /*
-   * 4. Advertiser fallback.
+   * 5. Advertiser fallback.
    */
   const advertiser =
     findCommonValue(
@@ -653,7 +862,9 @@ function findCommonValue(
       }
     >();
 
-  for (const value of values) {
+  for (
+    const value of values
+  ) {
     const cleaned =
       value?.trim();
 
@@ -662,7 +873,9 @@ function findCommonValue(
     }
 
     const key =
-      normalizeText(cleaned);
+      normalizeText(
+        cleaned,
+      );
 
     if (!key) {
       continue;
@@ -808,6 +1021,7 @@ function buildUniqueFamilyId(
     !usedIds.has(base)
   ) {
     usedIds.add(base);
+
     return base;
   }
 

@@ -651,6 +651,43 @@ function isOfferLike(
   );
 }
 
+function isValidExtractedOffer(
+  value: string | null | undefined,
+): boolean {
+  const text =
+    value?.trim() ?? "";
+
+  if (!text) {
+    return false;
+  }
+
+  const percentageMatches =
+    [
+      ...text.matchAll(
+        /\b(\d{1,3})\s*%\s*(?:off|discount)\b/gi,
+      ),
+    ];
+
+  for (
+    const match of percentageMatches
+  ) {
+    const percentage =
+      Number(match[1]);
+
+    if (
+      !Number.isFinite(
+        percentage,
+      ) ||
+      percentage <= 0 ||
+      percentage > 100
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function looksLikePersonName(
   value: string,
 ): boolean {
@@ -1266,14 +1303,20 @@ function normalizeScrapedAd(
       lines,
     );
 
-  const offer =
+  const normalizedInputOffer =
     normalizeExtractedText(
       input.offer,
-    ) ??
-    extractOffer(
-      primaryText,
-      lines,
     );
+
+  const offer =
+    isValidExtractedOffer(
+      normalizedInputOffer,
+    )
+      ? normalizedInputOffer
+      : extractOffer(
+          primaryText,
+          lines,
+        );
 
   const priceLine =
     lines.find(
