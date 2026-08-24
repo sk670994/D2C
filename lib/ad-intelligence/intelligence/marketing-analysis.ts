@@ -213,22 +213,74 @@ function detectOffer(
   ad: CompetitorAd,
   text: string,
 ): string | null {
-  if (ad.offer) {
-    return nullableText(
-      ad.offer,
-    );
+  /*
+   * First trust the normalized ad.offer only when it is valid.
+   *
+   * This protects the marketing analysis layer from malformed
+   * values that may have entered through another extraction path.
+   */
+  const normalizedAdOffer =
+    nullableText(ad.offer);
+
+  if (normalizedAdOffer) {
+    const percentageMatches =
+      [
+        ...normalizedAdOffer.matchAll(
+          /\b(\d{1,3})\s*%\s*(?:off|discount)\b/gi,
+        ),
+      ];
+
+    let valid = true;
+
+    for (
+      const match of percentageMatches
+    ) {
+      const percentage =
+        Number(match[1]);
+
+      if (
+        !Number.isFinite(
+          percentage,
+        ) ||
+        percentage <= 0 ||
+        percentage > 100
+      ) {
+        valid = false;
+        break;
+      }
+    }
+
+    if (valid) {
+      return normalizedAdOffer;
+    }
   }
 
   const normalized =
     normalizeLower(text);
 
+  /*
+   * Percentage offers detected from raw marketing text.
+   *
+   * Only percentages from 1 through 100 are accepted.
+   */
   const percentage =
     text.match(
-      /\b\d{1,3}\s?%\s?(?:off|discount)?\b/i,
+      /\b(\d{1,3})\s*%\s*(?:off|discount)\b/i,
     );
 
-  if (percentage?.[0]) {
-    return percentage[0].trim();
+  if (percentage?.[1]) {
+    const value =
+      Number(
+        percentage[1],
+      );
+
+    if (
+      Number.isFinite(value) &&
+      value > 0 &&
+      value <= 100
+    ) {
+      return percentage[0].trim();
+    }
   }
 
   const offerPatterns = [
