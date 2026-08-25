@@ -317,32 +317,142 @@ export async function searchGlobalAds(input: { query: string; country: string; p
   };
 }
 
-export async function autocompleteBrands(input: { query: string; limit?: number }) {
-  const client = createGlobalServiceClient();
-  const prefix = normalizeCollectionQuery(input.query);
-  const limit = Math.min(Math.max(input.limit ?? 8, 1), 20);
-  if (!prefix) return [];
+export async function autocompleteBrands(input: {
+  query: string;
+  limit?: number;
+}) {
+  const totalStartedAt = Date.now();
 
-  const { data: aliases, error } = await client.from("ad_intelligence_brand_aliases")
-    .select("brand_id,alias,normalized_alias")
-    .ilike("normalized_alias", `${prefix}%`)
+  const client = createGlobalServiceClient();
+
+  const prefix = normalizeCollectionQuery(input.query);
+
+  const limit = Math.min(
+    Math.max(input.limit ?? 8, 1),
+    20,
+  );
+
+  if (!prefix) {
+    return [];
+  }
+
+  console.log("[AutocompleteStore] START", {
+    prefix,
+    limit,
+  });
+
+  const aliasStartedAt = Date.now();
+
+  const {
+    data: aliases,
+    error,
+  } = await client
+    .from("ad_intelligence_brand_aliases")
+    .select(
+      "brand_id,alias,normalized_alias",
+    )
+    .ilike(
+      "normalized_alias",
+      `${prefix}%`,
+    )
     .order("normalized_alias")
     .limit(limit);
-  if (error) throw new Error(`Autocomplete failed: ${error.message}`);
 
-  const ids = Array.from(new Set((aliases ?? []).map((row: any) => row.brand_id)));
-  const { data: brands, error: brandError } = ids.length
-    ? await client.from("ad_intelligence_brands").select("id,canonical_name,domain").in("id", ids)
-    : { data: [], error: null };
-  if (brandError) throw new Error(`Brand lookup failed: ${brandError.message}`);
+  console.log("[AutocompleteStore] ALIAS QUERY", {
+    durationMs:
+      Date.now() - aliasStartedAt,
+    rows:
+      aliases?.length ?? 0,
+    error:
+      error?.message ?? null,
+  });
 
-  const brandMap = new Map((brands ?? []).map((brand: any) => [brand.id, brand]));
-  return (aliases ?? []).map((alias: any) => {
-    const brand = brandMap.get(alias.brand_id);
-    return brand ? { id: brand.id, name: brand.canonical_name, alias: alias.alias, domain: brand.domain ?? null } : null;
-  }).filter(Boolean);
+  if (error) {
+    throw new Error(
+      `Autocomplete failed: ${error.message}`,
+    );
+  }
+
+  const ids = Array.from(
+    new Set(
+      (aliases ?? []).map(
+        (row: any) => row.brand_id,
+      ),
+    ),
+  );
+
+  if (!ids.length) {
+    console.log(
+      "[AutocompleteStore] NO BRAND IDS",
+    );
+
+    return [];
+  }
+
+  const brandStartedAt = Date.now();
+
+  const {
+    data: brands,
+    error: brandError,
+  } = await client
+    .from("ad_intelligence_brands")
+    .select(
+      "id,canonical_name,domain",
+    )
+    .in("id", ids);
+
+  console.log("[AutocompleteStore] BRAND QUERY", {
+    durationMs:
+      Date.now() - brandStartedAt,
+    rows:
+      brands?.length ?? 0,
+    error:
+      brandError?.message ?? null,
+  });
+
+  if (brandError) {
+    throw new Error(
+      `Brand lookup failed: ${brandError.message}`,
+    );
+  }
+
+  const brandMap = new Map(
+    (brands ?? []).map(
+      (brand: any) => [
+        brand.id,
+        brand,
+      ],
+    ),
+  );
+
+  const suggestions = (aliases ?? [])
+    .map((alias: any) => {
+      const brand = brandMap.get(
+        alias.brand_id,
+      );
+
+      return brand
+        ? {
+            id: brand.id,
+            name: brand.canonical_name,
+            alias: alias.alias,
+            domain:
+              brand.domain ?? null,
+          }
+        : null;
+    })
+    .filter(Boolean);
+
+  console.log("[AutocompleteStore] TOTAL", {
+    prefix,
+    durationMs:
+      Date.now() - totalStartedAt,
+    suggestions:
+      suggestions.length,
+  });
+
+  return suggestions;
 }
-
 export async function trackBrand(input: { userId: string; query: string; country: string; platform: AdPlatform }) {
   const client = createGlobalServiceClient();
   const normalizedQuery = normalizeCollectionQuery(input.query);
