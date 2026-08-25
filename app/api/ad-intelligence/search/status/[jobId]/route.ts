@@ -6,16 +6,24 @@ import { getCollectionJob } from "@/lib/ad-intelligence/global/store";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type RouteContext = {
+  params: Promise<{
+    jobId: string;
+  }>;
+};
+
 export async function GET(
   _request: NextRequest,
-  context: { params: Promise<{ jobId: string }> },
+  context: RouteContext,
 ) {
   try {
-    const auth = await createServerAuthClient();
+    // 1. Authenticate the user.
+    const authClient = await createServerAuthClient();
+
     const {
       data: { user },
       error: userError,
-    } = await auth.auth.getUser();
+    } = await authClient.auth.getUser();
 
     if (userError || !user) {
       return NextResponse.json(
@@ -28,47 +36,64 @@ export async function GET(
       );
     }
 
+    // 2. Read the dynamic [jobId] route parameter.
     const { jobId } = await context.params;
-    const normalizedJobId = jobId?.trim();
-    if (!normalizedJobId) {
+
+    if (!jobId?.trim()) {
       return NextResponse.json(
-        { success: false, error: "Missing jobId." },
+        {
+          success: false,
+          error: "Missing jobId.",
+        },
         { status: 400 },
       );
     }
 
-    const job = await getCollectionJob(normalizedJobId);
+    // 3. Load the collection job.
+    const job = await getCollectionJob(jobId.trim());
+
     if (!job) {
       return NextResponse.json(
-        { success: false, error: "Collection job not found." },
+        {
+          success: false,
+          error: "Collection job not found.",
+        },
         { status: 404 },
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      job: {
-        id: job.id,
-        collectionKey: job.collectionKey,
-        query: job.query,
-        country: job.country,
-        platform: job.platform,
-        mode: job.mode,
-        status: job.status,
-        stage: job.stage,
-        discoveredAds: job.discoveredAds,
-        normalizedAds: job.normalizedAds,
-        persistedAds: job.persistedAds,
-        errorMessage: job.errorMessage,
-        startedAt: job.startedAt,
-        completedAt: job.completedAt,
-        lastRequestedAt: job.lastRequestedAt,
-        updatedAt: job.updatedAt,
-        createdAt: job.createdAt,
+    // 4. Return the current job state.
+    return NextResponse.json(
+      {
+        success: true,
+        job: {
+          id: job.id,
+          collectionKey: job.collectionKey,
+          query: job.query,
+          country: job.country,
+          platform: job.platform,
+          mode: job.mode,
+          status: job.status,
+          stage: job.stage,
+          discoveredAds: job.discoveredAds,
+          normalizedAds: job.normalizedAds,
+          persistedAds: job.persistedAds,
+          errorMessage: job.errorMessage,
+          startedAt: job.startedAt,
+          completedAt: job.completedAt,
+          lastRequestedAt: job.lastRequestedAt,
+          updatedAt: job.updatedAt,
+          createdAt: job.createdAt,
+        },
       },
-    });
+      { status: 200 },
+    );
   } catch (error) {
-    console.error("[AdIntelligenceSearchStatus] Failed:", error);
+    console.error(
+      "[AdIntelligenceSearchStatus] Failed to read collection job:",
+      error,
+    );
+
     return NextResponse.json(
       {
         success: false,

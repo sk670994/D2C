@@ -1,8 +1,8 @@
 import "server-only";
 
-import type { AdPlatform } from "../types";
+import type { AdPlatform, CompetitorAd } from "../types";
 import { createGlobalServiceClient } from "./supabase";
-import type { CollectionJob, CollectionJobStatus, GlobalAdRecord } from "./types";
+import type { CollectionJob, CollectionJobStatus, GlobalAdRecord, GlobalLanguage, GlobalMarket, GlobalSearchResult, GlobalSearchSummary } from "./types";
 
 export function normalizeCollectionQuery(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
@@ -221,113 +221,57 @@ function mapCreativeRow(row: any, languages: any[], markets: any[]): GlobalAdRec
   };
 }
 
-function buildHookLabel(row: any): string | null {
-  const text = String(row.primary_text ?? row.headline ?? '').replace(/\s+/g, ' ').trim();
-  if (!text) return null;
-  const first = text.split(/[.!?。！？]/)[0]?.trim() ?? text;
-  return first.slice(0, 90);
-}
-
-function buildDerivedIntelligence(rows: any[]) {
-  const creatorCounts = new Map<string, number>();
-  const offerCounts = new Map<string, number>();
-  const hookCounts = new Map<string, number>();
-
-  for (const row of rows) {
-    const creator = String(row.creator_name ?? '').trim();
-    if (creator) creatorCounts.set(creator, (creatorCounts.get(creator) ?? 0) + 1);
-
-    const offer = String(row.offer ?? '').trim();
-    if (offer) offerCounts.set(offer, (offerCounts.get(offer) ?? 0) + 1);
-
-    const hook = buildHookLabel(row);
-    if (hook) hookCounts.set(hook, (hookCounts.get(hook) ?? 0) + 1);
-  }
-
-  const top = (counts: Map<string, number>, limit = 5) =>
-    Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, limit)
-      .map(([label, count]) => ({ label, count }));
-
-  const longest = [...rows]
-    .map((row) => ({
-      id: row.external_ad_id ?? row.external_ad_key ?? row.id,
-      advertiserName: row.advertiser_name ?? null,
-      headline: row.headline ?? null,
-      primaryText: row.primary_text ?? null,
-      runningDays: runningDays(row),
-      creativeType: row.creative_type ?? "unknown",
-      creatorName: row.creator_name ?? null,
-    }))
-    .filter((row) => Number.isFinite(row.runningDays))
-    .sort((a, b) => Number(b.runningDays ?? 0) - Number(a.runningDays ?? 0))[0] ?? null;
-
-  return {
-    topCreators: top(creatorCounts),
-    topOffers: top(offerCounts),
-    topHooks: top(hookCounts),
-    longestRunningAd: longest,
-    reach: {
-      status: "unavailable" as const,
-      reason: "The current public source does not expose a reliable per-ad reach figure to Zooptrack.",
-    },
-  };
-}
-
-export async function searchGlobalAds(input: {
-  query: string;
-  country: string;
-  platform: AdPlatform;
-  mode: "advertiser" | "keyword";
-  page: number;
-  limit: number;
-}): Promise<any> {
+export async function searchGlobalAds(input: { query: string; country: string; platform: AdPlatform; page: number; limit: number }): Promise<Omit<GlobalSearchResult, "collectionJobId" | "isRefreshing">> {
   const client = createGlobalServiceClient();
   const q = escapeLike(input.query);
   const country = input.country.trim().toUpperCase();
+  const { data: rollup, error: rollupError } = await client.rpc("get_ad_intelligence_rollup", { p_query: q, p_country: country, p_platform: input.platform });
+  if (rollupError) throw new Error(`Global rollup failed: ${rollupError.message}`);
 
-  const advertiserFilter = `advertiser_name.ilike.%${q}%`;
-  const keywordFilter = [
-    `advertiser_name.ilike.%${q}%`,
-    `creator_name.ilike.%${q}%`,
-    `headline.ilike.%${q}%`,
-    `product_name.ilike.%${q}%`,
-    `primary_text.ilike.%${q}%`,
-    `description.ilike.%${q}%`,
-    `offer.ilike.%${q}%`,
-    `landing_page_url.ilike.%${q}%`,
-  ].join(",");
+  const summary = rollup as {
+    totalAds: number;
+    activeAds: number;
+    inactiveAds: number;
+    videoAds: number;
+    imageAds: number;
+    carouselAds: number;
+    creatorAds: number;
+    averageRunningDays: number;
+    longestRunningDays: number;
+    languages: GlobalLanguage[];
+    markets: GlobalMarket[];
+  };
 
-  let query = client
-    .from("ad_intelligence_creatives")
-    .select("*", { count: "exact" })
-    .eq("platform", input.platform)
+  let candidateIds: string[] | null = null;
+  if (country) {
+    const { data: marketMatches, error: marketError } = await client
+      .from("ad_intelligence_markets")
+      .select("creative_id")
+      .eq("country", country)
+      .limit(20000);
+    if (marketError) throw new Error(`Country filter failed: ${marketError.message}`);
+    candidateIds = Array.from(new Set((marketMatches ?? []).map((row: any) => row.creative_id)));
+    if (candidateIds.length === 0) {
+      return {
+        ads: [], total: 0, totalPages: 0, page: input.page, limit: input.limit,
+        languages: summary.languages ?? [], markets: summary.markets ?? [],
+        summary: { totalAds: Number(summary.totalAds ?? 0), activeAds: Number(summary.activeAds ?? 0), inactiveAds: Number(summary.inactiveAds ?? 0), videoAds: Number(summary.videoAds ?? 0), imageAds: Number(summary.imageAds ?? 0), carouselAds: Number(summary.carouselAds ?? 0), creatorAds: Number(summary.creatorAds ?? 0), averageRunningDays: Number(summary.averageRunningDays ?? 0), longestRunningDays: Number(summary.longestRunningDays ?? 0) },
+        lastUpdatedAt: null,
+      };
+    }
+  }
+
+  let query = client.from("ad_intelligence_creatives").select("*", { count: "exact" }).eq("platform", input.platform)
+    .or([`advertiser_name.ilike.%${q}%`, `creator_name.ilike.%${q}%`, `headline.ilike.%${q}%`, `product_name.ilike.%${q}%`, `primary_text.ilike.%${q}%`].join(","))
     .order("is_currently_active", { ascending: false, nullsFirst: false })
     .order("last_seen_at", { ascending: false, nullsFirst: false });
 
-  query = query.or(input.mode === "advertiser" ? advertiserFilter : keywordFilter);
-  if (country) query = query.or(`metadata->>country.eq.${country},metadata->>country.is.null`);
+  if (candidateIds) query = query.in("id", candidateIds);
 
   const { data: rows, count, error } = await query.range((input.page - 1) * input.limit, input.page * input.limit - 1);
   if (error) throw new Error(`Global search failed: ${error.message}`);
 
   const pageRows = rows ?? [];
-  const total = Number(count ?? 0);
-
-  // A bounded scan powers the intelligence panel without mounting thousands of records in the UI.
-  let intelligenceRows: any[] = [];
-  if (total > 0) {
-    let intelligenceQuery = client
-      .from("ad_intelligence_creatives")
-      .select("id,external_ad_id,external_ad_key,advertiser_name,creator_name,creative_type,primary_text,headline,offer,first_seen_at,last_seen_at,is_currently_active")
-      .eq("platform", input.platform);
-    intelligenceQuery = intelligenceQuery.or(input.mode === "advertiser" ? advertiserFilter : keywordFilter);
-    if (country) intelligenceQuery = intelligenceQuery.or(`metadata->>country.eq.${country},metadata->>country.is.null`);
-    const intelligenceResult = await intelligenceQuery.limit(10000);
-    if (!intelligenceResult.error) intelligenceRows = intelligenceResult.data ?? [];
-  }
-
   const ids = pageRows.map((row: any) => row.id);
   let markets: any[] = [];
   let languages: any[] = [];
@@ -343,15 +287,6 @@ export async function searchGlobalAds(input: {
   }
 
   const ads = pageRows.map((row: any) => mapCreativeRow(row, languages, markets));
-  const activeRows = intelligenceRows.filter((row) => row.is_currently_active !== false);
-  const videoAds = intelligenceRows.filter((row) => row.creative_type === "video").length;
-  const imageAds = intelligenceRows.filter((row) => row.creative_type === "image").length;
-  const carouselAds = intelligenceRows.filter((row) => row.creative_type === "carousel").length;
-  const creatorAds = intelligenceRows.filter((row) => Boolean(row.creator_name)).length;
-  const running = intelligenceRows.map(runningDays).filter((v): v is number => typeof v === "number");
-  const averageRunningDays = running.length ? running.reduce((a, b) => a + b, 0) / running.length : 0;
-  const longestRunningDays = running.length ? Math.max(...running) : 0;
-
   const lastUpdatedAt = pageRows.reduce<string | null>((latest, row: any) => {
     const value = row.updated_at ?? row.last_seen_at ?? null;
     if (!value) return latest;
@@ -359,77 +294,165 @@ export async function searchGlobalAds(input: {
     return new Date(value).getTime() > new Date(latest).getTime() ? value : latest;
   }, null);
 
-  const totalPages = total === 0 ? 0 : Math.ceil(total / input.limit);
-
   return {
     ads,
-    total,
-    totalPages,
+    total: Number(count ?? summary.totalAds ?? 0),
+    totalPages: Number(count ?? summary.totalAds ?? 0) === 0 ? 0 : Math.ceil(Number(count ?? summary.totalAds ?? 0) / input.limit),
     page: input.page,
     limit: input.limit,
-    languages,
-    markets,
+    languages: summary.languages ?? [],
+    markets: summary.markets ?? [],
     summary: {
-      totalAds: total,
-      activeAds: activeRows.length,
-      inactiveAds: Math.max(0, intelligenceRows.length - activeRows.length),
-      videoAds,
-      imageAds,
-      carouselAds,
-      creatorAds,
-      averageRunningDays: Math.round(averageRunningDays),
-      longestRunningDays,
+      totalAds: Number(summary.totalAds ?? 0),
+      activeAds: Number(summary.activeAds ?? 0),
+      inactiveAds: Number(summary.inactiveAds ?? 0),
+      videoAds: Number(summary.videoAds ?? 0),
+      imageAds: Number(summary.imageAds ?? 0),
+      carouselAds: Number(summary.carouselAds ?? 0),
+      creatorAds: Number(summary.creatorAds ?? 0),
+      averageRunningDays: Number(summary.averageRunningDays ?? 0),
+      longestRunningDays: Number(summary.longestRunningDays ?? 0),
     },
-    intelligence: buildDerivedIntelligence(intelligenceRows),
     lastUpdatedAt,
   };
 }
 
-export async function autocompleteBrands(input: { query: string; limit?: number }) {
+export async function autocompleteBrands(input: {
+  query: string;
+  limit?: number;
+}) {
+  const totalStartedAt = Date.now();
+
   const client = createGlobalServiceClient();
+
   const prefix = normalizeCollectionQuery(input.query);
-  const limit = Math.min(Math.max(input.limit ?? 8, 1), 20);
-  if (!prefix) return [];
 
-  const [{ data: brands }, { data: creatives }] = await Promise.all([
-    client.from("ad_intelligence_brands")
-      .select("id,canonical_name,domain")
-      .ilike("normalized_name", `${prefix}%`)
-      .order("normalized_name")
-      .limit(limit),
-    client.from("ad_intelligence_creatives")
-      .select("advertiser_name,creator_name")
-      .or(`advertiser_name.ilike.%${prefix}%,creator_name.ilike.%${prefix}%`)
-      .limit(100),
-  ]);
+  const limit = Math.min(
+    Math.max(input.limit ?? 8, 1),
+    20,
+  );
 
-  const suggestions: Array<{ id: string; name: string; type: "brand" | "creator" | "keyword"; alias?: string | null; domain?: string | null }> = [];
-  const seen = new Set<string>();
-
-  for (const brand of brands ?? []) {
-    const key = `brand:${brand.id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    suggestions.push({ id: brand.id, name: brand.canonical_name, type: "brand", alias: brand.canonical_name, domain: brand.domain ?? null });
+  if (!prefix) {
+    return [];
   }
 
-  for (const row of creatives ?? []) {
-    for (const [type, value] of [["brand", row.advertiser_name], ["creator", row.creator_name]] as const) {
-      const name = String(value ?? "").trim();
-      if (!name || !name.toLowerCase().startsWith(prefix)) continue;
-      const key = `${type}:${name.toLowerCase()}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      suggestions.push({ id: key, name, type });
-      if (suggestions.length >= limit) break;
-    }
-    if (suggestions.length >= limit) break;
+  console.log("[AutocompleteStore] START", {
+    prefix,
+    limit,
+  });
+
+  const aliasStartedAt = Date.now();
+
+  const {
+    data: aliases,
+    error,
+  } = await client
+    .from("ad_intelligence_brand_aliases")
+    .select(
+      "brand_id,alias,normalized_alias",
+    )
+    .ilike(
+      "normalized_alias",
+      `${prefix}%`,
+    )
+    .order("normalized_alias")
+    .limit(limit);
+
+  console.log("[AutocompleteStore] ALIAS QUERY", {
+    durationMs:
+      Date.now() - aliasStartedAt,
+    rows:
+      aliases?.length ?? 0,
+    error:
+      error?.message ?? null,
+  });
+
+  if (error) {
+    throw new Error(
+      `Autocomplete failed: ${error.message}`,
+    );
   }
 
-  suggestions.unshift({ id: `keyword:${prefix}`, name: input.query.trim(), type: "keyword" });
-  return suggestions.slice(0, limit + 1);
+  const ids = Array.from(
+    new Set(
+      (aliases ?? []).map(
+        (row: any) => row.brand_id,
+      ),
+    ),
+  );
+
+  if (!ids.length) {
+    console.log(
+      "[AutocompleteStore] NO BRAND IDS",
+    );
+
+    return [];
+  }
+
+  const brandStartedAt = Date.now();
+
+  const {
+    data: brands,
+    error: brandError,
+  } = await client
+    .from("ad_intelligence_brands")
+    .select(
+      "id,canonical_name,domain",
+    )
+    .in("id", ids);
+
+  console.log("[AutocompleteStore] BRAND QUERY", {
+    durationMs:
+      Date.now() - brandStartedAt,
+    rows:
+      brands?.length ?? 0,
+    error:
+      brandError?.message ?? null,
+  });
+
+  if (brandError) {
+    throw new Error(
+      `Brand lookup failed: ${brandError.message}`,
+    );
+  }
+
+  const brandMap = new Map(
+    (brands ?? []).map(
+      (brand: any) => [
+        brand.id,
+        brand,
+      ],
+    ),
+  );
+
+  const suggestions = (aliases ?? [])
+    .map((alias: any) => {
+      const brand = brandMap.get(
+        alias.brand_id,
+      );
+
+      return brand
+        ? {
+            id: brand.id,
+            name: brand.canonical_name,
+            alias: alias.alias,
+            domain:
+              brand.domain ?? null,
+          }
+        : null;
+    })
+    .filter(Boolean);
+
+  console.log("[AutocompleteStore] TOTAL", {
+    prefix,
+    durationMs:
+      Date.now() - totalStartedAt,
+    suggestions:
+      suggestions.length,
+  });
+
+  return suggestions;
 }
-
 export async function trackBrand(input: { userId: string; query: string; country: string; platform: AdPlatform }) {
   const client = createGlobalServiceClient();
   const normalizedQuery = normalizeCollectionQuery(input.query);

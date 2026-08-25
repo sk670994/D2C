@@ -1,264 +1,329 @@
 "use client";
 
 import {
-  BarChart3,
-  Bookmark,
-  CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  Clock3,
-  ExternalLink,
-  Image as ImageIcon,
-  Info,
-  Languages,
-  Layers3,
-  Loader2,
-  type LucideIcon,
-  MapPin,
-  Play,
-  RefreshCw,
-  Search,
-  Sparkles,
-  Tag,
-  Target,
-  UserRound,
-  Video,
-  X,
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 
+import type {
+  GlobalAdRecord,
+  GlobalLanguage,
+  GlobalMarket,
+  GlobalSearchSummary,
+} from "@/lib/ad-intelligence/global/types";
 
-type Platform = "meta" | "google" | "linkedin";
-type SearchMode = "advertiser" | "keyword";
+import { AdAutocomplete } from "./AdAutocomplete";
+import { AdCreativeCard } from "./AdCreativeCard";
+import { AdDetailDrawer } from "./AdDetailDrawer";
+import { AdMarketLanguageIntelligence } from "./AdMarketLanguageIntelligence";
 
-type Ad = {
-  id: string;
-  platform: Platform;
-  advertiserName?: string | null;
-  advertiserId?: string | null;
-  creatorName?: string | null;
-  partnershipType?: string | null;
-  country?: string | null;
-  creativeType?: string | null;
-  imageUrl?: string | null;
-  videoUrl?: string | null;
-  thumbnailUrl?: string | null;
-  videoDurationSeconds?: number | null;
-  primaryText?: string | null;
-  headline?: string | null;
-  description?: string | null;
-  callToAction?: string | null;
-  firstSeen?: string | null;
-  lastSeen?: string | null;
-  isActive?: boolean | null;
-  publisherPlatforms?: string[];
-  landingPage?: string | null;
-  sourceUrl?: string | null;
-  productName?: string | null;
-  productPrice?: number | null;
-  maxPrice?: number | null;
-  currency?: string | null;
-  offer?: string | null;
-  runningDays?: number | null;
-  reach?: number | null;
-  impressions?: number | null;
-  clicks?: number | null;
-  ctr?: number | null;
-  languages?: Array<{ code: string; name: string; confidence?: number | null }>;
-  markets?: Array<{ countryCode?: string | null; countryName?: string | null; stateName?: string | null; cityName?: string | null }>;
-  metadata?: Record<string, unknown>;
+import styles from "./AdSpyPremium.module.css";
+
+/* =========================================================
+ * TYPES
+ * ======================================================= */
+
+type Platform =
+  | "meta"
+  | "google"
+  | "linkedin";
+
+type Pagination = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+  nextPage: number | null;
+  previousPage: number | null;
 };
 
-type Summary = {
-  totalAds: number;
-  activeAds: number;
-  inactiveAds: number;
-  videoAds: number;
-  imageAds: number;
-  carouselAds: number;
-  creatorAds: number;
-  averageRunningDays: number;
-  longestRunningDays: number;
+type ApiResponse = {
+  success: boolean;
+
+  pending?: boolean;
+
+  jobId?: string | null;
+
+  message?: string;
+
+  error?: string;
+
+  ads?: GlobalAdRecord[];
+
+  count?: number;
+
+  pagination?: Pagination;
+
+  summary?: Partial<GlobalSearchSummary> | null;
+
+  intelligence?: {
+    languages?: GlobalLanguage[];
+
+    markets?: GlobalMarket[];
+  };
+
+  meta?: {
+    source?: string;
+
+    lastUpdatedAt?: string | null;
+
+    refreshing?: boolean;
+
+    collectionJobId?: string | null;
+
+    stale?: boolean;
+
+    cacheHit?: boolean;
+  };
 };
 
-type Intelligence = {
-  topCreators: Array<{ label: string; count: number }>;
-  topOffers: Array<{ label: string; count: number }>;
-  topHooks: Array<{ label: string; count: number }>;
-  longestRunningAd: {
+type JobResponse = {
+  success: boolean;
+
+  job?: {
     id: string;
-    advertiserName?: string | null;
-    headline?: string | null;
-    primaryText?: string | null;
-    runningDays?: number | null;
-    creativeType?: string | null;
-    creatorName?: string | null;
-  } | null;
-  reach: { status: "unavailable"; reason: string };
-};
 
-type Job = {
-  id: string;
-  status: string;
-  stage: string;
-  discoveredAds: number;
-  normalizedAds: number;
-  persistedAds: number;
-  errorMessage?: string | null;
-  updatedAt?: string | null;
-};
+    status: string;
 
-type Suggestion = {
-  id: string;
-  name: string;
-  type: "brand" | "creator" | "keyword";
-  domain?: string | null;
+    stage: string;
+
+    discoveredAds: number;
+
+    normalizedAds: number;
+
+    persistedAds: number;
+
+    errorMessage: string | null;
+
+    updatedAt: string;
+  };
+
+  error?: string;
 };
 
 export type AdSpySectionProps = {
   query: string;
+
   country: string;
+
   platform?: Platform;
-  onQueryChange: (query: string) => void;
-  onCountryChange: (country: string) => void;
-  onPlatformChange?: (platform: Platform) => void;
-  onResultCountChange?: (count: number) => void;
+
+  onQueryChange: (
+    query: string,
+  ) => void;
+
+  onCountryChange: (
+    country: string,
+  ) => void;
+
+  onPlatformChange?: (
+    platform: Platform,
+  ) => void;
+
+  onResultCountChange?: (
+    count: number,
+  ) => void;
 };
 
-const EMPTY_SUMMARY: Summary = {
-  totalAds: 0,
-  activeAds: 0,
-  inactiveAds: 0,
-  videoAds: 0,
-  imageAds: 0,
-  carouselAds: 0,
-  creatorAds: 0,
-  averageRunningDays: 0,
-  longestRunningDays: 0,
-};
+/* =========================================================
+ * HELPERS
+ * ======================================================= */
 
-function safeDate(value?: string | null) {
-  if (!value) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? "—"
-    : date.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-}
-
-function safeUrl(value?: string | null) {
-  if (!value) return null;
-  try {
-    return new URL(value).toString();
-  } catch {
-    return null;
+function numeric(
+  value: unknown,
+  fallback = 0,
+): number {
+  if (
+    typeof value === "number" &&
+    Number.isFinite(value)
+  ) {
+    return value;
   }
+
+  if (
+    typeof value === "string"
+  ) {
+    const parsed =
+      Number(value);
+
+    if (
+      Number.isFinite(parsed)
+    ) {
+      return parsed;
+    }
+  }
+
+  return fallback;
 }
 
-function hookText(ad: Ad) {
-  const source = (ad.primaryText || ad.headline || "").replace(/\s+/g, " ").trim();
-  if (!source) return "No hook text detected";
-  return (source.split(/[.!?。！？]/)[0] || source).slice(0, 120);
+function emptySummary(): GlobalSearchSummary {
+  return {
+    totalAds: 0,
+
+    activeAds: 0,
+
+    inactiveAds: 0,
+
+    videoAds: 0,
+
+    imageAds: 0,
+
+    carouselAds: 0,
+
+    creatorAds: 0,
+
+    averageRunningDays: 0,
+
+    longestRunningDays: 0,
+  };
 }
 
-function hookType(ad: Ad) {
-  const text = hookText(ad).toLowerCase();
-  if (/(stop|avoid|mistake|problem|pain|suffering|tired|struggle)/i.test(text)) return "Problem / agitation";
-  if (/(save|free|off|₹|rs\.?|buy|deal|offer|limited)/i.test(text)) return "Offer / price";
-  if (/(how|why|secret|truth|discover|revealed|did you know)/i.test(text)) return "Curiosity";
-  if (/(before|after|results|review|testimonial|customer)/i.test(text)) return "Social proof / result";
-  if (/(get|make|feel|look|grow|reduce|improve|protect)/i.test(text)) return "Benefit-led";
-  return "Product / direct";
+/**
+ * The backend has had several summary versions while
+ * the global intelligence layer is being introduced.
+ *
+ * Never allow an incomplete stored/API summary to reach
+ * JSX as undefined numeric fields.
+ */
+function normalizeSummary(
+  value:
+    | Partial<GlobalSearchSummary>
+    | null
+    | undefined,
+  fallbackAdsCount = 0,
+): GlobalSearchSummary {
+  const fallback =
+    emptySummary();
+
+  const source =
+    value ?? {};
+
+  return {
+    totalAds:
+      numeric(
+        source.totalAds,
+        fallbackAdsCount,
+      ),
+
+    activeAds:
+      numeric(
+        source.activeAds,
+      ),
+
+    inactiveAds:
+      numeric(
+        source.inactiveAds,
+      ),
+
+    videoAds:
+      numeric(
+        source.videoAds,
+      ),
+
+    imageAds:
+      numeric(
+        source.imageAds,
+      ),
+
+    carouselAds:
+      numeric(
+        source.carouselAds,
+      ),
+
+    creatorAds:
+      numeric(
+        source.creatorAds,
+      ),
+
+    averageRunningDays:
+      numeric(
+        source.averageRunningDays,
+      ),
+
+    longestRunningDays:
+      numeric(
+        source.longestRunningDays,
+      ),
+  };
 }
 
-function whyHook(ad: Ad) {
-  const reasons: string[] = [];
-  const type = hookType(ad);
-  reasons.push(`${type} hook makes the opening message immediately understandable.`);
-  if (ad.offer) reasons.push("A visible offer adds a concrete reason to continue evaluating the ad.");
-  if (ad.creatorName || ad.partnershipType === "creator") reasons.push("A creator/UGC presentation can make the message feel more native and relatable.");
-  if (ad.videoUrl || ad.creativeType === "video") reasons.push("Video gives the hook a chance to deliver context before the viewer reaches the CTA.");
-  if ((ad.runningDays ?? 0) >= 90) reasons.push("Long observed runtime is a persistence signal, not proof of conversion performance.");
-  return reasons.slice(0, 4);
+function formatUpdated(
+  value?: string | null,
+): string {
+  if (!value) {
+    return "Not indexed yet";
+  }
+
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime(),
+    )
+  ) {
+    return "Not indexed yet";
+  }
+
+  return `Updated ${date.toLocaleString(
+    "en-IN",
+    {
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    },
+  )}`;
 }
 
-function creativeWhy(ad: Ad) {
-  const reasons: string[] = [];
-  if ((ad.runningDays ?? 0) >= 90) reasons.push("Observed for an unusually long period in the indexed dataset.");
-  if (ad.creatorName) reasons.push("Uses a named creator signal rather than a purely brand-led presentation.");
-  if (ad.offer) reasons.push("Contains a concrete commercial offer that can support purchase intent.");
-  if (ad.callToAction) reasons.push(`Uses a clear CTA: ${ad.callToAction}.`);
-  if (ad.productName) reasons.push(`Makes the product explicit: ${ad.productName}.`);
-  return reasons.length ? reasons : ["There is not enough source evidence to explain durability beyond the observed runtime."];
-}
+function stageLabel(
+  stage?: string,
+): string {
+  const labels: Record<
+    string,
+    string
+  > = {
+    queued:
+      "Preparing dataset",
 
-function Metric({ icon: Icon, label, value, title }: { icon: LucideIcon; label: string; value: string | number; title?: string }) {
+    scraping:
+      "Collecting public creatives",
+
+    normalizing:
+      "Normalizing creatives",
+
+    enriching:
+      "Updating intelligence",
+
+    finalizing:
+      "Finalizing dataset",
+
+    complete:
+      "Ready",
+
+    failed:
+      "Collection failed",
+  };
+
   return (
-    <div title={title} className="flex min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
-      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-700">
-        <Icon size={17} strokeWidth={2.5} />
-      </span>
-      <div className="min-w-0">
-        <div className="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{label}</div>
-        <div className="truncate text-sm font-bold text-slate-950">{value}</div>
-      </div>
-    </div>
+    labels[
+      stage ?? ""
+    ] ??
+    "Updating public creative data"
   );
 }
 
-function AdCard({ ad, onOpen }: { ad: Ad; onOpen: () => void }) {
-  const media = safeUrl(ad.thumbnailUrl || ad.imageUrl || ad.videoUrl);
-  const sourceUrl = safeUrl(ad.sourceUrl);
-  const type = ad.creativeType ?? "unknown";
-
-  return (
-    <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg">
-      <div className="relative aspect-[4/3] overflow-hidden bg-slate-100">
-        {media ? (
-          <img src={media} alt="" className="h-full w-full object-cover" loading="lazy" />
-        ) : (
-          <div className="flex h-full items-center justify-center text-slate-400"><ImageIcon size={38} /></div>
-        )}
-        <div className="absolute left-3 top-3 flex gap-2">
-          <Badge className="gap-1 border-0 bg-white/95 text-slate-900 shadow"><CheckCircle2 size={12} />{ad.isActive === false ? "Inactive" : "Active"}</Badge>
-          <Badge className="gap-1 border-0 bg-slate-950/90 text-white shadow">
-            {type === "video" ? <Video size={12} /> : type === "carousel" ? <Layers3 size={12} /> : <ImageIcon size={12} />}
-            {type}
-          </Badge>
-        </div>
-        {type === "video" && <span className="absolute bottom-3 left-3 grid h-9 w-9 place-items-center rounded-full bg-white/95 text-slate-900 shadow"><Play size={16} fill="currentColor" /></span>}
-      </div>
-
-      <div className="space-y-4 p-4">
-        <div>
-          <div className="text-xs font-bold uppercase tracking-wider text-slate-500">{ad.advertiserName || "Unknown advertiser"}</div>
-          <h3 className="mt-1 line-clamp-2 text-sm font-bold leading-5 text-slate-950">{ad.headline || ad.productName || "Untitled creative"}</h3>
-          <p className="mt-2 line-clamp-3 text-xs leading-5 text-slate-600">{ad.primaryText || ad.description || "No primary copy extracted."}</p>
-        </div>
-
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div className="rounded-lg bg-slate-50 p-2"><span className="text-slate-500">Running</span><div className="font-bold text-slate-900">{ad.runningDays ? `${ad.runningDays}d` : "—"}</div></div>
-          <div className="rounded-lg bg-slate-50 p-2"><span className="text-slate-500">First seen</span><div className="font-bold text-slate-900">{safeDate(ad.firstSeen)}</div></div>
-          <div className="rounded-lg bg-slate-50 p-2"><span className="text-slate-500">Creator</span><div className="truncate font-bold text-slate-900">{ad.creatorName || "None detected"}</div></div>
-          <div className="rounded-lg bg-slate-50 p-2"><span className="text-slate-500">CTA</span><div className="truncate font-bold text-slate-900">{ad.callToAction || "—"}</div></div>
-        </div>
-
-        <div className="flex flex-wrap gap-1.5">
-          {(ad.publisherPlatforms ?? []).slice(0, 3).map((platform) => <Badge key={platform} variant="secondary" className="text-[10px]">{platform}</Badge>)}
-          {ad.offer && <Badge variant="secondary" className="gap-1 text-[10px]"><Tag size={10} />{ad.offer}</Badge>}
-        </div>
-
-        <div className="flex items-center gap-2 border-t border-slate-100 pt-3">
-          <Button onClick={onOpen} className="flex-1 gap-2"><Sparkles size={14} />View intelligence</Button>
-          {sourceUrl && <Button title="Open source ad" onClick={() => window.open(sourceUrl, "_blank", "noopener,noreferrer")} variant="secondary"><ExternalLink size={15} /></Button>}
-        </div>
-      </div>
-    </article>
-  );
-}
+/* =========================================================
+ * COMPONENT
+ * ======================================================= */
 
 export function AdSpySection({
   query,
@@ -269,312 +334,1319 @@ export function AdSpySection({
   onPlatformChange,
   onResultCountChange,
 }: AdSpySectionProps) {
-  const [mode, setMode] = useState<SearchMode>("advertiser");
-  const [input, setInput] = useState(query);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [suggestionOpen, setSuggestionOpen] = useState(false);
-  const [ads, setAds] = useState<Ad[]>([]);
-  const [summary, setSummary] = useState<Summary>(EMPTY_SUMMARY);
-  const [intelligence, setIntelligence] = useState<Intelligence | null>(null);
-  const [languages, setLanguages] = useState<any[]>([]);
-  const [markets, setMarkets] = useState<any[]>([]);
-  const [job, setJob] = useState<Job | null>(null);
-  const [pagination, setPagination] = useState({ page: 1, total: 0, totalPages: 0 });
-  const [loading, setLoading] = useState(false);
-  const [selectedAd, setSelectedAd] = useState<Ad | null>(null);
-  const [error, setError] = useState("");
-  const [tracked, setTracked] = useState(false);
-  const requestRef = useRef(0);
+  const [
+    ads,
+    setAds,
+  ] =
+    useState<
+      GlobalAdRecord[]
+    >([]);
 
-  useEffect(() => setInput(query), [query]);
+  const [
+    pagination,
+    setPagination,
+  ] =
+    useState<Pagination | null>(
+      null,
+    );
 
-  const fetchSuggestions = useCallback(async (value: string) => {
-    if (value.trim().length < 2) {
-      setSuggestions([]);
-      return;
-    }
-    try {
-      const response = await fetch(`/api/ad-intelligence/autocomplete?q=${encodeURIComponent(value.trim())}`, { cache: "no-store" });
-      const data = await response.json();
-      if (data.success) setSuggestions(data.suggestions ?? []);
-    } catch {
-      setSuggestions([]);
-    }
-  }, []);
+  const [
+    summary,
+    setSummary,
+  ] =
+    useState<GlobalSearchSummary>(
+      emptySummary(),
+    );
+
+  const [
+    languages,
+    setLanguages,
+  ] =
+    useState<GlobalLanguage[]>(
+      [],
+    );
+
+  const [
+    markets,
+    setMarkets,
+  ] =
+    useState<GlobalMarket[]>(
+      [],
+    );
+
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(false);
+
+  const [
+    refreshing,
+    setRefreshing,
+  ] =
+    useState(false);
+
+  const [
+    pendingJobId,
+    setPendingJobId,
+  ] =
+    useState<string | null>(
+      null,
+    );
+
+  const [
+    jobStage,
+    setJobStage,
+  ] =
+    useState("queued");
+
+  const [
+    error,
+    setError,
+  ] =
+    useState("");
+
+  const [
+    selectedAd,
+    setSelectedAd,
+  ] =
+    useState<GlobalAdRecord | null>(
+      null,
+    );
+
+  const [
+    tracked,
+    setTracked,
+  ] =
+    useState(false);
+
+  const requestIdRef =
+    useRef(0);
+
+  const abortRef =
+    useRef<AbortController | null>(
+      null,
+    );
+
+  /* =======================================================
+   * SAFE SUMMARY
+   * ===================================================== */
+
+  const safeSummary =
+    useMemo(
+      () =>
+        normalizeSummary(
+          summary,
+          pagination?.total ??
+            ads.length,
+        ),
+      [
+        ads.length,
+        pagination?.total,
+        summary,
+      ],
+    );
+
+  /* =======================================================
+   * SEARCH
+   * ===================================================== */
+
+  const fetchResults =
+    useCallback(
+      async (
+        pageToLoad: number,
+        options?: {
+          background?: boolean;
+        },
+      ) => {
+        const trimmedQuery =
+          query.trim();
+
+        const normalizedCountry =
+          country
+            .trim()
+            .toUpperCase() ||
+          "IN";
+
+        if (!trimmedQuery) {
+          setError(
+            "Enter a brand or keyword.",
+          );
+
+          return;
+        }
+
+        const requestId =
+          ++requestIdRef.current;
+
+        abortRef.current?.abort();
+
+        const controller =
+          new AbortController();
+
+        abortRef.current =
+          controller;
+
+        if (
+          !options?.background
+        ) {
+          setLoading(true);
+        }
+
+        setError("");
+
+        try {
+          const params =
+            new URLSearchParams({
+              q: trimmedQuery,
+
+              country:
+                normalizedCountry,
+
+              page:
+                String(
+                  pageToLoad,
+                ),
+
+              limit: "20",
+
+              platform,
+
+              mode: "advertiser",
+            });
+
+          const response =
+            await fetch(
+              `/api/ad-intelligence/search?${params.toString()}`,
+              {
+                cache:
+                  "no-store",
+
+                signal:
+                  controller.signal,
+              },
+            );
+
+          const data =
+            (await response.json()) as ApiResponse;
+
+          if (
+            requestId !==
+            requestIdRef.current
+          ) {
+            return;
+          }
+
+          if (
+            !response.ok &&
+            response.status !==
+              202
+          ) {
+            throw new Error(
+              data.message ??
+                data.error ??
+                "AdSpy search failed.",
+            );
+          }
+
+          const nextAds =
+            Array.isArray(
+              data.ads,
+            )
+              ? data.ads
+              : [];
+
+          const nextPagination =
+            data.pagination ??
+            null;
+
+          /*
+           * The summary is normalized immediately.
+           *
+           * This is the critical fix for legacy/shared-cache
+           * responses that do not contain every field.
+           */
+          const nextSummary =
+            normalizeSummary(
+              data.summary,
+              nextPagination?.total ??
+                data.count ??
+                nextAds.length,
+            );
+
+          setAds(
+            nextAds,
+          );
+
+          setPagination(
+            nextPagination,
+          );
+
+          setSummary(
+            nextSummary,
+          );
+
+          setLanguages(
+            Array.isArray(
+              data.intelligence
+                ?.languages,
+            )
+              ? data.intelligence!
+                  .languages!
+              : [],
+          );
+
+          setMarkets(
+            Array.isArray(
+              data.intelligence
+                ?.markets,
+            )
+              ? data.intelligence!
+                  .markets!
+              : [],
+          );
+
+          const total =
+            nextPagination?.total ??
+            data.count ??
+            nextAds.length;
+
+          onResultCountChange?.(
+            total,
+          );
+
+          const jobId =
+            data.meta
+              ?.collectionJobId ??
+            data.jobId ??
+            null;
+
+          setPendingJobId(
+            jobId,
+          );
+
+          const nextRefreshing =
+            Boolean(
+              data.meta
+                ?.refreshing,
+            ) ||
+            Boolean(
+              data.pending,
+            );
+
+          setRefreshing(
+            nextRefreshing,
+          );
+
+          if (
+            data.pending &&
+            jobId
+          ) {
+            setJobStage(
+              "queued",
+            );
+          }
+
+          if (
+            !data.pending &&
+            !data.meta?.refreshing
+          ) {
+            setRefreshing(
+              false,
+            );
+          }
+
+          if (
+            !data.success &&
+            !data.pending
+          ) {
+            throw new Error(
+              data.message ??
+                data.error ??
+                "AdSpy search failed.",
+            );
+          }
+        } catch (err) {
+          if (
+            err instanceof
+              DOMException &&
+            err.name ===
+              "AbortError"
+          ) {
+            return;
+          }
+
+          if (
+            requestId !==
+            requestIdRef.current
+          ) {
+            return;
+          }
+
+          setAds([]);
+
+          setPagination(
+            null,
+          );
+
+          setSummary(
+            emptySummary(),
+          );
+
+          setLanguages(
+            [],
+          );
+
+          setMarkets(
+            [],
+          );
+
+          setPendingJobId(
+            null,
+          );
+
+          setRefreshing(
+            false,
+          );
+
+          setError(
+            err instanceof
+              Error
+              ? err.message
+              : "Unable to search AdSpy.",
+          );
+
+          onResultCountChange?.(
+            0,
+          );
+        } finally {
+          if (
+            requestId ===
+              requestIdRef.current &&
+            !options?.background
+          ) {
+            setLoading(
+              false,
+            );
+          }
+        }
+      },
+      [
+        country,
+        onResultCountChange,
+        platform,
+        query,
+      ],
+    );
+
+  /* =======================================================
+   * CLEANUP
+   * ===================================================== */
+
+  useEffect(
+    () => () =>
+      abortRef.current?.abort(),
+    [],
+  );
+
+  /* =======================================================
+   * BACKGROUND JOB POLLING
+   * ===================================================== */
 
   useEffect(() => {
-    const timer = window.setTimeout(() => fetchSuggestions(input), 300);
-    return () => window.clearTimeout(timer);
-  }, [input, fetchSuggestions]);
-
-  const fetchResults = useCallback(async (page = 1, overrides?: { query?: string; mode?: SearchMode }) => {
-    const q = (overrides?.query ?? input).trim();
-    const searchMode = overrides?.mode ?? mode;
-    if (!q) {
-      setError("Enter a brand or keyword.");
+    if (!pendingJobId) {
       return;
     }
 
-    const requestId = ++requestRef.current;
-    setLoading(true);
-    setError("");
-    setSuggestionOpen(false);
+    let stopped =
+      false;
 
-    try {
-      const url = new URL("/api/ad-intelligence/search", window.location.origin);
-      url.searchParams.set("q", q);
-      url.searchParams.set("country", country.trim().toUpperCase() || "IN");
-      url.searchParams.set("platform", platform);
-      url.searchParams.set("mode", searchMode);
-      url.searchParams.set("page", String(page));
-      url.searchParams.set("limit", "20");
+    const poll =
+      async () => {
+        try {
+          const response =
+            await fetch(
+              `/api/ad-intelligence/search/status/${encodeURIComponent(
+                pendingJobId,
+              )}`,
+              {
+                cache:
+                  "no-store",
+              },
+            );
 
-      const response = await fetch(url.toString(), { cache: "no-store" });
-      const data = await response.json();
-      if (requestId !== requestRef.current) return;
-      if (!response.ok || !data.success) throw new Error(data.message || data.error || "Search failed.");
+          const data =
+            (await response.json()) as JobResponse;
 
-      setAds(data.ads ?? []);
-      setSummary(data.summary ?? EMPTY_SUMMARY);
-      setIntelligence(data.intelligence ?? null);
-      setLanguages(data.languages ?? []);
-      setMarkets(data.markets ?? []);
-      setPagination({ page: data.page ?? page, total: data.total ?? 0, totalPages: data.totalPages ?? 0 });
-      setJob(data.collectionJob ?? null);
-      onResultCountChange?.(Number(data.total ?? 0));
-      onQueryChange(q);
-    } catch (searchError) {
-      if (requestId !== requestRef.current) return;
-      setError(searchError instanceof Error ? searchError.message : "Search failed.");
-    } finally {
-      if (requestId === requestRef.current) setLoading(false);
-    }
-  }, [country, input, mode, onQueryChange, onResultCountChange, platform]);
+          if (
+            stopped ||
+            !data.success ||
+            !data.job
+          ) {
+            return;
+          }
 
-  useEffect(() => {
-    if (!job?.id) return;
-    const active = ["queued", "scraping", "normalizing", "enriching", "finalizing"].includes(job.status);
-    if (!active) return;
+          setJobStage(
+            data.job.stage,
+          );
 
-    let stopped = false;
-    const poll = async () => {
-      try {
-        const response = await fetch(`/api/ad-intelligence/search/status/${job.id}`, { cache: "no-store" });
-        const data = await response.json();
-        if (stopped || !data.success) return;
-        setJob(data.job);
-        if (data.job.status === "complete") await fetchResults(1);
-        if (data.job.status === "failed") setError(data.job.errorMessage || "Collection failed.");
-      } catch {
-        // Keep polling; transient polling failures should not break the search UI.
-      }
-    };
+          if (
+            data.job.status ===
+            "complete"
+          ) {
+            setPendingJobId(
+              null,
+            );
 
-    const timer = window.setInterval(poll, 2500);
+            setRefreshing(
+              false,
+            );
+
+            await fetchResults(
+              pagination?.page ??
+                1,
+              {
+                background:
+                  true,
+              },
+            );
+
+            return;
+          }
+
+          if (
+            data.job.status ===
+            "failed"
+          ) {
+            setPendingJobId(
+              null,
+            );
+
+            setRefreshing(
+              false,
+            );
+
+            setError(
+              data.job
+                .errorMessage ??
+                "The background collection failed. Existing indexed data remains available.",
+            );
+          }
+        } catch {
+          /*
+           * Polling errors are intentionally silent.
+           * The next interval retries.
+           */
+        }
+      };
+
     void poll();
+
+    const timer =
+      window.setInterval(
+        () => void poll(),
+        1600,
+      );
+
     return () => {
       stopped = true;
-      window.clearInterval(timer);
+
+      window.clearInterval(
+        timer,
+      );
     };
-  }, [fetchResults, job?.id, job?.status]);
+  }, [
+    fetchResults,
+    pagination?.page,
+    pendingJobId,
+  ]);
 
-  const collectionProgress = useMemo(() => {
-    if (!job) return 0;
-    const total = Math.max(job.discoveredAds, 1);
-    return Math.min(100, Math.round((job.persistedAds / total) * 100));
-  }, [job]);
+  /* =======================================================
+   * ACTIONS
+   * ===================================================== */
 
-  const observedLanguages = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const row of languages) {
-      const name = row.language_name || row.language_code || "Unknown";
-      counts.set(name, (counts.get(name) ?? 0) + 1);
+  const runSearch = (
+    page = 1,
+  ) =>
+    void fetchResults(
+      page,
+    );
+
+  async function toggleTrack() {
+    if (!query.trim()) {
+      return;
     }
-    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  }, [languages]);
 
-  const observedMarkets = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const row of markets) {
-      const name = row.city_name || row.state_name || row.country_name || row.country || "Unknown";
-      counts.set(name, (counts.get(name) ?? 0) + 1);
-    }
-    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  }, [markets]);
-
-  async function trackCurrentSearch() {
     try {
-      await fetch("/api/ad-intelligence/track", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: input.trim(), country, platform }),
-      });
-      setTracked(true);
+      const response =
+        await fetch(
+          "/api/ad-intelligence/track",
+          {
+            method:
+              "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body:
+              JSON.stringify({
+                query:
+                  query.trim(),
+
+                country:
+                  country
+                    .trim()
+                    .toUpperCase() ||
+                  "IN",
+
+                platform,
+              }),
+          },
+        );
+
+      if (response.ok) {
+        setTracked(
+          true,
+        );
+      }
     } catch {
-      setTracked(false);
+      /*
+       * Tracking failure does not block discovery.
+       */
     }
   }
 
-  function chooseSuggestion(suggestion: Suggestion) {
-    setInput(suggestion.name);
-    onQueryChange(suggestion.name);
-    setSuggestionOpen(false);
-    const nextMode: SearchMode = suggestion.type === "keyword" ? "keyword" : "advertiser";
-    setMode(nextMode);
-    window.setTimeout(() => {
-      void fetchResults(1, { query: suggestion.name, mode: nextMode });
-    }, 0);
-  }
+  /* =======================================================
+   * DERIVED UI DATA
+   * ===================================================== */
+
+  const activeShare =
+    safeSummary.totalAds >
+    0
+      ? Math.round(
+          (safeSummary.activeAds /
+            safeSummary.totalAds) *
+            100,
+        )
+      : 0;
+
+  const staticAds =
+    Math.max(
+      0,
+      safeSummary.imageAds +
+        safeSummary.carouselAds,
+    );
+
+  const videoShare =
+    safeSummary.totalAds >
+    0
+      ? Math.round(
+          (safeSummary.videoAds /
+            safeSummary.totalAds) *
+            100,
+        )
+      : 0;
+
+  const sortedMarketPreview =
+    useMemo(
+      () =>
+        Array.isArray(
+          markets,
+        )
+          ? markets.slice(
+              0,
+              12,
+            )
+          : [],
+      [markets],
+    );
+
+  const sortedLanguagePreview =
+    useMemo(
+      () =>
+        Array.isArray(
+          languages,
+        )
+          ? languages.slice(
+              0,
+              10,
+            )
+          : [],
+      [languages],
+    );
+
+  const updatedLabel =
+    useMemo(
+      () => {
+        /*
+         * At this stage the backend's meta timestamp may not
+         * be present on older responses. Never pretend it is.
+         */
+        return formatUpdated(
+          undefined,
+        );
+      },
+      [],
+    );
+
+  /* =======================================================
+   * RENDER
+   * ===================================================== */
 
   return (
-    <section className="space-y-6 pb-12">
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
-          <div className="relative flex-1">
-            <label className="mb-2 block text-xs font-bold uppercase tracking-[0.08em] text-slate-500">Search ads</label>
-            <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 shadow-sm focus-within:border-slate-900">
-              <Search size={18} className="shrink-0 text-slate-500" />
-              <Input
-                value={input}
-                onChange={(event) => { setInput(event.target.value); setSuggestionOpen(true); }}
-                onFocus={() => setSuggestionOpen(true)}
-                onKeyDown={(event) => { if (event.key === "Enter") void fetchResults(1); }}
-                placeholder="Search a brand, creator, product or keyword"
-                className="border-0 shadow-none focus-visible:ring-0"
-              />
-            </div>
-            {suggestionOpen && suggestions.length > 0 && (
-              <div className="absolute z-30 mt-2 w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
-                {suggestions.map((suggestion) => (
-                  <button key={suggestion.id} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSuggestion(suggestion)} className="flex w-full items-center gap-3 border-b border-slate-100 px-4 py-3 text-left last:border-0 hover:bg-slate-50">
-                    <span className="grid h-8 w-8 place-items-center rounded-lg bg-slate-100 text-slate-700">
-                      {suggestion.type === "creator" ? <UserRound size={15} /> : suggestion.type === "keyword" ? <Search size={15} /> : <Target size={15} />}
-                    </span>
-                    <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-slate-900">{suggestion.name}</span><span className="text-xs capitalize text-slate-500">{suggestion.type}</span></span>
-                  </button>
-                ))}
+    <section
+      className={
+        styles.workspaceSection
+      }
+    >
+      <div
+        className={
+          styles.sectionTop
+        }
+      >
+        <div>
+          <p
+            className={
+              styles.kicker
+            }
+          >
+            AD INTELLIGENCE
+          </p>
+
+          <h2>
+            Discover competitor
+            creatives.
+          </h2>
+
+          <p
+            className={
+              styles.sectionLead
+            }
+          >
+            A persistent market
+            dataset, continuously
+            refreshed in the
+            background. Your search
+            state stays private to
+            your workspace.
+          </p>
+        </div>
+
+        <div
+          className={
+            styles.sourcePill
+          }
+        >
+          <span
+            className={
+              styles.sourceDot
+            }
+          />
+
+          {platform ===
+          "meta"
+            ? "Meta Ad Library"
+            : platform ===
+              "google"
+              ? "Google + YouTube"
+              : "LinkedIn"}
+        </div>
+      </div>
+
+      <div
+        className={
+          styles.searchShell
+        }
+      >
+        <div
+          className={
+            styles.searchRow
+          }
+        >
+          <label
+            className={
+              styles.field
+            }
+          >
+            <span>
+              Platform
+            </span>
+
+            <select
+              value={platform}
+              onChange={(event) =>
+                onPlatformChange?.(
+                  event.target
+                    .value as Platform,
+                )
+              }
+            >
+              <option value="meta">
+                Meta (Facebook +
+                Instagram)
+              </option>
+
+              <option value="google">
+                Google + YouTube
+              </option>
+
+              <option value="linkedin">
+                LinkedIn
+              </option>
+            </select>
+          </label>
+
+          <label
+            className={`${styles.field} ${styles.queryField}`}
+          >
+            <span>
+              Brand or keyword
+            </span>
+
+            <AdAutocomplete
+              value={query}
+              onChange={
+                onQueryChange
+              }
+              onSelect={(
+                item,
+              ) =>
+                onQueryChange(
+                  item.name,
+                )
+              }
+            />
+          </label>
+
+          <label
+            className={
+              styles.fieldSmall
+            }
+          >
+            <span>
+              Country
+            </span>
+
+            <input
+              value={country}
+              maxLength={2}
+              onChange={(
+                event,
+              ) =>
+                onCountryChange(
+                  event.target.value
+                    .toUpperCase()
+                    .replace(
+                      /[^A-Z]/g,
+                      "",
+                    )
+                    .slice(
+                      0,
+                      2,
+                    ),
+                )
+              }
+            />
+          </label>
+
+          <div
+            className={
+              styles.actionField
+            }
+          >
+            <button
+              className={
+                styles.primaryButton
+              }
+              type="button"
+              disabled={
+                loading
+              }
+              onClick={() =>
+                runSearch(
+                  1,
+                )
+              }
+            >
+              {loading
+                ? "Searching…"
+                : "Search AdSpy"}
+            </button>
+
+            <button
+              className={
+                styles.secondaryButton
+              }
+              type="button"
+              disabled={
+                !query.trim()
+              }
+              onClick={
+                toggleTrack
+              }
+            >
+              {tracked
+                ? "Tracked"
+                : "Track brand"}
+            </button>
+          </div>
+        </div>
+
+        <div
+          className={
+            styles.searchMeta
+          }
+        >
+          <span>
+            {pagination
+              ? `${numeric(
+                  pagination.total,
+                ).toLocaleString(
+                  "en-IN",
+                )} indexed ads`
+              : "Search the indexed market"}
+          </span>
+
+          {pagination ? (
+            <span>
+              Page{" "}
+              {
+                pagination.page
+              }{" "}
+              /{" "}
+              {
+                pagination.totalPages ||
+                1
+              }
+            </span>
+          ) : null}
+
+          <span>
+            {updatedLabel}
+          </span>
+
+          {refreshing ? (
+            <span
+              className={
+                styles.liveStatus
+              }
+            >
+              <i />
+
+              Updating source
+              data
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      {error ? (
+        <div
+          className={
+            styles.errorPanel
+          }
+        >
+          {error}
+        </div>
+      ) : null}
+
+      {loading &&
+      !ads.length ? (
+        <div
+          className={
+            styles.loadingPanel
+          }
+        >
+          <div
+            className={
+              styles.loadingOrb
+            }
+          >
+            ↗
+          </div>
+
+          <div>
+            <strong>
+              Preparing your market
+              view
+            </strong>
+
+            <p>
+              Zooptrack will return
+              indexed data
+              immediately and
+              refresh the public
+              dataset in the
+              background.
+            </p>
+          </div>
+
+          <div
+            className={
+              styles.loadingStage
+            }
+          >
+            {
+              stageLabel(
+                jobStage,
+              )
+            }
+          </div>
+        </div>
+      ) : null}
+
+      {refreshing &&
+      !loading ? (
+        <div
+          className={
+            styles.refreshPanel
+          }
+        >
+          <span
+            className={
+              styles.liveStatus
+            }
+          >
+            <i />
+
+            Live refresh in
+            progress
+          </span>
+
+          <span>
+            {
+              stageLabel(
+                jobStage,
+              )
+            }
+          </span>
+
+          <span
+            className={
+              styles.refreshHint
+            }
+          >
+            Existing results remain
+            available while the
+            dataset updates.
+          </span>
+        </div>
+      ) : null}
+
+      {ads.length > 0 ? (
+        <>
+          <div
+            className={
+              styles.summaryPanel
+            }
+          >
+            <div
+              className={
+                styles.summaryHead
+              }
+            >
+              <div>
+                <p
+                  className={
+                    styles.kicker
+                  }
+                >
+                  MARKET SNAPSHOT
+                </p>
+
+                <h3>
+                  {safeSummary.totalAds.toLocaleString(
+                    "en-IN",
+                  )}{" "}
+                  creatives indexed
+                </h3>
               </div>
+
+              <span
+                className={
+                  styles.dataNote
+                }
+              >
+                Source facts are
+                separated from
+                Zooptrack-derived
+                intelligence.
+              </span>
+            </div>
+
+            <div
+              className={
+                styles.metricGrid
+              }
+            >
+              <div>
+                <span>
+                  Active
+                </span>
+
+                <strong>
+                  {safeSummary.activeAds.toLocaleString(
+                    "en-IN",
+                  )}
+                </strong>
+
+                <small>
+                  {activeShare}% of
+                  indexed ads
+                </small>
+              </div>
+
+              <div>
+                <span>
+                  Static
+                </span>
+
+                <strong>
+                  {staticAds.toLocaleString(
+                    "en-IN",
+                  )}
+                </strong>
+
+                <small>
+                  Image + carousel
+                </small>
+              </div>
+
+              <div>
+                <span>
+                  Video
+                </span>
+
+                <strong>
+                  {safeSummary.videoAds.toLocaleString(
+                    "en-IN",
+                  )}
+                </strong>
+
+                <small>
+                  {videoShare}% of
+                  indexed ads
+                </small>
+              </div>
+
+              <div>
+                <span>
+                  Creators
+                </span>
+
+                <strong>
+                  {safeSummary.creatorAds.toLocaleString(
+                    "en-IN",
+                  )}
+                </strong>
+
+                <small>
+                  Creator signals
+                  detected
+                </small>
+              </div>
+
+              <div>
+                <span>
+                  Avg. running
+                </span>
+
+                <strong>
+                  {safeSummary.averageRunningDays
+                    ? `${safeSummary.averageRunningDays}d`
+                    : "—"}
+                </strong>
+
+                <small>
+                  Observation-based
+                </small>
+              </div>
+
+              <div>
+                <span>
+                  Longest running
+                </span>
+
+                <strong>
+                  {safeSummary.longestRunningDays
+                    ? `${safeSummary.longestRunningDays}d`
+                    : "—"}
+                </strong>
+
+                <small>
+                  Observation-based
+                </small>
+              </div>
+            </div>
+          </div>
+
+          <AdMarketLanguageIntelligence
+            languages={
+              sortedLanguagePreview
+            }
+            markets={
+              sortedMarketPreview
+            }
+          />
+
+          <div
+            className={
+              styles.gridHeader
+            }
+          >
+            <div>
+              <p
+                className={
+                  styles.kicker
+                }
+              >
+                CREATIVE LIBRARY
+              </p>
+
+              <h3>
+                Research the ads,
+                not the scorecards.
+              </h3>
+            </div>
+
+            <span>
+              {pagination
+                ? `Showing ${
+                    (pagination.page -
+                      1) *
+                      pagination.limit +
+                    1
+                  }–${Math.min(
+                    pagination.page *
+                      pagination.limit,
+                    pagination.total,
+                  )} of ${
+                    pagination.total
+                  }`
+                : `${ads.length} ads`}
+            </span>
+          </div>
+
+          <div
+            className={
+              styles.cardGrid
+            }
+          >
+            {ads.map(
+              (ad) => (
+                <AdCreativeCard
+                  key={`${ad.platform}-${ad.id}`}
+                  ad={ad}
+                  onOpen={
+                    setSelectedAd
+                  }
+                />
+              ),
             )}
           </div>
 
-          <div className="w-full lg:w-44">
-            <label className="mb-2 block text-xs font-bold uppercase tracking-[0.08em] text-slate-500">Search mode</label>
-            <select value={mode} onChange={(event) => setMode(event.target.value as SearchMode)} className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-slate-900">
-              <option value="advertiser">Advertiser</option>
-              <option value="keyword">Keyword</option>
-            </select>
-          </div>
+          {pagination &&
+          pagination.totalPages >
+            1 ? (
+            <div
+              className={
+                styles.pagination
+              }
+            >
+              <button
+                className={
+                  styles.secondaryButton
+                }
+                disabled={
+                  !pagination.hasPreviousPage ||
+                  loading
+                }
+                onClick={() =>
+                  runSearch(
+                    pagination.page -
+                      1,
+                  )
+                }
+              >
+                Previous
+              </button>
 
-          <div className="w-full lg:w-32">
-            <label className="mb-2 block text-xs font-bold uppercase tracking-[0.08em] text-slate-500">Country</label>
-            <Input value={country} onChange={(event) => onCountryChange(event.target.value.toUpperCase())} maxLength={2} className="font-semibold uppercase" />
-          </div>
+              <span>
+                Page{" "}
+                {
+                  pagination.page
+                }{" "}
+                of{" "}
+                {
+                  pagination.totalPages
+                }
+              </span>
 
-          <Button onClick={() => void fetchResults(1)} disabled={loading} className="h-10 gap-2 lg:w-36">
-            {loading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
-            Search
-          </Button>
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold text-slate-500">Source:</span>
-          <Badge variant="secondary">Meta Ad Library</Badge>
-          <span className="text-xs text-slate-500">Advertiser mode finds the advertiser. Keyword mode finds ads matching the query across ad text and metadata.</span>
-          <div className="ml-auto">
-            <Button onClick={() => void trackCurrentSearch()} variant="secondary" className="gap-2" disabled={!input.trim()}>
-              <Bookmark size={14} />{tracked ? "Tracked" : "Track search"}
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {job && ["queued", "scraping", "normalizing", "enriching", "finalizing"].includes(job.status) && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <span className="grid h-9 w-9 place-items-center rounded-full bg-slate-900 text-white"><Loader2 size={17} className="animate-spin" /></span>
-            <div className="min-w-0 flex-1"><div className="text-sm font-bold text-slate-950">Updating Zooptrack index</div><div className="text-xs text-slate-500">{job.stage} · {job.persistedAds} persisted · {job.discoveredAds} discovered</div></div>
-            <span className="text-sm font-bold text-slate-900">{collectionProgress}%</span>
-          </div>
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-slate-900 transition-all" style={{ width: `${collectionProgress}%` }} /></div>
-        </div>
-      )}
-
-      {error && <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><Info size={18} className="mt-0.5 shrink-0" /><div>{error}</div></div>}
-
-      <div>
-        <div className="mb-3 flex items-end justify-between"><div><div className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Market snapshot</div><h2 className="mt-1 text-xl font-bold text-slate-950">Research the ads, not the scorecards.</h2></div><div className="text-xs font-semibold text-slate-500">{pagination.total ? `${pagination.total.toLocaleString("en-IN")} indexed ads` : "No indexed results yet"}</div></div>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-          <Metric icon={BarChart3} label="Indexed" value={summary.totalAds.toLocaleString("en-IN")} />
-          <Metric icon={CheckCircle2} label="Active" value={`${summary.activeAds.toLocaleString("en-IN")}`} />
-          <Metric icon={ImageIcon} label="Image" value={summary.imageAds} />
-          <Metric icon={Video} label="Video" value={summary.videoAds} />
-          <Metric icon={Layers3} label="Carousel" value={summary.carouselAds} />
-          <Metric icon={UserRound} label="Creators" value={summary.creatorAds} />
-          <Metric icon={Clock3} label="Avg running" value={`${summary.averageRunningDays || 0}d`} title="Derived from first/last observed dates." />
-          <Metric icon={Target} label="Longest" value={`${summary.longestRunningDays || 0}d`} title="Persistence signal, not proof of conversion performance." />
-        </div>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:col-span-2">
-          <div className="flex items-center gap-2"><Sparkles size={17} /><h3 className="font-bold text-slate-950">Competitive creative intelligence</h3></div>
-          <div className="mt-4 grid gap-3 md:grid-cols-3">
-            <div className="rounded-xl bg-slate-50 p-4"><div className="text-xs font-bold uppercase tracking-wider text-slate-500">Top creator</div><div className="mt-1 font-bold text-slate-950">{intelligence?.topCreators?.[0]?.label || "No creator signal"}</div><div className="text-xs text-slate-500">{intelligence?.topCreators?.[0] ? `${intelligence.topCreators[0].count} ads` : "Source data pending"}</div></div>
-            <div className="rounded-xl bg-slate-50 p-4"><div className="text-xs font-bold uppercase tracking-wider text-slate-500">Top offer</div><div className="mt-1 font-bold text-slate-950">{intelligence?.topOffers?.[0]?.label || "No offer detected"}</div><div className="text-xs text-slate-500">{intelligence?.topOffers?.[0] ? `${intelligence.topOffers[0].count} ads` : "Source data pending"}</div></div>
-            <div className="rounded-xl bg-slate-50 p-4"><div className="text-xs font-bold uppercase tracking-wider text-slate-500">Top hook pattern</div><div className="mt-1 line-clamp-2 font-bold text-slate-950">{intelligence?.topHooks?.[0]?.label || "No hook detected"}</div><div className="text-xs text-slate-500">Observed repetition, not conversion proof</div></div>
-          </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <div className="rounded-xl border border-slate-200 p-4"><div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500"><Clock3 size={14} />Longest-running creative</div><div className="mt-2 font-bold text-slate-950">{intelligence?.longestRunningAd?.advertiserName || "—"}</div><div className="text-sm text-slate-600">{intelligence?.longestRunningAd?.headline || "No headline"}</div><div className="mt-1 text-xs font-semibold text-slate-500">{intelligence?.longestRunningAd?.runningDays ?? 0} observed days</div></div>
-            <div className="rounded-xl border border-dashed border-slate-300 p-4"><div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500"><Info size={14} />Reach / impressions</div><div className="mt-2 font-bold text-slate-950">Unavailable from current public source</div><div className="mt-1 text-xs leading-5 text-slate-500">Zooptrack will not invent reach, impressions or conversion numbers. We can still rank persistence, creative repetition and observed source signals.</div></div>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-2"><Languages size={17} /><h3 className="font-bold text-slate-950">Language & market signals</h3></div>
-          <div className="mt-4 space-y-4">
-            <div><div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Languages observed</div>{observedLanguages.length ? observedLanguages.map(([name, count]) => <div key={name} className="mb-2 flex items-center justify-between text-sm"><span>{name}</span><span className="font-bold">{count}</span></div>) : <div className="text-sm text-slate-500">Language data will appear as creatives are enriched.</div>}</div>
-            <div><div className="mb-2 flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-slate-500"><MapPin size={13} />Markets observed</div>{observedMarkets.length ? observedMarkets.map(([name, count]) => <div key={name} className="mb-2 flex items-center justify-between text-sm"><span>{name}</span><span className="font-bold">{count}</span></div>) : <div className="text-sm text-slate-500">City/state targeting is not claimed unless the source exposes it.</div>}</div>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between">
-        <div><div className="text-xs font-bold uppercase tracking-wider text-slate-500">Creative library</div><div className="mt-1 text-sm text-slate-600">Facts come from the public source; explanations below are Zooptrack-derived.</div></div>
-        {pagination.totalPages > 1 && <div className="flex items-center gap-2"><Button variant="secondary" disabled={pagination.page <= 1 || loading} onClick={() => void fetchResults(pagination.page - 1)}><ChevronLeft size={16} /></Button><span className="px-2 text-sm font-semibold">{pagination.page} / {pagination.totalPages}</span><Button variant="secondary" disabled={pagination.page >= pagination.totalPages || loading} onClick={() => void fetchResults(pagination.page + 1)}><ChevronRight size={16} /></Button></div>}
-      </div>
-
-      {ads.length === 0 && !loading ? (
-        <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center"><Search size={32} className="mx-auto text-slate-400" /><h3 className="mt-3 font-bold text-slate-950">No indexed creatives yet</h3><p className="mx-auto mt-1 max-w-md text-sm text-slate-500">Start a search. Zooptrack will collect the public dataset in the background and refresh this view when the collection is complete.</p></div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {ads.map((ad) => <AdCard key={`${ad.platform}:${ad.id}`} ad={ad} onOpen={() => setSelectedAd(ad)} />)}
-        </div>
-      )}
-
-      {selectedAd && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/50 p-0 backdrop-blur-sm md:items-center md:p-6" onMouseDown={() => setSelectedAd(null)}>
-          <aside className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-t-3xl bg-white shadow-2xl md:rounded-3xl" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white/95 px-5 py-4 backdrop-blur">
-              <div><div className="text-xs font-bold uppercase tracking-wider text-slate-500">Ad intelligence</div><div className="font-bold text-slate-950">{selectedAd.advertiserName || "Unknown advertiser"}</div></div>
-              <Button variant="secondary" onClick={() => setSelectedAd(null)}><X size={17} /></Button>
+              <button
+                className={
+                  styles.primaryButton
+                }
+                disabled={
+                  !pagination.hasNextPage ||
+                  loading
+                }
+                onClick={() =>
+                  runSearch(
+                    pagination.page +
+                      1,
+                  )
+                }
+              >
+                Next
+              </button>
             </div>
-            <div className="space-y-6 p-5">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="rounded-2xl bg-slate-50 p-4"><div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500"><Sparkles size={14} />Why this hook?</div><div className="mt-2 font-bold text-slate-950">“{hookText(selectedAd)}”</div><div className="mt-2 text-xs font-semibold text-slate-500">Pattern: {hookType(selectedAd)}</div><ul className="mt-3 space-y-2 text-sm leading-5 text-slate-600">{whyHook(selectedAd).map((reason) => <li key={reason} className="flex gap-2"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-500" />{reason}</li>)}</ul></div>
-                <div className="rounded-2xl bg-slate-50 p-4"><div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500"><Clock3 size={14} />Why may this creative persist?</div><div className="mt-2 font-bold text-slate-950">{selectedAd.runningDays ?? 0} observed days</div><ul className="mt-3 space-y-2 text-sm leading-5 text-slate-600">{creativeWhy(selectedAd).map((reason) => <li key={reason} className="flex gap-2"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-500" />{reason}</li>)}</ul></div>
-              </div>
+          ) : null}
+        </>
+      ) : null}
 
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4"><Metric icon={Clock3} label="First seen" value={safeDate(selectedAd.firstSeen)} /><Metric icon={RefreshCw} label="Last seen" value={safeDate(selectedAd.lastSeen)} /><Metric icon={Tag} label="Offer" value={selectedAd.offer || "—"} /><Metric icon={Target} label="Reach" value={selectedAd.reach == null ? "Unavailable" : selectedAd.reach} /></div>
+      {!loading &&
+      !ads.length &&
+      !error &&
+      !refreshing ? (
+        <div
+          className={
+            styles.emptyPanel
+          }
+        >
+          <div
+            className={
+              styles.emptyIcon
+            }
+          >
+            ⌕
+          </div>
 
-              <div className="rounded-2xl border border-slate-200 p-4"><div className="text-xs font-bold uppercase tracking-wider text-slate-500">Source facts</div><div className="mt-3 grid gap-3 text-sm md:grid-cols-2"><div><span className="text-slate-500">Creative:</span> <b>{selectedAd.creativeType || "unknown"}</b></div><div><span className="text-slate-500">CTA:</span> <b>{selectedAd.callToAction || "—"}</b></div><div><span className="text-slate-500">Creator:</span> <b>{selectedAd.creatorName || "None detected"}</b></div><div><span className="text-slate-500">First seen:</span> <b>{safeDate(selectedAd.firstSeen)}</b></div><div><span className="text-slate-500">Product:</span> <b>{selectedAd.productName || "—"}</b></div><div><span className="text-slate-500">Landing page:</span> <b>{safeUrl(selectedAd.landingPage) ? "Available" : "Unavailable"}</b></div></div></div>
+          <h3>
+            Search the advertising
+            market
+          </h3>
 
-              {safeUrl(selectedAd.landingPage) && <Button variant="secondary" className="w-full gap-2" onClick={() => window.open(safeUrl(selectedAd.landingPage)!, "_blank", "noopener,noreferrer")}><ExternalLink size={15} />Open landing page</Button>}
-            </div>
-          </aside>
+          <p>
+            Start with a brand like
+            BEARDO, Mamaearth or
+            Nike. Zooptrack will
+            search the persistent
+            intelligence layer and
+            only collect fresh
+            source data when the
+            dataset needs it.
+          </p>
         </div>
-      )}
+      ) : null}
+
+      <AdDetailDrawer
+        ad={selectedAd}
+        onClose={() =>
+          setSelectedAd(null)
+        }
+      />
     </section>
   );
 }
-
-export default AdSpySection;
