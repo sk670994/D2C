@@ -119,8 +119,47 @@ const META_LIB_EN_BASE_URL =
   "https://www.facebook.com/ads/library/";
 
 const DEFAULT_COUNTRY = "IN";
-const DEFAULT_MAX_SCROLLS = 14;
-const TARGET_LIBRARY_IDS = 80;
+
+function readPositiveIntEnv(
+  name: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+
+  return Math.min(
+    max,
+    Math.max(min, Math.floor(parsed)),
+  );
+}
+
+// Deep collection defaults. These are intentionally configurable so
+// production can tune collection depth without editing code.
+const DEFAULT_MAX_SCROLLS = readPositiveIntEnv(
+  "META_MAX_SCROLLS",
+  100,
+  20,
+  240,
+);
+
+const TARGET_LIBRARY_IDS = readPositiveIntEnv(
+  "META_TARGET_LIBRARY_IDS",
+  600,
+  100,
+  2000,
+);
+
+const STABLE_ROUNDS_TO_STOP = readPositiveIntEnv(
+  "META_STABLE_ROUNDS",
+  8,
+  3,
+  20,
+);
 
 const META_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -1802,8 +1841,241 @@ async function scrapeMetaAdLibraryOnce(
      * SCROLL
      * --------------------------------------------------- */
 
-    let previousCount = 0;
+    // Meta can virtualize older cards. We therefore archive every
+    // discovered card into a lightweight in-page container before
+    // moving further down the result set. Final extraction then sees
+    // both current DOM cards and archived cards instead of only the
+    // final viewport.
+    const archiveId = "__zooptrack_meta_archive__";
+
+    const archiveCurrentCards =
+  async (): Promise<number> =>
+    page.evaluate(
+      (containerId: string) => {
+        const normalizeText = (
+          value: string,
+        ) =>
+          value
+            .replace(
+              /[\u200B-\u200D\uFEFF]/g,
+              "",
+            )
+            .replace(
+              /\u00A0/g,
+              " ",
+            )
+            .replace(
+              /\r|\n/g,
+              " ",
+            )
+            .replace(
+              /\s+/g,
+              " ",
+            )
+            .trim();
+
+        const getLibraryId = (
+          value: string,
+        ): string | null =>
+          value.match(
+            /(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i,
+          )?.[1] ?? null;
+
+        const countLibraryIds = (
+          element: Element,
+        ): number => {
+          const text =
+            element.textContent ?? "";
+
+          const ids =
+            text.match(
+              /(?:Library ID|लाइब्रेरी ID):\s*\d+/gi,
+            ) ?? [];
+
+          return new Set(
+            ids.map(
+              (value) =>
+                value.match(
+                  /(\d+)/,
+                )?.[1] ?? "",
+            ),
+          ).size;
+        };
+
+        let archive =
+          document.getElementById(
+            containerId,
+          );
+
+        if (!archive) {
+          archive =
+            document.createElement(
+              "div",
+            );
+
+          archive.id =
+            containerId;
+
+          archive.setAttribute(
+            "data-zooptrack-meta-archive",
+            "true",
+          );
+
+          Object.assign(
+            archive.style,
+            {
+              position:
+                "fixed",
+              left:
+                "-100000px",
+              top: "0",
+              width:
+                "1px",
+              height:
+                "1px",
+              overflow:
+                "hidden",
+              opacity:
+                "0",
+              pointerEvents:
+                "none",
+            },
+          );
+
+          document.body.appendChild(
+            archive,
+          );
+        }
+
+        const archivedIds =
+          new Set<string>();
+
+        for (
+          const node of Array.from(
+            archive.children,
+          )
+        ) {
+          const id =
+            getLibraryId(
+              node.textContent ??
+                "",
+            );
+
+          if (id) {
+            archivedIds.add(
+              id,
+            );
+          }
+        }
+
+        const walker =
+          document.createTreeWalker(
+            document.body,
+            NodeFilter.SHOW_TEXT,
+          );
+
+        let node =
+          walker.nextNode();
+
+        while (node) {
+          const raw =
+            normalizeText(
+              node.textContent ??
+                "",
+            );
+
+          const id =
+            getLibraryId(
+              raw,
+            );
+
+          if (
+            id &&
+            !archivedIds.has(
+              id,
+            )
+          ) {
+            let current =
+              node.parentElement;
+
+            let best:
+              | Element
+              | null = null;
+
+            for (
+              let depth = 0;
+              depth < 14 &&
+              current;
+              depth++
+            ) {
+              const text =
+                current.textContent?.trim() ??
+                "";
+
+              const idCount =
+                countLibraryIds(
+                  current,
+                );
+
+              if (
+                idCount === 1 &&
+                text.length >=
+                  80 &&
+                text.length <=
+                  25_000
+              ) {
+                best =
+                  current;
+              }
+
+              if (
+                idCount > 1
+              ) {
+                break;
+              }
+
+              current =
+                current.parentElement;
+            }
+
+            if (best) {
+              const cloned =
+                best.cloneNode(
+                  true,
+                ) as HTMLElement;
+
+              cloned.setAttribute(
+                "data-zooptrack-archived-library-id",
+                id,
+              );
+
+              archive.appendChild(
+                cloned,
+              );
+
+              archivedIds.add(
+                id,
+              );
+            }
+          }
+
+          node =
+            walker.nextNode();
+        }
+
+        return archivedIds.size;
+      },
+      archiveId,
+    );
+
+    let previousCount =
+      await archiveCurrentCards();
     let stableRounds = 0;
+
+    console.log(
+      "[MetaProvider] Initial archived library IDs:",
+      previousCount,
+    );
 
     for (
       let scroll = 0;
@@ -1812,86 +2084,46 @@ async function scrapeMetaAdLibraryOnce(
     ) {
       await page.mouse.wheel(
         0,
-        2200,
+        2400,
       );
 
       await page.waitForTimeout(
-        650,
+        POST_SCROLL_WAIT_MS,
       );
 
       const count =
-        await page.evaluate(
-          () => {
-            const text =
-              document.body?.innerText ??
-              "";
-
-            const matches =
-              text.match(
-                /(?:Library ID|लाइब्रेरी ID):\s*\d+/gi,
-              ) ?? [];
-
-            const ids =
-              matches
-                .map(
-                  (
-                    value,
-                  ) =>
-                    value.match(
-                      /(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i,
-                    )?.[1] ??
-                    null,
-                )
-                .filter(
-                  (
-                    value,
-                  ): value is string =>
-                    value !== null,
-                );
-
-            return new Set(ids).size;
-          },
-        );
+        await archiveCurrentCards();
 
       console.log(
         `[MetaProvider] Scroll ${
           scroll + 1
-        }: ${count} library IDs`,
+        }: ${count} cumulative library IDs`,
       );
 
-      if (
-        count ===
-        previousCount
-      ) {
+      if (count === previousCount) {
         stableRounds++;
       } else {
         stableRounds = 0;
       }
 
-      previousCount =
-        count;
+      previousCount = count;
 
-      if (
-        count >=
-        TARGET_LIBRARY_IDS
-      ) {
+      if (count >= TARGET_LIBRARY_IDS) {
         console.log(
           "[MetaProvider] Target library ID count reached:",
           count,
         );
-
         break;
       }
 
       if (
-        stableRounds >= 4 &&
+        stableRounds >= STABLE_ROUNDS_TO_STOP &&
         count > 0
       ) {
         console.log(
           "[MetaProvider] Library ID count stabilized:",
           count,
         );
-
         break;
       }
     }
@@ -3377,7 +3609,7 @@ async function scrapeMetaAdLibrary(
   }
 
   console.warn(
-    `[MetaProvider] All ${maxAttempts} scrape attempts returned 0 ads.`,
+    `[MetaProvider] All ${maxAttempts} scrape attempts failed to produce usable ads.`,
   );
 
   return [];
@@ -3504,50 +3736,6 @@ function setCachedMetaAds(
  * Keep separate Library IDs.
  * Only collapse true duplicate cards.
  * ======================================================= */
-
-function normalizeFingerprintPart(
-  value:
-    | string
-    | null
-    | undefined,
-): string {
-  return (
-    value ?? ""
-  )
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function buildCreativeFingerprint(
-  ad: CompetitorAd,
-): string {
-  return [
-    normalizeFingerprintPart(
-      ad.advertiserName,
-    ),
-    normalizeFingerprintPart(
-      ad.headline,
-    ),
-    normalizeFingerprintPart(
-      ad.primaryText,
-    ),
-    normalizeFingerprintPart(
-      ad.callToAction,
-    ),
-    normalizeFingerprintPart(
-      ad.landingPage,
-    ),
-    ad.creativeType ??
-      "",
-    normalizeFingerprintPart(
-      ad.imageUrl,
-    ),
-    normalizeFingerprintPart(
-      ad.videoUrl,
-    ),
-  ].join("|");
-}
 
 function chooseBetterDuplicate(
   a: CompetitorAd,
@@ -3713,37 +3901,30 @@ export const metaProvider: AdProvider =
       /* -----------------------------------------------
        * DEDUPE
        *
-       * IMPORTANT:
-       * The Library ID is NOT part of the fingerprint.
-       * But we still preserve separate creative variants
-       * unless the actual creative fingerprint is identical.
+       * A Meta Library ID represents a distinct public ad
+       * record. Two different Library IDs may intentionally
+       * use the same creative. Do NOT collapse those records
+       * merely because their media/copy fingerprint matches.
+       *
+       * We only remove the same Library ID appearing more than
+       * once because of DOM re-renders / archived card copies.
        * --------------------------------------------- */
 
-      const unique =
-        new Map<
-          string,
-          CompetitorAd
-        >();
+      const uniqueByLibraryId =
+        new Map<string, CompetitorAd>();
 
       for (const ad of ads) {
-        const fingerprint =
-          buildCreativeFingerprint(
-            ad,
-          );
-
         const existing =
-          unique.get(
-            fingerprint,
-          );
+          uniqueByLibraryId.get(ad.id);
 
         if (!existing) {
-          unique.set(
-            fingerprint,
+          uniqueByLibraryId.set(
+            ad.id,
             ad,
           );
         } else {
-          unique.set(
-            fingerprint,
+          uniqueByLibraryId.set(
+            ad.id,
             chooseBetterDuplicate(
               existing,
               ad,
@@ -3752,13 +3933,12 @@ export const metaProvider: AdProvider =
         }
       }
 
-      ads =
-        Array.from(
-          unique.values(),
-        );
+      ads = Array.from(
+        uniqueByLibraryId.values(),
+      );
 
       console.log(
-        "[MetaProvider] Ads after deduplication:",
+        "[MetaProvider] Ads after Library-ID deduplication:",
         ads.length,
       );
 

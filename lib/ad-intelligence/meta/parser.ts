@@ -557,32 +557,55 @@ export function extractActiveStatus(
 export function extractAdvertiserIdentity(
   lines: string[],
 ): ParsedIdentity {
-  const sponsoredIndex =
-    lines.findIndex((line) => {
-      const value =
-        normalizeExtractedText(
-          line,
-        );
+  const normalizedLines =
+    lines
+      .map(
+        (line) =>
+          normalizeExtractedText(
+            line,
+          ) ?? "",
+      )
+      .filter(Boolean);
 
-      return (
-        value?.toLowerCase() ===
-          "sponsored" ||
-        value === "प्रायोजित"
-      );
-    });
-
-  if (sponsoredIndex <= 0) {
+  if (
+    normalizedLines.length === 0
+  ) {
     return {
       advertiserName: null,
       creatorName: null,
-      partnershipType: "unknown",
+      partnershipType:
+        "unknown",
     };
   }
 
+  const sponsoredIndex =
+    normalizedLines.findIndex(
+      (line) => {
+        const value =
+          line.toLowerCase();
+
+        return (
+          value ===
+            "sponsored" ||
+          value ===
+            "प्रायोजित"
+        );
+      },
+    );
+
+  /*
+   * Meta generally places the advertiser / collaboration
+   * identity immediately before Sponsored.
+   */
+  const identityIndex =
+    sponsoredIndex > 0
+      ? sponsoredIndex - 1
+      : 0;
+
   const candidate =
-    normalizeExtractedText(
-      lines[
-        sponsoredIndex - 1
+    normalizeWhitespace(
+      normalizedLines[
+        identityIndex
       ],
     );
 
@@ -590,19 +613,23 @@ export function extractAdvertiserIdentity(
     return {
       advertiserName: null,
       creatorName: null,
-      partnershipType: "unknown",
+      partnershipType:
+        "unknown",
     };
   }
 
-  /*
-   * Paid partnership signals.
-   */
+  /* -------------------------------------------------------
+   * Explicit paid partnership
+   * ----------------------------------------------------- */
+
   const paidPartnershipMatch =
     candidate.match(
-      /^(.+?)\s+(?:paid partnership|partnership with)\s+(.+)$/i,
+      /^(.+?)\s+(?:paid\s+partnership|partnership\s+with)\s+(.+)$/i,
     );
 
-  if (paidPartnershipMatch) {
+  if (
+    paidPartnershipMatch
+  ) {
     return {
       advertiserName:
         normalizeWhitespace(
@@ -617,56 +644,187 @@ export function extractAdvertiserIdentity(
     };
   }
 
-  /*
-   * Explicit collaboration signals.
-   */
-  const collaborationMatch =
+  /* -------------------------------------------------------
+   * Explicit "Brand x Creator"
+   * ----------------------------------------------------- */
+
+  const xMatch =
     candidate.match(
-      /^(.+?)\s+(?:x|×|collab|collaboration)\s+(.+)$/iu,
+      /^(.+?)\s*(?:x|×)\s*(@?[A-Za-z0-9][A-Za-z0-9._-]{1,60})$/iu,
     );
 
-  if (collaborationMatch) {
+  if (xMatch) {
     return {
       advertiserName:
         normalizeWhitespace(
-          collaborationMatch[1],
+          xMatch[1],
         ),
       creatorName:
         normalizeWhitespace(
-          collaborationMatch[2],
+          xMatch[2],
         ),
       partnershipType:
         "collaboration",
     };
   }
 
-  /*
-   * "Brand with Creator" style.
-   */
-  const creatorMatch =
+  /* -------------------------------------------------------
+   * "Brand collaboration Creator"
+   * ----------------------------------------------------- */
+
+  const collaborationMatch =
     candidate.match(
-      /^(.+?)\s+(?:के\s+साथ|with)\s+(.+)$/iu,
+      /^(.+?)\s+(?:collaboration|collab)\s*[:\-]?\s*(.*)$/iu,
     );
 
-  if (creatorMatch) {
+  if (
+    collaborationMatch
+  ) {
+    const advertiser =
+      normalizeWhitespace(
+        collaborationMatch[1],
+      );
+
+    const creator =
+      normalizeWhitespace(
+        collaborationMatch[2],
+      );
+
+    /*
+     * When Meta concatenates the final words, e.g.
+     * "BEARDO for Mencollaboration",
+     * try to recover the creator tail.
+     */
+    if (
+      creator &&
+      creator.length >= 2
+    ) {
+      return {
+        advertiserName:
+          advertiser,
+
+        creatorName:
+          creator,
+
+        partnershipType:
+          "collaboration",
+      };
+    }
+
+    /*
+     * No creator text after "collaboration".
+     * Preserve the brand and classify collaboration without
+     * inventing a creator.
+     */
+    return {
+      advertiserName:
+        advertiser,
+
+      creatorName:
+        null,
+
+      partnershipType:
+        "collaboration",
+    };
+  }
+
+  /* -------------------------------------------------------
+   * Concatenated "... for Mencollaboration"
+   * ----------------------------------------------------- */
+
+  const concatenatedCollabMatch =
+    candidate.match(
+      /^(.+?)\s+for\s+(.+?)collaboration$/iu,
+    );
+
+  if (
+    concatenatedCollabMatch
+  ) {
     return {
       advertiserName:
         normalizeWhitespace(
-          creatorMatch[1],
+          concatenatedCollabMatch[1],
         ),
+
       creatorName:
         normalizeWhitespace(
-          creatorMatch[2],
+          concatenatedCollabMatch[2],
         ),
+
+      partnershipType:
+        "collaboration",
+    };
+  }
+
+  /* -------------------------------------------------------
+   * "Brand with Creator"
+   * ----------------------------------------------------- */
+
+  const withCreatorMatch =
+    candidate.match(
+      /^(.+?)\s+(?:with|के\s+साथ)\s+(@?[A-Za-z0-9][A-Za-z0-9._-]{1,60})$/iu,
+    );
+
+  if (
+    withCreatorMatch
+  ) {
+    return {
+      advertiserName:
+        normalizeWhitespace(
+          withCreatorMatch[1],
+        ),
+
+      creatorName:
+        normalizeWhitespace(
+          withCreatorMatch[2],
+        ),
+
       partnershipType:
         "creator",
     };
   }
 
+  /* -------------------------------------------------------
+   * Handle advertiser followed by a creator-style handle
+   * ----------------------------------------------------- */
+
+  const trailingHandle =
+    candidate.match(
+      /^(.+?)\s+(@[A-Za-z0-9._-]{2,60})$/u,
+    );
+
+  if (
+    trailingHandle
+  ) {
+    return {
+      advertiserName:
+        normalizeWhitespace(
+          trailingHandle[1],
+        ),
+
+      creatorName:
+        normalizeWhitespace(
+          trailingHandle[2],
+        ),
+
+      partnershipType:
+        "creator",
+    };
+  }
+
+  /* -------------------------------------------------------
+   * Direct advertiser
+   * ----------------------------------------------------- */
+
   return {
-    advertiserName: candidate,
-    creatorName: null,
-    partnershipType: "direct",
+    advertiserName:
+      candidate,
+
+    creatorName:
+      null,
+
+    partnershipType:
+      "direct",
   };
 }
 
@@ -1081,107 +1239,199 @@ export function extractOffer(
   primaryText: string | null,
   lines: string[],
 ): string | null {
-  const text = [
-    primaryText ?? "",
-    ...lines,
-  ]
-    .map(
-      (value) =>
-        normalizeExtractedText(
-          value,
-        ) ?? "",
-    )
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const normalizedLines =
+    [
+      ...(primaryText
+        ? [primaryText]
+        : []),
+      ...lines,
+    ]
+      .map(
+        (value) =>
+          normalizeExtractedText(
+            value,
+          ) ?? "",
+      )
+      .filter(Boolean);
+
+  const text =
+    normalizedLines
+      .join(" ")
+      .replace(
+        /\s+/g,
+        " ",
+      )
+      .trim();
 
   if (!text) {
     return null;
   }
 
-  /*
-   * Percentage offers are handled separately so we can
-   * validate the numeric value before returning it.
-   *
-   * Valid:
-   *   10% off
-   *   15% off
-   *   50% discount
-   *   up to 80% off
-   *
-   * Invalid:
-   *   315% off
-   *   150% discount
-   */
-  const percentagePatterns = [
-    /\bflat\s+(\d{1,3})%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
+  /* -------------------------------------------------------
+   * Percentage discounts
+   * ----------------------------------------------------- */
 
-    /\bup\s*to\s+(\d{1,3})%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
+  const percentagePatterns =
+    [
+      /\bflat\s+(\d{1,3})%\s*off\b/i,
 
-    /\bupto\s+(\d{1,3})%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
+      /\bup\s*to\s+(\d{1,3})%\s*off\b/i,
 
-    /\b(\d{1,3})%\s*off\b(?:\s*\|\s*code[:\s]*[A-Z0-9_-]+)?/i,
+      /\bupto\s+(\d{1,3})%\s*off\b/i,
 
-    /\b(\d{1,3})%\s*discount\b/i,
-  ];
+      /\b(\d{1,3})%\s*off\b/i,
+
+      /\b(\d{1,3})%\s*discount\b/i,
+    ];
 
   for (
-    const pattern of percentagePatterns
+    const pattern of
+      percentagePatterns
   ) {
     const match =
-      text.match(pattern);
+      text.match(
+        pattern,
+      );
 
     if (!match) {
       continue;
     }
 
     const percentage =
-      Number(match[1]);
+      Number(
+        match[1],
+      );
 
-    /*
-     * Reject impossible/corrupted discount values.
-     */
     if (
-      !Number.isFinite(
+      Number.isFinite(
         percentage,
-      ) ||
-      percentage <= 0 ||
-      percentage > 100
+      ) &&
+      percentage > 0 &&
+      percentage <= 100
     ) {
+      return normalizeWhitespace(
+        match[0],
+      );
+    }
+  }
+
+  /* -------------------------------------------------------
+   * Rupee / INR offers
+   *
+   * Examples:
+   * "₹999 only"
+   * "at ₹799"
+   * "₹799"
+   * "4 Perfumes @ ₹999"
+   * ----------------------------------------------------- */
+
+  const rupeeOfferPatterns =
+    [
+      /\b\d+\s*(?:x|×|pack|packs|pcs|pieces|products|perfumes|items)\b.{0,80}?(?:@|at|for)\s*(?:₹|INR|Rs\.?)\s*[\d,]+(?:\.\d+)?(?:\s*(?:only|each))?/iu,
+
+      /(?:@|at|for)\s*(?:₹|INR|Rs\.?)\s*[\d,]+(?:\.\d+)?\s*(?:only|each)?/iu,
+
+      /(?:₹|INR|Rs\.?)\s*[\d,]+(?:\.\d+)?\s*(?:only|each)/iu,
+
+      /(?:₹|INR|Rs\.?)\s*[\d,]+(?:\.\d+)?/iu,
+    ];
+
+  for (
+    const pattern of
+      rupeeOfferPatterns
+  ) {
+    const match =
+      text.match(
+        pattern,
+      );
+
+    if (!match) {
       continue;
     }
 
-    return (
-      normalizeExtractedText(
+    const normalized =
+      normalizeWhitespace(
         match[0],
-      ) ?? null
-    );
+      );
+
+    if (
+      normalized
+    ) {
+      return normalized;
+    }
   }
 
-  /*
-   * Non-percentage offers.
-   */
-  const nonPercentagePatterns = [
-    /\buse\s+code[:\s]+[A-Z0-9_-]+\b/i,
+  /* -------------------------------------------------------
+   * Bundle / quantity offers
+   * ----------------------------------------------------- */
 
-    /\bprice\s*drop\b/i,
+  const bundlePatterns =
+    [
+      /\b\d+\s+(?:products?|items?|perfumes?|pieces?|pcs?|packs?|units?)\b.{0,80}?(?:only|for|at)\s+(?:₹|INR|Rs\.?)\s*[\d,]+(?:\.\d+)?/iu,
 
-    /\bsale\s+is\s+live\b/i,
+      /\b(?:buy|get)\s+\d+\s*(?:for|@)\s*(?:₹|INR|Rs\.?)\s*[\d,]+(?:\.\d+)?/iu,
 
-    /\bfree\s+shipping\b/i,
-  ];
+      /\b(?:combo|bundle|kit)\b.{0,100}?(?:₹|INR|Rs\.?)\s*[\d,]+(?:\.\d+)?/iu,
+    ];
 
   for (
-    const pattern of nonPercentagePatterns
+    const pattern of
+      bundlePatterns
   ) {
     const match =
-      text.match(pattern);
+      text.match(
+        pattern,
+      );
+
+    if (!match) {
+      continue;
+    }
+
+    const normalized =
+      normalizeWhitespace(
+        match[0],
+      );
+
+    if (
+      normalized
+    ) {
+      return normalized;
+    }
+  }
+
+  /* -------------------------------------------------------
+   * Coupon / sale / shipping
+   * ----------------------------------------------------- */
+
+  const nonPercentagePatterns =
+    [
+      /\buse\s+code[:\s]+[A-Z0-9_-]+\b/i,
+
+      /\bcode[:\s]+[A-Z0-9_-]+\b/i,
+
+      /\bcoupon[:\s]+[A-Z0-9_-]+\b/i,
+
+      /\bprice\s*drop\b/i,
+
+      /\bsale\s+is\s+live\b/i,
+
+      /\bfree\s+shipping\b/i,
+
+      /\bfree\s+delivery\b/i,
+    ];
+
+  for (
+    const pattern of
+      nonPercentagePatterns
+  ) {
+    const match =
+      text.match(
+        pattern,
+      );
 
     if (match) {
-      return (
-        normalizeExtractedText(
-          match[0],
-        ) ?? null
+      return normalizeWhitespace(
+        match[0],
       );
     }
   }

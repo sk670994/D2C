@@ -25,11 +25,13 @@ import {
   buildAdSearchSummary,
 } from "@/lib/ad-intelligence/intelligence";
 
+
 import {
   getLatestAdSpySnapshot,
   saveAdSpySnapshot,
 
   getFreshSharedAdSpyCache,
+  getSharedAdSpyCache,
   ensureSharedAdSpyCache,
   claimSharedAdSpyJob,
   completeSharedAdSpyJob,
@@ -793,30 +795,33 @@ export async function GET(
     /* -----------------------------------------------------
      * 4. SHARED CACHE FAST PATH
      *
-     * This is the key multi-user change.
+     * A shared result belongs to the GLOBAL dataset, not to
+     * a particular user.
      *
-     * User A may have generated this result.
-     * User B can now reuse it.
-     * User C can reuse it.
-     * User D can reuse it.
+     * Therefore:
+     *
+     * - fresh READY data is served immediately
+     * - stale READY data is also served immediately
+     * - another user's running scrape never blocks the user
+     *
+     * Stale data is explicitly marked in the response.
+     * A future async worker can refresh it independently.
      * --------------------------------------------------- */
 
     try {
       const sharedCache =
-        await getFreshSharedAdSpyCache({
+        await getSharedAdSpyCache({
           query,
-
           country,
-
           platform,
-
           mode,
-
-          maxAgeMinutes:
-            SHARED_CACHE_MAX_AGE_MINUTES,
         });
 
-      if (sharedCache) {
+      if (
+        sharedCache &&
+        sharedCache.status === "ready" &&
+        sharedCache.ads.length > 0
+      ) {
         const sharedAds =
           normalizeStoredAds(
             sharedCache.ads,
@@ -835,28 +840,30 @@ export async function GET(
             sharedCache.updatedAt,
           );
 
+        const stale =
+          !isFreshSnapshot(
+            sharedCache.updatedAt,
+          );
+
         console.info(
           "[AdIntelligenceSearch] Shared cache HIT:",
           {
             query,
-
             country,
-
             platform,
-
             ads:
               sharedAds.length,
-
             ageMs,
-
+            stale,
+            status:
+              sharedCache.status,
             cacheKey:
               sharedCache.cacheKey,
           },
         );
 
         /*
-         * Preserve user-specific history on page 1 only.
-         * This avoids generating one history record per pagination request.
+         * Preserve user-specific history only on page 1.
          */
         if (
           page === 1 &&
@@ -865,16 +872,11 @@ export async function GET(
           await persistUserSnapshotSafely({
             userId:
               user.id,
-
             query,
-
             country,
-
             platform,
-
             ads:
               sharedAds,
-
             intelligence:
               sharedSummary,
           });
@@ -882,39 +884,24 @@ export async function GET(
 
         return buildSearchResponse({
           query,
-
           country,
-
           platform,
-
           mode,
-
           ads:
             sharedAds,
-
           summary:
             sharedSummary,
-
           page,
-
           limit,
-
-          cacheHit:
-            true,
-
-          stale:
-            false,
-
+          cacheHit: true,
+          stale,
           cacheAgeMs:
             ageMs,
-
           fetchedAt:
             sharedCache.updatedAt,
-
           totalDurationMs:
             Date.now() -
             requestStartedAt,
-
           sharedCacheKey:
             sharedCache.cacheKey,
         });
@@ -922,8 +909,7 @@ export async function GET(
     } catch (sharedCacheError) {
       /*
        * Shared-cache problems should not make AdSpy unusable.
-       *
-       * We can still fall back to the provider.
+       * We can still fall back to the user snapshot/provider.
        */
       console.warn(
         "[AdIntelligenceSearch] Shared cache lookup failed. Falling back:",
@@ -1115,6 +1101,13 @@ export async function GET(
 
     /* -----------------------------------------------------
      * 8. CLAIM SINGLE SHARED JOB
+     *
+     * If a READY row exists, claimSharedAdSpyJob returns
+     * claimed=false with status=ready. That does NOT mean
+     * another request owns the scrape.
+     *
+     * If a RUNNING row exists, another request owns the
+     * current refresh.
      * --------------------------------------------------- */
 
     let ownsSharedJob =
@@ -1134,11 +1127,8 @@ export async function GET(
         const claim =
           await claimSharedAdSpyJob({
             query,
-
             country,
-
             platform,
-
             mode,
           });
 
@@ -1158,16 +1148,12 @@ export async function GET(
           "[AdIntelligenceSearch] Shared job decision:",
           {
             query,
-
             cacheKey:
-              sharedCache.cacheKey,
-
+              claim.cache.cacheKey,
             claimed:
               claim.claimed,
-
             status:
               claim.cache.status,
-
             leaseUntil:
               claim.leaseUntil,
           },
@@ -1184,180 +1170,274 @@ export async function GET(
     }
 
     /* -----------------------------------------------------
-     * 9. ANOTHER REQUEST OWNS THE JOB
+     * 9. RE-CHECK SHARED STATE AFTER CLAIM
+     *
+     * This is intentionally NOT:
+     *
+     *   !ownsSharedJob => another user => 409
+     *
+     * A READY cache with claimed=false is reusable data.
+     * A RUNNING cache means a refresh is already in progress.
      * --------------------------------------------------- */
 
     if (
       sharedCache &&
       !ownsSharedJob
     ) {
-      console.info(
-        "[AdIntelligenceSearch] Another request owns this search. Waiting for shared result:",
-        {
-          query,
+      const sharedStatus =
+        sharedCache.status;
 
-          cacheKey:
-            sharedCache.cacheKey,
-        },
-      );
+      /*
+       * READY:
+       *
+       * Serve it immediately, even when it is older than the
+       * 5-minute freshness window. This gives the customer
+       * continuity instead of a 409.
+       *
+       * The response marks stale=true so the eventual
+       * background refresh system can update it.
+       */
+      if (
+        sharedStatus === "ready" &&
+        sharedCache.ads.length > 0
+      ) {
+        const readyAds =
+          normalizeStoredAds(
+            sharedCache.ads,
+          );
 
-      try {
-        const completed =
-          await waitForSharedJob({
+        const readySummary =
+          normalizeStoredSummary(
+            sharedCache.intelligence,
+          ) ??
+          buildAdSearchSummary(
+            readyAds,
+          );
+
+        const ageMs =
+          getSnapshotAgeMs(
+            sharedCache.updatedAt,
+          );
+
+        const stale =
+          !isFreshSnapshot(
+            sharedCache.updatedAt,
+          );
+
+        if (
+          page === 1 &&
+          readyAds.length > 0
+        ) {
+          await persistUserSnapshotSafely({
+            userId:
+              user.id,
             query,
-
             country,
-
             platform,
-
-            mode,
+            ads:
+              readyAds,
+            intelligence:
+              readySummary,
           });
-
-        if (completed) {
-          const completedAds =
-            normalizeStoredAds(
-              completed.ads,
-            );
-
-          const completedSummary =
-            normalizeStoredSummary(
-              completed.intelligence,
-            ) ??
-            buildAdSearchSummary(
-              completedAds,
-            );
-
-          if (
-            completedAds.length > 0
-          ) {
-            const ageMs =
-              getSnapshotAgeMs(
-                completed.updatedAt,
-              );
-
-            /*
-             * Save this user's history on the
-             * first page only.
-             */
-            if (
-              page === 1
-            ) {
-              await persistUserSnapshotSafely({
-                userId:
-                  user.id,
-
-                query,
-
-                country,
-
-                platform,
-
-                ads:
-                  completedAds,
-
-                intelligence:
-                  completedSummary,
-              });
-            }
-
-            return buildSearchResponse({
-              query,
-
-              country,
-
-              platform,
-
-              mode,
-
-              ads:
-                completedAds,
-
-              summary:
-                completedSummary,
-
-              page,
-
-              limit,
-
-              cacheHit:
-                true,
-
-              stale:
-                false,
-
-              cacheAgeMs:
-                ageMs,
-
-              fetchedAt:
-                completed.updatedAt,
-
-              totalDurationMs:
-                Date.now() -
-                requestStartedAt,
-
-              sharedCacheKey:
-                completed.cacheKey,
-            });
-          }
         }
 
-        /*
-         * If waiting timed out, return a clear response
-         * rather than silently starting another expensive
-         * concurrent Meta scrape.
-         */
-        return NextResponse.json(
+        console.info(
+          "[AdIntelligenceSearch] Serving READY shared result after claim:",
           {
-            success:
-              false,
+            query,
+            cacheKey:
+              sharedCache.cacheKey,
+            ads:
+              readyAds.length,
+            ageMs,
+            stale,
+          },
+        );
 
-            error:
-              "AdSpy search is already running.",
+        return buildSearchResponse({
+          query,
+          country,
+          platform,
+          mode,
+          ads:
+            readyAds,
+          summary:
+            readySummary,
+          page,
+          limit,
+          cacheHit: true,
+          stale,
+          cacheAgeMs:
+            ageMs,
+          fetchedAt:
+            sharedCache.updatedAt,
+          totalDurationMs:
+            Date.now() -
+            requestStartedAt,
+          sharedCacheKey:
+            sharedCache.cacheKey,
+        });
+      }
 
-            message:
-              "Another search for this brand is currently collecting fresh competitor data. Please retry in a few seconds.",
+      /*
+       * RUNNING:
+       *
+       * Another request owns the refresh.
+       *
+       * We can safely wait for the already-running job because
+       * a ready path above has already returned stale data whenever
+       * historical ads exist.
+       *
+       * If the job times out, do NOT expose the internal
+       * "another user is searching" message.
+       */
+      if (
+        sharedStatus ===
+        "running"
+      ) {
+        console.info(
+          "[AdIntelligenceSearch] Shared job already running. Waiting for completion:",
+          {
+            query,
+            cacheKey:
+              sharedCache.cacheKey,
+          },
+        );
 
-            retryable:
-              true,
+        try {
+          const completed =
+            await waitForSharedJob({
+              query,
+              country,
+              platform,
+              mode,
+            });
 
-            meta: {
-              sharedJob:
+          if (completed) {
+            const completedAds =
+              normalizeStoredAds(
+                completed.ads,
+              );
+
+            const completedSummary =
+              normalizeStoredSummary(
+                completed.intelligence,
+              ) ??
+              buildAdSearchSummary(
+                completedAds,
+              );
+
+            if (
+              completedAds.length > 0
+            ) {
+              const ageMs =
+                getSnapshotAgeMs(
+                  completed.updatedAt,
+                );
+
+              if (
+                page === 1
+              ) {
+                await persistUserSnapshotSafely({
+                  userId:
+                    user.id,
+                  query,
+                  country,
+                  platform,
+                  ads:
+                    completedAds,
+                  intelligence:
+                    completedSummary,
+                });
+              }
+
+              return buildSearchResponse({
+                query,
+                country,
+                platform,
+                mode,
+                ads:
+                  completedAds,
+                summary:
+                  completedSummary,
+                page,
+                limit,
+                cacheHit: true,
+                stale: false,
+                cacheAgeMs:
+                  ageMs,
+                fetchedAt:
+                  completed.updatedAt,
+                totalDurationMs:
+                  Date.now() -
+                  requestStartedAt,
+                sharedCacheKey:
+                  completed.cacheKey,
+              });
+            }
+          }
+
+          /*
+           * The shared worker did not complete within the bounded
+           * wait. Do not return 409.
+           *
+           * Return a retryable service response describing the
+           * infrastructure state without exposing another user's
+           * activity.
+           */
+          return NextResponse.json(
+            {
+              success:
+                false,
+
+              error:
+                "ADSPY_REFRESH_IN_PROGRESS",
+
+              message:
+                "Fresh market data is still being prepared. Please retry shortly.",
+
+              retryable:
                 true,
 
-              cacheKey:
-                sharedCache.cacheKey,
+              meta: {
+                sharedJob:
+                  true,
+
+                cacheKey:
+                  sharedCache.cacheKey,
+              },
             },
-          },
-          {
-            status:
-              409,
-          },
-        );
-      } catch (waitError) {
-        console.error(
-          "[AdIntelligenceSearch] Shared job wait failed:",
-          waitError,
-        );
+            {
+              status:
+                503,
+            },
+          );
+        } catch (waitError) {
+          console.error(
+            "[AdIntelligenceSearch] Shared job wait failed:",
+            waitError,
+          );
 
-        return NextResponse.json(
-          {
-            success:
-              false,
+          return NextResponse.json(
+            {
+              success:
+                false,
 
-            error:
-              "Another AdSpy search is currently running.",
+              error:
+                "ADSPY_REFRESH_UNAVAILABLE",
 
-            message:
-              "Please retry in a few seconds.",
+              message:
+                "Fresh market data is temporarily unavailable. Please retry shortly.",
 
-            retryable:
-              true,
-          },
-          {
-            status:
-              409,
-          },
-        );
+              retryable:
+                true,
+            },
+            {
+              status:
+                503,
+            },
+          );
+        }
       }
     }
 
@@ -1592,6 +1672,7 @@ export async function GET(
       Date.now() -
       analysisStartedAt;
 
+      
     /* -----------------------------------------------------
      * 15. COMPLETE SHARED CACHE
      * --------------------------------------------------- */
