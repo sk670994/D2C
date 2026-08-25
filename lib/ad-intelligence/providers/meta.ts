@@ -1849,224 +1849,118 @@ async function scrapeMetaAdLibraryOnce(
     const archiveId = "__zooptrack_meta_archive__";
 
     const archiveCurrentCards =
-  async (): Promise<number> =>
-    page.evaluate(
-      (containerId: string) => {
-        const normalizeText = (
-          value: string,
-        ) =>
-          value
-            .replace(
-              /[\u200B-\u200D\uFEFF]/g,
-              "",
-            )
-            .replace(
-              /\u00A0/g,
-              " ",
-            )
-            .replace(
-              /\r|\n/g,
-              " ",
-            )
-            .replace(
-              /\s+/g,
-              " ",
-            )
-            .trim();
+      async (): Promise<number> =>
+        page.evaluate((containerId) => {
+          const normalizeText = (value: string) =>
+            value
+              .replace(/[\u200B-\u200D\uFEFF]/g, "")
+              .replace(/\u00A0/g, " ")
+              .replace(/\r|\n/g, " ")
+              .replace(/\s+/g, " ")
+              .trim();
 
-        const getLibraryId = (
-          value: string,
-        ): string | null =>
-          value.match(
-            /(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i,
-          )?.[1] ?? null;
+          const getLibraryId = (value: string) =>
+            value.match(
+              /(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i,
+            )?.[1] ?? null;
 
-        const countLibraryIds = (
-          element: Element,
-        ): number => {
-          const text =
-            element.textContent ?? "";
+          const countLibraryIds = (element: Element) => {
+            const ids =
+              element.textContent?.match(
+                /(?:Library ID|लाइब्रेरी ID):\s*\d+/gi,
+              ) ?? [];
 
-          const ids =
-            text.match(
-              /(?:Library ID|लाइब्रेरी ID):\s*\d+/gi,
-            ) ?? [];
+            return new Set(
+              ids.map(
+                (value) =>
+                  value.match(/(\d+)/)?.[1] ?? "",
+              ),
+            ).size;
+          };
 
-          return new Set(
-            ids.map(
-              (value) =>
-                value.match(
-                  /(\d+)/,
-                )?.[1] ?? "",
-            ),
-          ).size;
-        };
+          let archive =
+            document.getElementById(containerId);
 
-        let archive =
-          document.getElementById(
-            containerId,
-          );
-
-        if (!archive) {
-          archive =
-            document.createElement(
-              "div",
+          if (!archive) {
+            archive = document.createElement("div");
+            archive.id = containerId;
+            archive.setAttribute(
+              "data-zooptrack-meta-archive",
+              "true",
             );
-
-          archive.id =
-            containerId;
-
-          archive.setAttribute(
-            "data-zooptrack-meta-archive",
-            "true",
-          );
-
-          Object.assign(
-            archive.style,
-            {
-              position:
-                "fixed",
-              left:
-                "-100000px",
+            Object.assign(archive.style, {
+              position: "fixed",
+              left: "-100000px",
               top: "0",
-              width:
-                "1px",
-              height:
-                "1px",
-              overflow:
-                "hidden",
-              opacity:
-                "0",
-              pointerEvents:
-                "none",
-            },
-          );
-
-          document.body.appendChild(
-            archive,
-          );
-        }
-
-        const archivedIds =
-          new Set<string>();
-
-        for (
-          const node of Array.from(
-            archive.children,
-          )
-        ) {
-          const id =
-            getLibraryId(
-              node.textContent ??
-                "",
-            );
-
-          if (id) {
-            archivedIds.add(
-              id,
-            );
+              width: "1px",
+              height: "1px",
+              overflow: "hidden",
+              opacity: "0",
+              pointerEvents: "none",
+            });
+            document.body.appendChild(archive);
           }
-        }
 
-        const walker =
-          document.createTreeWalker(
+          const archivedIds = new Set<string>();
+          for (const node of Array.from(archive.children)) {
+            const id =
+              getLibraryId(node.textContent ?? "");
+            if (id) archivedIds.add(id);
+          }
+
+          const walker = document.createTreeWalker(
             document.body,
             NodeFilter.SHOW_TEXT,
           );
 
-        let node =
-          walker.nextNode();
-
-        while (node) {
-          const raw =
-            normalizeText(
-              node.textContent ??
-                "",
+          let node = walker.nextNode();
+          while (node) {
+            const raw = normalizeText(
+              node.textContent ?? "",
             );
+            const id = getLibraryId(raw);
 
-          const id =
-            getLibraryId(
-              raw,
-            );
+            if (id && !archivedIds.has(id)) {
+              let current = node.parentElement;
+              let best: Element | null = null;
 
-          if (
-            id &&
-            !archivedIds.has(
-              id,
-            )
-          ) {
-            let current =
-              node.parentElement;
+              for (
+                let depth = 0;
+                depth < 14 && current;
+                depth++
+              ) {
+                const text =
+                  current.textContent?.trim() ?? "";
+                const idCount = countLibraryIds(current);
 
-            let best:
-              | Element
-              | null = null;
+                if (
+                  idCount === 1 &&
+                  text.length >= 80 &&
+                  text.length <= 25000
+                ) {
+                  best = current;
+                }
 
-            for (
-              let depth = 0;
-              depth < 14 &&
-              current;
-              depth++
-            ) {
-              const text =
-                current.textContent?.trim() ??
-                "";
+                if (idCount > 1) break;
+                current = current.parentElement;
+              }
 
-              const idCount =
-                countLibraryIds(
-                  current,
+              if (best) {
+                const cloned = best.cloneNode(true) as HTMLElement;
+                cloned.setAttribute(
+                  "data-zooptrack-archived-library-id",
+                  id,
                 );
-
-              if (
-                idCount === 1 &&
-                text.length >=
-                  80 &&
-                text.length <=
-                  25_000
-              ) {
-                best =
-                  current;
+                archive.appendChild(cloned);
+                archivedIds.add(id);
               }
-
-              if (
-                idCount > 1
-              ) {
-                break;
-              }
-
-              current =
-                current.parentElement;
             }
 
-            if (best) {
-              const cloned =
-                best.cloneNode(
-                  true,
-                ) as HTMLElement;
-
-              cloned.setAttribute(
-                "data-zooptrack-archived-library-id",
-                id,
-              );
-
-              archive.appendChild(
-                cloned,
-              );
-
-              archivedIds.add(
-                id,
-              );
-            }
+            node = walker.nextNode();
           }
 
-          node =
-            walker.nextNode();
-        }
-
-        return archivedIds.size;
-      },
-      archiveId,
-    );
+          return archivedIds.size;
+        }, archiveId);
 
     let previousCount =
       await archiveCurrentCards();

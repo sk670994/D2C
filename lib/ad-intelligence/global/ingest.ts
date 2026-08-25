@@ -92,7 +92,12 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
     offer: ad.offer ?? null,
     transcript: ad.transcript ?? null,
     transcript_status: ad.transcriptStatus ?? "not_video",
-    metadata: { ...(ad.metadata ?? {}), publisherPlatforms: ad.publisherPlatforms ?? [] },
+   metadata: {
+  ...(ad.metadata ?? {}),
+  country: ad.country ?? null,
+  publisherPlatforms:
+    ad.publisherPlatforms ?? [],
+},
     intelligence: ad.intelligence ?? {},
     first_seen_at: toDateOrNull(ad.firstSeen),
     last_seen_at: toDateOrNull(ad.lastSeen) ?? now,
