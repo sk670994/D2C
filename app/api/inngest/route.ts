@@ -1,11 +1,17 @@
 import { serve } from "inngest/next";
+
 import { inngest } from "@/inngest/client";
-import { collectAdIntelligence, refreshTrackedBrands } from "@/inngest/functions";
+import { functions } from "@/inngest/functions";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
 
-export const { GET, POST, PUT } = serve({
+export const maxDuration = 800;
+
+export const {
+  GET,
+  POST,
+  PUT,
+} = serve({
   client: inngest,
-  functions: [collectAdIntelligence, refreshTrackedBrands],
+  functions,
 });

@@ -1,6 +1,5 @@
-"use client";
-
 export {
+  AdSpySection as default,
   AdSpySection,
 } from "./adspy/AdSpySection";
 

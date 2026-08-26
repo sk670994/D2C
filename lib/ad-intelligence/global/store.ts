@@ -221,235 +221,811 @@ function mapCreativeRow(row: any, languages: any[], markets: any[]): GlobalAdRec
   };
 }
 
-export async function searchGlobalAds(input: { query: string; country: string; platform: AdPlatform; page: number; limit: number }): Promise<Omit<GlobalSearchResult, "collectionJobId" | "isRefreshing">> {
-  const client = createGlobalServiceClient();
-  const q = escapeLike(input.query);
-  const country = input.country.trim().toUpperCase();
-  const { data: rollup, error: rollupError } = await client.rpc("get_ad_intelligence_rollup", { p_query: q, p_country: country, p_platform: input.platform });
-  if (rollupError) throw new Error(`Global rollup failed: ${rollupError.message}`);
 
-  const summary = rollup as {
-    totalAds: number;
-    activeAds: number;
-    inactiveAds: number;
-    videoAds: number;
-    imageAds: number;
-    carouselAds: number;
-    creatorAds: number;
-    averageRunningDays: number;
-    longestRunningDays: number;
-    languages: GlobalLanguage[];
-    markets: GlobalMarket[];
-  };
+function buildHookLabel(row: any): string | null {
+  const text = String(
+    row.primary_text ??
+      row.headline ??
+      "",
+  )
+    .replace(/\s+/g, " ")
+    .trim();
 
-  let candidateIds: string[] | null = null;
-  if (country) {
-    const { data: marketMatches, error: marketError } = await client
-      .from("ad_intelligence_markets")
-      .select("creative_id")
-      .eq("country", country)
-      .limit(20000);
-    if (marketError) throw new Error(`Country filter failed: ${marketError.message}`);
-    candidateIds = Array.from(new Set((marketMatches ?? []).map((row: any) => row.creative_id)));
-    if (candidateIds.length === 0) {
-      return {
-        ads: [], total: 0, totalPages: 0, page: input.page, limit: input.limit,
-        languages: summary.languages ?? [], markets: summary.markets ?? [],
-        summary: { totalAds: Number(summary.totalAds ?? 0), activeAds: Number(summary.activeAds ?? 0), inactiveAds: Number(summary.inactiveAds ?? 0), videoAds: Number(summary.videoAds ?? 0), imageAds: Number(summary.imageAds ?? 0), carouselAds: Number(summary.carouselAds ?? 0), creatorAds: Number(summary.creatorAds ?? 0), averageRunningDays: Number(summary.averageRunningDays ?? 0), longestRunningDays: Number(summary.longestRunningDays ?? 0) },
-        lastUpdatedAt: null,
-      };
+  if (!text) {
+    return null;
+  }
+
+  const first =
+    text
+      .split(
+        /[.!?。！？]/,
+      )[0]
+      ?.trim() ?? text;
+
+  return first.slice(0, 90);
+}
+
+function buildDerivedIntelligence(
+  rows: any[],
+) {
+  const creatorCounts =
+    new Map<string, number>();
+
+  const offerCounts =
+    new Map<string, number>();
+
+  const hookCounts =
+    new Map<string, number>();
+
+  for (const row of rows) {
+    const creator =
+      String(
+        row.creator_name ?? "",
+      ).trim();
+
+    if (creator) {
+      creatorCounts.set(
+        creator,
+        (creatorCounts.get(
+          creator,
+        ) ?? 0) + 1,
+      );
+    }
+
+    const offer =
+      String(
+        row.offer ?? "",
+      ).trim();
+
+    if (offer) {
+      offerCounts.set(
+        offer,
+        (offerCounts.get(
+          offer,
+        ) ?? 0) + 1,
+      );
+    }
+
+    const hook =
+      buildHookLabel(row);
+
+    if (hook) {
+      hookCounts.set(
+        hook,
+        (hookCounts.get(
+          hook,
+        ) ?? 0) + 1,
+      );
     }
   }
 
-  let query = client.from("ad_intelligence_creatives").select("*", { count: "exact" }).eq("platform", input.platform)
-    .or([`advertiser_name.ilike.%${q}%`, `creator_name.ilike.%${q}%`, `headline.ilike.%${q}%`, `product_name.ilike.%${q}%`, `primary_text.ilike.%${q}%`].join(","))
-    .order("is_currently_active", { ascending: false, nullsFirst: false })
-    .order("last_seen_at", { ascending: false, nullsFirst: false });
+  const top = (
+    counts: Map<string, number>,
+    limit = 5,
+  ) =>
+    Array.from(
+      counts.entries(),
+    )
+      .sort(
+        (a, b) =>
+          b[1] - a[1],
+      )
+      .slice(0, limit)
+      .map(
+        ([label, count]) => ({
+          label,
+          count,
+        }),
+      );
 
-  if (candidateIds) query = query.in("id", candidateIds);
+  const longest =
+    [...rows]
+      .map((row) => ({
+        id:
+          row.external_ad_id ??
+          row.external_ad_key ??
+          row.id,
 
-  const { data: rows, count, error } = await query.range((input.page - 1) * input.limit, input.page * input.limit - 1);
-  if (error) throw new Error(`Global search failed: ${error.message}`);
+        advertiserName:
+          row.advertiser_name ??
+          null,
 
-  const pageRows = rows ?? [];
-  const ids = pageRows.map((row: any) => row.id);
-  let markets: any[] = [];
-  let languages: any[] = [];
-  if (ids.length) {
-    const [marketResult, languageResult] = await Promise.all([
-      client.from("ad_intelligence_markets").select("*").in("creative_id", ids),
-      client.from("ad_intelligence_languages").select("*").in("creative_id", ids),
-    ]);
-    if (marketResult.error) throw new Error(`Failed to load markets: ${marketResult.error.message}`);
-    if (languageResult.error) throw new Error(`Failed to load languages: ${languageResult.error.message}`);
-    markets = marketResult.data ?? [];
-    languages = languageResult.data ?? [];
-  }
+        headline:
+          row.headline ??
+          null,
 
-  const ads = pageRows.map((row: any) => mapCreativeRow(row, languages, markets));
-  const lastUpdatedAt = pageRows.reduce<string | null>((latest, row: any) => {
-    const value = row.updated_at ?? row.last_seen_at ?? null;
-    if (!value) return latest;
-    if (!latest) return value;
-    return new Date(value).getTime() > new Date(latest).getTime() ? value : latest;
-  }, null);
+        primaryText:
+          row.primary_text ??
+          null,
+
+        runningDays:
+          runningDays(row),
+
+        creativeType:
+          row.creative_type ??
+          "unknown",
+
+        creatorName:
+          row.creator_name ??
+          null,
+      }))
+      .filter(
+        (row) =>
+          Number.isFinite(
+            row.runningDays,
+          ),
+      )
+      .sort(
+        (a, b) =>
+          Number(
+            b.runningDays ?? 0,
+          ) -
+          Number(
+            a.runningDays ?? 0,
+          ),
+      )[0] ?? null;
 
   return {
-    ads,
-    total: Number(count ?? summary.totalAds ?? 0),
-    totalPages: Number(count ?? summary.totalAds ?? 0) === 0 ? 0 : Math.ceil(Number(count ?? summary.totalAds ?? 0) / input.limit),
-    page: input.page,
-    limit: input.limit,
-    languages: summary.languages ?? [],
-    markets: summary.markets ?? [],
-    summary: {
-      totalAds: Number(summary.totalAds ?? 0),
-      activeAds: Number(summary.activeAds ?? 0),
-      inactiveAds: Number(summary.inactiveAds ?? 0),
-      videoAds: Number(summary.videoAds ?? 0),
-      imageAds: Number(summary.imageAds ?? 0),
-      carouselAds: Number(summary.carouselAds ?? 0),
-      creatorAds: Number(summary.creatorAds ?? 0),
-      averageRunningDays: Number(summary.averageRunningDays ?? 0),
-      longestRunningDays: Number(summary.longestRunningDays ?? 0),
+    topCreators:
+      top(creatorCounts),
+
+    topOffers:
+      top(offerCounts),
+
+    topHooks:
+      top(hookCounts),
+
+    longestRunningAd:
+      longest,
+
+    reach: {
+      status:
+        "unavailable" as const,
+
+      reason:
+        "The current public source does not expose a reliable per-ad reach figure to Zooptrack.",
     },
-    lastUpdatedAt,
   };
 }
 
+export async function searchGlobalAds(
+  input: {
+    query: string;
+    country: string;
+    platform: AdPlatform;
+    mode:
+      | "advertiser"
+      | "keyword";
+    page: number;
+    limit: number;
+  },
+): Promise<
+  GlobalSearchResult & {
+    intelligence: ReturnType<typeof buildDerivedIntelligence>;
+  }
+> {
+  const client =
+    createGlobalServiceClient();
+
+  const q =
+    input.query.trim();
+
+  const country =
+    input.country
+      .trim()
+      .toUpperCase();
+
+  if (!q) {
+    return {
+      ads: [],
+      total: 0,
+      page: input.page,
+      limit: input.limit,
+      totalPages: 0,
+      lastUpdatedAt: null,
+      isRefreshing: false,
+      collectionJobId: null,
+
+      summary: {
+        totalAds: 0,
+        activeAds: 0,
+        inactiveAds: 0,
+        videoAds: 0,
+        imageAds: 0,
+        carouselAds: 0,
+        creatorAds: 0,
+        averageRunningDays: 0,
+        longestRunningDays: 0,
+      },
+
+      intelligence:
+        buildDerivedIntelligence([]),
+
+      languages: [],
+      markets: [],
+    };
+  }
+
+  const from =
+    Math.max(
+      0,
+      input.page - 1,
+    ) * input.limit;
+
+  const to =
+    from +
+    input.limit -
+    1;
+
+  /*
+   * Start with the global creatives dataset.
+   */
+  let baseQuery =
+    client
+      .from(
+        "ad_intelligence_creatives",
+      )
+      .select("*", {
+        count: "exact",
+      })
+      .eq(
+        "platform",
+        input.platform,
+      );
+
+  /*
+   * ADVERTISER MODE
+   *
+   * Match the advertiser anywhere inside the stored
+   * advertiser name.
+   *
+   * Example:
+   *   beardo
+   *
+   * matches:
+   *   BEARDO
+   *   BEARDO for Men
+   *   Beardo Official
+   */
+  if (
+    input.mode ===
+    "advertiser"
+  ) {
+    const advertiser =
+      escapeLike(q);
+
+    baseQuery =
+      baseQuery.ilike(
+        "advertiser_name",
+        `%${advertiser}%`,
+      );
+  }
+
+  /*
+   * KEYWORD MODE
+   *
+   * Search across advertiser identity and creative
+   * text/metadata fields.
+   */
+  else {
+    const keyword =
+      escapeLike(q);
+
+    baseQuery =
+      baseQuery.or(
+        [
+          `advertiser_name.ilike.%${keyword}%`,
+          `creator_name.ilike.%${keyword}%`,
+          `headline.ilike.%${keyword}%`,
+          `product_name.ilike.%${keyword}%`,
+          `primary_text.ilike.%${keyword}%`,
+          `description.ilike.%${keyword}%`,
+          `offer.ilike.%${keyword}%`,
+          `landing_page_url.ilike.%${keyword}%`,
+        ].join(","),
+      );
+  }
+
+  /*
+   * IMPORTANT:
+   *
+   * Do not filter the creative itself by metadata.country.
+   *
+   * Many public Meta records do not expose reliable
+   * geographic data at creative level.
+   *
+   * Country is enriched below from market observations.
+   */
+  const {
+    data: pageRows,
+    count,
+    error,
+  } =
+    await baseQuery
+      .order(
+        "is_currently_active",
+        {
+          ascending: false,
+          nullsFirst: false,
+        },
+      )
+      .order(
+        "last_seen_at",
+        {
+          ascending: false,
+          nullsFirst: false,
+        },
+      )
+      .range(
+        from,
+        to,
+      );
+
+  if (error) {
+    throw new Error(
+      `Global search failed: ${error.message}`,
+    );
+  }
+
+  const rows =
+    pageRows ?? [];
+
+  /*
+   * Enrich only the creatives on the current page.
+   */
+  const ids =
+    rows.map(
+      (row: any) =>
+        row.id,
+    );
+
+  let markets: any[] = [];
+  let languages: any[] = [];
+
+  if (ids.length) {
+    const [
+      marketResult,
+      languageResult,
+    ] =
+      await Promise.all([
+        client
+          .from(
+            "ad_intelligence_markets",
+          )
+          .select("*")
+          .in(
+            "creative_id",
+            ids,
+          ),
+
+        client
+          .from(
+            "ad_intelligence_languages",
+          )
+          .select("*")
+          .in(
+            "creative_id",
+            ids,
+          ),
+      ]);
+
+    if (
+      marketResult.error
+    ) {
+      throw new Error(
+        `Failed to load markets: ${marketResult.error.message}`,
+      );
+    }
+
+    if (
+      languageResult.error
+    ) {
+      throw new Error(
+        `Failed to load languages: ${languageResult.error.message}`,
+      );
+    }
+
+    markets =
+      marketResult.data ??
+      [];
+
+    languages =
+      languageResult.data ??
+      [];
+  }
+
+  /*
+   * Convert database rows into the shape expected by
+   * the AdSpy frontend.
+   */
+  const ads =
+    rows.map(
+      (row: any) =>
+        mapCreativeRow(
+          row,
+          languages,
+          markets,
+        ),
+    );
+
+  /*
+   * Page-level source metrics.
+   */
+  const activeRows =
+    rows.filter(
+      (row: any) =>
+        row.is_currently_active !==
+        false,
+    );
+
+  const videoAds =
+    rows.filter(
+      (row: any) =>
+        row.creative_type ===
+        "video",
+    ).length;
+
+  const imageAds =
+    rows.filter(
+      (row: any) =>
+        row.creative_type ===
+        "image",
+    ).length;
+
+  const carouselAds =
+    rows.filter(
+      (row: any) =>
+        row.creative_type ===
+        "carousel",
+    ).length;
+
+  const creatorAds =
+    rows.filter(
+      (row: any) =>
+        Boolean(
+          String(
+            row.creator_name ??
+              "",
+          ).trim(),
+        ),
+    ).length;
+
+  const running =
+    rows
+      .map(runningDays)
+      .filter(
+        (
+          value,
+        ): value is number =>
+          typeof value ===
+            "number" &&
+          Number.isFinite(
+            value,
+          ),
+      );
+
+  const averageRunningDays =
+    running.length
+      ? running.reduce(
+          (
+            sum,
+            value,
+          ) =>
+            sum + value,
+          0,
+        ) /
+        running.length
+      : 0;
+
+  const longestRunningDays =
+    running.length
+      ? Math.max(
+          ...running,
+        )
+      : 0;
+
+  const total =
+    Number(count ?? 0);
+
+  const totalPages =
+    total > 0
+      ? Math.ceil(
+          total /
+            input.limit,
+        )
+      : 0;
+
+  return {
+    ads,
+
+    total,
+
+    page:
+      input.page,
+
+    limit:
+      input.limit,
+
+    totalPages,
+
+    lastUpdatedAt:
+      rows.reduce<string | null>(
+        (latest, row: any) => {
+          const value =
+            row.updated_at ??
+            row.last_seen_at ??
+            row.first_seen_at ??
+            null;
+
+          if (!value) {
+            return latest;
+          }
+
+          if (!latest) {
+            return String(value);
+          }
+
+          return new Date(value).getTime() >
+            new Date(latest).getTime()
+            ? String(value)
+            : latest;
+        },
+        null,
+      ),
+
+    isRefreshing: false,
+    collectionJobId: null,
+
+    summary: {
+      totalAds:
+        total,
+
+      activeAds:
+        activeRows.length,
+
+      inactiveAds:
+        Math.max(
+          0,
+          rows.length -
+            activeRows.length,
+        ),
+
+      videoAds,
+
+      imageAds,
+
+      carouselAds,
+
+      creatorAds,
+
+      averageRunningDays:
+        Math.round(
+          averageRunningDays,
+        ),
+
+      longestRunningDays,
+    },
+
+    intelligence:
+      buildDerivedIntelligence(
+        rows,
+      ),
+
+    languages,
+
+    markets,
+  };
+}
 export async function autocompleteBrands(input: {
   query: string;
   limit?: number;
+  mode?: "advertiser" | "keyword";
 }) {
-  const totalStartedAt = Date.now();
-
   const client = createGlobalServiceClient();
 
-  const prefix = normalizeCollectionQuery(input.query);
+  const query = input.query.trim();
+
+  if (query.length < 2) {
+    return [];
+  }
 
   const limit = Math.min(
     Math.max(input.limit ?? 8, 1),
     20,
   );
 
-  if (!prefix) {
+  const mode =
+    input.mode === "keyword"
+      ? "keyword"
+      : "advertiser";
+
+  const escaped =
+    query.replace(/[%_,]/g, " ").trim();
+
+  if (!escaped) {
     return [];
   }
 
-  console.log("[AutocompleteStore] START", {
-    prefix,
-    limit,
-  });
+  /*
+   * Advertiser mode:
+   * Return advertiser/brand identities first.
+   *
+   * Keyword mode:
+   * Return advertiser identities plus creative
+   * text signals.
+   */
 
-  const aliasStartedAt = Date.now();
+  if (mode === "advertiser") {
+    const { data, error } =
+      await client
+        .from("ad_intelligence_creatives")
+        .select(
+          "advertiser_id,advertiser_name",
+        )
+        .ilike(
+          "advertiser_name",
+          `%${escaped}%`,
+        )
+        .not(
+          "advertiser_name",
+          "is",
+          null,
+        )
+        .limit(200);
 
-  const {
-    data: aliases,
-    error,
-  } = await client
-    .from("ad_intelligence_brand_aliases")
-    .select(
-      "brand_id,alias,normalized_alias",
-    )
-    .ilike(
-      "normalized_alias",
-      `${prefix}%`,
-    )
-    .order("normalized_alias")
-    .limit(limit);
+    if (error) {
+      throw new Error(
+        `Autocomplete advertiser lookup failed: ${error.message}`,
+      );
+    }
 
-  console.log("[AutocompleteStore] ALIAS QUERY", {
-    durationMs:
-      Date.now() - aliasStartedAt,
-    rows:
-      aliases?.length ?? 0,
-    error:
-      error?.message ?? null,
-  });
+    const seen = new Set<string>();
+
+    return (data ?? [])
+      .map((row: any) => ({
+        type: "advertiser" as const,
+        id:
+          row.advertiser_id ??
+          row.advertiser_name,
+        label:
+          String(
+            row.advertiser_name ?? "",
+          ).trim(),
+      }))
+      .filter((item) => {
+        if (!item.label) return false;
+
+        const key =
+          item.label.toLowerCase();
+
+        if (seen.has(key)) {
+          return false;
+        }
+
+        seen.add(key);
+        return true;
+      })
+      .slice(0, limit);
+  }
+
+  const { data, error } =
+    await client
+      .from("ad_intelligence_creatives")
+      .select(
+        "advertiser_id,advertiser_name,creator_name,headline,product_name",
+      )
+      .or(
+        [
+          `advertiser_name.ilike.%${escaped}%`,
+          `creator_name.ilike.%${escaped}%`,
+          `headline.ilike.%${escaped}%`,
+          `product_name.ilike.%${escaped}%`,
+        ].join(","),
+      )
+      .limit(250);
 
   if (error) {
     throw new Error(
-      `Autocomplete failed: ${error.message}`,
+      `Autocomplete keyword lookup failed: ${error.message}`,
     );
   }
 
-  const ids = Array.from(
-    new Set(
-      (aliases ?? []).map(
-        (row: any) => row.brand_id,
-      ),
-    ),
-  );
+  const suggestions: Array<{
+    type:
+      | "advertiser"
+      | "creator"
+      | "keyword";
+    id: string;
+    label: string;
+  }> = [];
 
-  if (!ids.length) {
-    console.log(
-      "[AutocompleteStore] NO BRAND IDS",
-    );
+  const seen = new Set<string>();
 
-    return [];
-  }
+  for (const row of data ?? []) {
+    const advertiser =
+      String(
+        row.advertiser_name ?? "",
+      ).trim();
 
-  const brandStartedAt = Date.now();
+    const creator =
+      String(
+        row.creator_name ?? "",
+      ).trim();
 
-  const {
-    data: brands,
-    error: brandError,
-  } = await client
-    .from("ad_intelligence_brands")
-    .select(
-      "id,canonical_name,domain",
-    )
-    .in("id", ids);
+    const headline =
+      String(
+        row.headline ?? "",
+      ).trim();
 
-  console.log("[AutocompleteStore] BRAND QUERY", {
-    durationMs:
-      Date.now() - brandStartedAt,
-    rows:
-      brands?.length ?? 0,
-    error:
-      brandError?.message ?? null,
-  });
+    const product =
+      String(
+        row.product_name ?? "",
+      ).trim();
 
-  if (brandError) {
-    throw new Error(
-      `Brand lookup failed: ${brandError.message}`,
-    );
-  }
-
-  const brandMap = new Map(
-    (brands ?? []).map(
-      (brand: any) => [
-        brand.id,
-        brand,
-      ],
-    ),
-  );
-
-  const suggestions = (aliases ?? [])
-    .map((alias: any) => {
-      const brand = brandMap.get(
-        alias.brand_id,
-      );
-
-      return brand
+    const candidates = [
+      advertiser
         ? {
-            id: brand.id,
-            name: brand.canonical_name,
-            alias: alias.alias,
-            domain:
-              brand.domain ?? null,
+            type: "advertiser" as const,
+            id:
+              row.advertiser_id ??
+              advertiser,
+            label: advertiser,
           }
-        : null;
-    })
-    .filter(Boolean);
+        : null,
 
-  console.log("[AutocompleteStore] TOTAL", {
-    prefix,
-    durationMs:
-      Date.now() - totalStartedAt,
-    suggestions:
-      suggestions.length,
-  });
+      creator
+        ? {
+            type: "creator" as const,
+            id: creator,
+            label: creator,
+          }
+        : null,
+
+      headline
+        ? {
+            type: "keyword" as const,
+            id: headline,
+            label: headline,
+          }
+        : null,
+
+      product
+        ? {
+            type: "keyword" as const,
+            id: product,
+            label: product,
+          }
+        : null,
+    ];
+
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+
+      const key =
+        `${candidate.type}:${candidate.label.toLowerCase()}`;
+
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      suggestions.push(candidate);
+
+      if (
+        suggestions.length >=
+        limit
+      ) {
+        break;
+      }
+    }
+
+    if (
+      suggestions.length >=
+      limit
+    ) {
+      break;
+    }
+  }
 
   return suggestions;
 }
@@ -469,9 +1045,110 @@ export async function trackBrand(input: { userId: string; query: string; country
   if (error) throw new Error(`Failed to track brand: ${error.message}`);
 }
 
-export async function listTrackedBrands() {
-  const client = createGlobalServiceClient();
-  const { data, error } = await client.from("ad_intelligence_tracked_brands").select("id,query,country,platform,refresh_hours").eq("active", true);
-  if (error) throw new Error(`Failed to load tracked brands: ${error.message}`);
-  return (data ?? []).map((row: any) => ({ id: row.id, query: row.query, country: row.country, platform: row.platform as AdPlatform, refreshHours: Number(row.refresh_hours ?? 24) }));
+export async function listTrackedBrands(): Promise<
+  Array<{
+    id: string;
+    country: string;
+    platform: AdPlatform;
+    query: string;
+    refreshHours: number;
+    lastCollectedAt: string | null;
+  }>
+> {
+  const client =
+    createGlobalServiceClient();
+
+  const { data, error } =
+    await client
+      .from(
+        "ad_intelligence_tracked_brands",
+      )
+      .select(
+        [
+          "id",
+          "country",
+          "platform",
+          "query",
+          "refresh_hours",
+          "last_collected_at",
+        ].join(","),
+      )
+      .eq("active", true)
+      .order("last_collected_at", {
+        ascending: true,
+        nullsFirst: true,
+      });
+
+  if (error) {
+    throw new Error(
+      `Failed to list tracked brands: ${error.message}`,
+    );
+  }
+
+  return (data ?? []).map(
+    (row: any) => ({
+      id: String(row.id),
+
+      country:
+        String(
+          row.country ?? "IN",
+        ).toUpperCase(),
+
+      platform:
+        row.platform as AdPlatform,
+
+      query:
+        String(row.query ?? "").trim(),
+
+      refreshHours: Math.max(
+        1,
+        Number(
+          row.refresh_hours ?? 24,
+        ),
+      ),
+
+      lastCollectedAt:
+        row.last_collected_at
+          ? String(
+              row.last_collected_at,
+            )
+          : null,
+    }),
+  );
+}
+export async function markTrackedBrandCollected(input: {
+  query: string;
+  country: string;
+  platform: AdPlatform;
+}): Promise<void> {
+  const client =
+    createGlobalServiceClient();
+
+  const query =
+    input.query.trim();
+
+  const country =
+    input.country.trim().toUpperCase();
+
+  if (!query) {
+    return;
+  }
+
+  const { error } =
+    await client
+      .from("ad_intelligence_tracked_brands")
+      .update({
+        last_collected_at:
+          new Date().toISOString(),
+      })
+      .eq("query", query)
+      .eq("country", country)
+      .eq("platform", input.platform)
+      .eq("active", true);
+
+  if (error) {
+    throw new Error(
+      `Failed to mark tracked brand collected: ${error.message}`,
+    );
+  }
 }
