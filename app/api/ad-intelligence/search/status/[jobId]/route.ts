@@ -26,24 +26,17 @@ export async function GET(
     const {
       data: { user },
       error: userError,
-    } =
-      await auth.auth.getUser();
+    } = await auth.auth.getUser();
 
-    if (
-      userError ||
-      !user
-    ) {
+    if (userError || !user) {
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Unauthorized",
+          error: "Unauthorized",
         },
         { status: 401 },
       );
     }
-
-    void user;
 
     const { jobId } =
       await context.params;
@@ -55,8 +48,7 @@ export async function GET(
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Missing jobId.",
+          error: "Missing jobId.",
         },
         { status: 400 },
       );
@@ -71,75 +63,37 @@ export async function GET(
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Collection job not found.",
+          error: "Collection job not found.",
         },
         { status: 404 },
       );
     }
 
-    return NextResponse.json(
-      {
-        success: true,
-
-        job: {
-          id:
-            job.id,
-
-          collectionKey:
-            job.collectionKey,
-
-          query:
-            job.query,
-
-          country:
-            job.country,
-
-          platform:
-            job.platform,
-
-          mode:
-            job.mode,
-
-          status:
-            job.status,
-
-          stage:
-            job.stage,
-
-          discoveredAds:
-            job.discoveredAds,
-
-          normalizedAds:
-            job.normalizedAds,
-
-          persistedAds:
-            job.persistedAds,
-
-          errorMessage:
-            job.errorMessage,
-
-          startedAt:
-            job.startedAt,
-
-          completedAt:
-            job.completedAt,
-
-          lastRequestedAt:
-            job.lastRequestedAt,
-
-          updatedAt:
-            job.updatedAt,
-
-          createdAt:
-            job.createdAt,
-        },
+    return NextResponse.json({
+      success: true,
+      job: {
+        id: job.id,
+        collectionKey: job.collectionKey,
+        query: job.query,
+        country: job.country,
+        platform: job.platform,
+        mode: job.mode,
+        status: job.status,
+        stage: job.stage,
+        discoveredAds: job.discoveredAds,
+        normalizedAds: job.normalizedAds,
+        persistedAds: job.persistedAds,
+        errorMessage: job.errorMessage,
+        startedAt: job.startedAt,
+        completedAt: job.completedAt,
+        lastRequestedAt: job.lastRequestedAt,
+        updatedAt: job.updatedAt,
+        createdAt: job.createdAt,
       },
-      { status: 200 },
-    );
+    });
   } catch (error) {
     console.error(
-      "[AdIntelligenceSearchStatus] Failed:",
+      "[AdSpy job status]",
       error,
     );
 
@@ -147,7 +101,9 @@ export async function GET(
       {
         success: false,
         error:
-          "Failed to read collection job status.",
+          error instanceof Error
+            ? error.message
+            : "Failed to read collection status.",
       },
       { status: 500 },
     );

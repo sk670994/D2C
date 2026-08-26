@@ -11,43 +11,31 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(
-  request: NextRequest,
-) {
+export async function GET(request: NextRequest) {
   try {
-    const auth =
-      await createServerAuthClient();
+    const auth = await createServerAuthClient();
 
     const {
       data: { user },
-      error: userError,
-    } =
-      await auth.auth.getUser();
+      error: authError,
+    } = await auth.auth.getUser();
 
-    if (
-      userError ||
-      !user
-    ) {
+    if (authError || !user) {
       return NextResponse.json(
         {
           success: false,
-          error: "Unauthorized",
           suggestions: [],
+          error: "Unauthorized",
         },
-        {
-          status: 401,
-        },
+        { status: 401 },
       );
     }
 
-    const query =
-      (
-        request.nextUrl.searchParams.get(
-          "q",
-        ) ?? ""
-      ).trim();
+    const q = (
+      request.nextUrl.searchParams.get("q") ?? ""
+    ).trim();
 
-    if (query.length < 2) {
+    if (q.length < 2) {
       return NextResponse.json({
         success: true,
         suggestions: [],
@@ -55,17 +43,16 @@ export async function GET(
     }
 
     const mode =
-      request.nextUrl.searchParams.get(
-        "mode",
-      ) === "keyword"
+      request.nextUrl.searchParams.get("mode") ===
+      "keyword"
         ? "keyword"
         : "advertiser";
 
     const suggestions =
       await autocompleteBrands({
-        query,
-        limit: 8,
+        query: q,
         mode,
+        limit: 8,
       });
 
     return NextResponse.json({
@@ -74,7 +61,7 @@ export async function GET(
     });
   } catch (error) {
     console.error(
-      "[AdIntelligenceAutocomplete] Failed:",
+      "[AdSpy autocomplete]",
       error,
     );
 
@@ -87,9 +74,7 @@ export async function GET(
             ? error.message
             : "Autocomplete unavailable",
       },
-      {
-        status: 503,
-      },
+      { status: 503 },
     );
   }
 }

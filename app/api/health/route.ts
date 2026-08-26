@@ -1,34 +1,54 @@
 import { NextResponse } from "next/server";
-import { createClient as createServerAuthClient } from "@/lib/supabase/server";
+
+import {
+  createGlobalServiceClient,
+} from "@/lib/ad-intelligence/global/supabase";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const startedAt = Date.now();
+
   try {
-    const supabase = await createServerAuthClient();
+    const supabase =
+      createGlobalServiceClient();
+
     const {
-      data: { user },
-      error: userError    
-    } = await supabase.auth.getUser();
-
-    if (userError || !user) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
-
-    const { error: dbError } = await supabase
-      .from("monthly_records")
+      error,
+    } = await supabase
+      .from("ad_intelligence_brands")
       .select("id")
-      .eq("user_id", user.id)
       .limit(1);
 
-    if (dbError) {
-      return NextResponse.json({ ok: false, error: dbError.message }, { status: 500 });
+    if (error) {
+      return NextResponse.json(
+        {
+          ok: false,
+          db: "unreachable",
+          error: error.message,
+        },
+        { status: 503 },
+      );
     }
 
     return NextResponse.json({
       ok: true,
-      user: { id: user.id, email: user.email ?? "" },
-      db: "reachable"
+      db: "reachable",
+      latencyMs:
+        Date.now() - startedAt,
     });
   } catch (error) {
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Unknown error" }, { status: 500 });
+    return NextResponse.json(
+      {
+        ok: false,
+        db: "unreachable",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unknown error",
+      },
+      { status: 503 },
+    );
   }
 }
