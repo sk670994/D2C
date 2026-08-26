@@ -5,7 +5,7 @@ import { functions } from "@/inngest/functions";
 
 export const runtime = "nodejs";
 
-export const maxDuration = 800;
+export const maxDuration = 300;
 
 export const {
   GET,
