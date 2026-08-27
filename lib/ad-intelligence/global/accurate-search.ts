@@ -37,19 +37,29 @@ type Intelligence = {
     label: string;
     count: number;
   }>;
+
   topOffers: Array<{
     label: string;
     count: number;
   }>;
+
   topHooks: Array<{
     label: string;
     count: number;
   }>;
+
   longestRunningAd: {
     advertiserName: string | null;
     headline: string | null;
+    creativeType: string | null;
+    creatorName: string | null;
+    callToAction: string | null;
+    offer: string | null;
+    firstSeen: string | null;
+    lastSeen: string | null;
     runningDays: number | null;
   } | null;
+
   reach: {
     status: "unavailable";
     reason: string;
@@ -855,49 +865,64 @@ export async function searchGlobalAdsAccurate(
         )
       : 0;
 
-  const longest =
-    rows
-      .map(
-        (
-          row: any,
-        ) => ({
-          advertiserName:
-            row.advertiser_name ??
-            null,
-          headline:
-            row.headline ??
-            null,
-          runningDays:
-            runningDays(
-              row,
-            ),
-        }),
-      )
-      .filter(
-        (
-          row,
-        ) =>
-          typeof row.runningDays ===
-            "number" &&
-          Number.isFinite(
-            row.runningDays,
-          ),
-      )
-      .sort(
-        (
-          a,
-          b,
-        ) =>
-          Number(
-            b.runningDays ??
-              0,
-          ) -
-          Number(
-            a.runningDays ??
-              0,
-          ),
-      )[0] ??
-    null;
+const {
+  data: longestRows,
+  error: longestError,
+} =
+  await client.rpc(
+    "adspy_search_longest_creative",
+    {
+      p_query: query,
+      p_country: country,
+      p_platform: input.platform,
+      p_mode: input.mode,
+    },
+  );
+
+if (longestError) {
+  throw new Error(
+    `AdSpy longest creative lookup failed: ${longestError.message}`,
+  );
+}
+
+const longestRow =
+  Array.isArray(longestRows)
+    ? longestRows[0] ?? null
+    : longestRows ?? null;
+
+const longest = longestRow
+  ? {
+      advertiserName:
+        longestRow.advertiser_name ??
+        null,
+      headline:
+        longestRow.headline ??
+        null,
+      creativeType:
+        longestRow.creative_type ??
+        null,
+      creatorName:
+        longestRow.creator_name ??
+        null,
+      callToAction:
+        longestRow.call_to_action ??
+        null,
+      offer:
+        longestRow.offer ??
+        null,
+      firstSeen:
+        longestRow.first_seen_at ??
+        null,
+      lastSeen:
+        longestRow.last_seen_at ??
+        null,
+      runningDays:
+        Number(
+          longestRow.running_days ??
+            0,
+        ) || null,
+    }
+  : null;
 
   /*
    * The global RPC gives us the actual intelligence.
@@ -919,18 +944,21 @@ export async function searchGlobalAdsAccurate(
         [],
 
       longestRunningAd:
-        longest ?? {
-          advertiserName:
-            null,
-          headline:
-            null,
-          runningDays:
-            Number(
-              metrics.longest_running_days ??
-                0,
-            ) ||
-            null,
-        },
+  longest ?? {
+    advertiserName: null,
+    headline: null,
+    creativeType: null,
+    creatorName: null,
+    callToAction: null,
+    offer: null,
+    firstSeen: null,
+    lastSeen: null,
+    runningDays:
+      Number(
+        metrics.longest_running_days ??
+          0,
+      ) || null,
+  },
 
       reach: {
         status:

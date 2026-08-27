@@ -277,15 +277,38 @@ function CreativeCard({
   ad: Ad;
   onOpen: () => void;
 }) {
-  const image = mediaUrl(ad);
+  const image = safeUrl(
+    ad.thumbnailUrl || ad.imageUrl,
+  );
+  const video = safeUrl(ad.videoUrl);
   const source = safeUrl(ad.sourceUrl);
   const active = ad.isActive !== false;
   const type = ad.creativeType || "image";
+  const [playing, setPlaying] = useState(false);
 
   return (
     <article className="zt-ad-card">
       <div className="zt-ad-media">
-        {image ? (
+        {playing && video ? (
+          <video
+            key={video}
+            src={video}
+            poster={image ?? undefined}
+            controls
+            autoPlay
+            playsInline
+            preload="metadata"
+            onEnded={() => setPlaying(false)}
+            onError={() => setPlaying(false)}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              display: "block",
+              background: "#000",
+            }}
+          />
+        ) : image ? (
           <img
             src={image}
             alt={
@@ -328,13 +351,56 @@ function CreativeCard({
           </span>
         </div>
 
-        {type === "video" ? (
-          <span className="zt-play">
+        {type === "video" && video && !playing ? (
+          <button
+            type="button"
+            className="zt-play"
+            aria-label={`Play video for ${
+              ad.advertiserName || "advertiser"
+            }`}
+            title="Play video"
+            onClick={() => setPlaying(true)}
+            style={{
+              border: 0,
+              padding: 0,
+              cursor: "pointer",
+              display: "grid",
+              placeItems: "center",
+            }}
+          >
             <Play
               size={16}
               fill="currentColor"
             />
-          </span>
+          </button>
+        ) : null}
+
+        {playing && video ? (
+          <button
+            type="button"
+            aria-label="Close video"
+            title="Close video"
+            onClick={() => setPlaying(false)}
+            style={{
+              position: "absolute",
+              right: 10,
+              bottom: 10,
+              zIndex: 5,
+              width: 34,
+              height: 34,
+              border: 0,
+              borderRadius: "9999px",
+              background: "rgba(15,23,42,.85)",
+              color: "#fff",
+              cursor: "pointer",
+              display: "grid",
+              placeItems: "center",
+              fontSize: 20,
+              lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
         ) : null}
       </div>
 
@@ -414,7 +480,6 @@ function CreativeCard({
     </article>
   );
 }
-
 export type AdSpySectionProps = {
   query?: string;
   country?: string;
@@ -2025,201 +2090,142 @@ useEffect(() => {
           ) : null}
         </div>
 
-        <div className="zt-stats-grid">
-          <Stat
-            icon={
-              <Activity
-                size={16}
-              />
-            }
-            label="Indexed"
-            value={
-              summary.totalAds
-            }
-            hint="Total creatives matching this search"
-          />
+<div className="zt-stats-grid">
+  <Stat
+    icon={<Activity size={16} />}
+    label="Indexed"
+    value={summary.totalAds}
+    hint="Entire filtered dataset"
+  />
 
-          <Stat
-            icon={
-              <Activity
-                size={16}
-              />
-            }
-            label="Active shown"
-            value={
-              summary.activeAds
-            }
-            hint="Active creatives on the current page"
-          />
+  <Stat
+    icon={<Activity size={16} />}
+    label="Active"
+    value={summary.activeAds}
+    hint="Active creatives"
+  />
 
-          <Stat
-            icon={
-              <Video
-                size={16}
-              />
-            }
-            label="Video shown"
-            value={
-              summary.videoAds
-            }
-            hint="Video creatives on the current page"
-          />
+  <Stat
+    icon={<Activity size={16} />}
+    label="Inactive"
+    value={summary.inactiveAds}
+    hint="Inactive creatives"
+  />
 
-          <Stat
-            icon={
-              <Clock3
-                size={16}
-              />
-            }
-            label="Longest shown"
-            value={`${summary.longestRunningDays}d`}
-            hint="Longest running creative on this page"
-          />
-        </div>
+  <Stat
+    icon={<Video size={16} />}
+    label="Video"
+    value={summary.videoAds}
+    hint="Video creatives"
+  />
 
-        <div className="zt-insight-grid">
-          <section className="zt-panel">
-            <div className="zt-panel-head">
-              <div>
-                <span className="zt-overline">
-                  CREATIVE INTELLIGENCE
-                </span>
+  <Stat
+    icon={<ImageIcon size={16} />}
+    label="Image"
+    value={summary.imageAds}
+    hint="Image creatives"
+  />
 
-                <h3>
-                  What keeps showing up?
-                </h3>
-              </div>
+  <Stat
+    icon={<Layers3 size={16} />}
+    label="Carousel"
+    value={summary.carouselAds}
+    hint="Carousel creatives"
+  />
 
-              <span className="zt-derived">
-                <Sparkles size={13} />
-                Derived from observed source data
-              </span>
-            </div>
+  <Stat
+    icon={<UserRound size={16} />}
+    label="Creators"
+    value={summary.creatorAds}
+    hint="Creator-associated creatives"
+  />
 
-            <div className="zt-insight-cards">
-              <div className="zt-insight-card">
-                <span>
-                  Top creator
-                </span>
+  <Stat
+    icon={<Clock3 size={16} />}
+    label="Avg. running"
+    value={`${summary.averageRunningDays}d`}
+    hint="Average observed duration"
+  />
 
-                <strong>
-                  {topCreator?.label ||
-                    "No creator signal"}
-                </strong>
+  <Stat
+    icon={<Clock3 size={16} />}
+    label="Longest"
+    value={`${summary.longestRunningDays}d`}
+    hint="Longest observed duration"
+  />
+</div>
+        <div className="zt-insight-cards">
+  <div className="zt-insight-card">
+    <span>Top creator</span>
+    <strong>
+      {topCreator?.label ||
+        "No creator signal"}
+    </strong>
+    <small>
+      {topCreator
+        ? `${topCreator.count} observed creatives`
+        : "Not enough signal yet"}
+    </small>
+  </div>
 
-                <small>
-                  {topCreator
-                    ? `${topCreator.count} observed creatives`
-                    : "Not enough signal yet"}
-                </small>
-              </div>
+  <div className="zt-insight-card">
+    <span>Top offer</span>
+    <strong>
+      {topOffer?.label ||
+        "No offer detected"}
+    </strong>
+    <small>
+      {topOffer
+        ? `${topOffer.count} observed creatives`
+        : "Not enough signal yet"}
+    </small>
+  </div>
 
-              <div className="zt-insight-card">
-                <span>
-                  Top offer
-                </span>
+  <div className="zt-insight-card">
+    <span>Top hook</span>
+    <strong>
+      {topHook?.label ||
+        "No hook detected"}
+    </strong>
+    <small>
+      {topHook
+        ? `${topHook.count} observed creatives`
+        : "Not enough signal yet"}
+    </small>
+  </div>
 
-                <strong>
-                  {topOffer?.label ||
-                    "No offer detected"}
-                </strong>
+  <div className="zt-insight-card">
+    <span>Creator share</span>
+    <strong>
+      {summary.totalAds > 0
+        ? `${Math.round(
+            (summary.creatorAds /
+              summary.totalAds) *
+              100,
+          )}%`
+        : "—"}
+    </strong>
+    <small>
+      Of indexed creatives
+    </small>
+  </div>
 
-                <small>
-                  {topOffer
-                    ? `${topOffer.count} observed creatives`
-                    : "Not enough signal yet"}
-                </small>
-              </div>
-
-              <div className="zt-insight-card">
-                <span>
-                  Top hook
-                </span>
-
-                <strong>
-                  {topHook?.label ||
-                    "No hook detected"}
-                </strong>
-
-                <small>
-                  {topHook
-                    ? `${topHook.count} observed creatives`
-                    : "Not enough signal yet"}
-                </small>
-              </div>
-            </div>
-
-            <div className="zt-longest">
-              <div>
-                <span>
-                  Longest-running creative
-                </span>
-
-                <strong>
-                  {intelligence
-                    ?.longestRunningAd
-                    ?.headline ||
-                    "No long-running creative identified yet"}
-                </strong>
-              </div>
-
-              <span className="zt-longest-days">
-                {intelligence
-                  ?.longestRunningAd
-                  ?.runningDays ??
-                  0}{" "}
-                observed days
-              </span>
-            </div>
-          </section>
-
-          <section className="zt-panel zt-performance">
-            <span className="zt-overline">
-              MARKET MIX
-            </span>
-
-            <h3>
-              Observed creative signals
-            </h3>
-
-            <div className="zt-mix-row">
-              <span>
-                Creators
-              </span>
-
-              <strong>
-                {summary.creatorAds}
-              </strong>
-            </div>
-
-            <div className="zt-mix-row">
-              <span>
-                Video
-              </span>
-
-              <strong>
-                {summary.videoAds}
-              </strong>
-            </div>
-
-            <div className="zt-mix-row">
-              <span>
-                Static + carousel
-              </span>
-
-              <strong>
-                {summary.imageAds +
-                  summary.carouselAds}
-              </strong>
-            </div>
-
-            <div className="zt-performance-note">
-              Reach and impressions are not exposed reliably by
-              the public source. Zooptrack does not invent conversion
-              metrics from unavailable data.
-            </div>
-          </section>
-        </div>
+  <div className="zt-insight-card">
+    <span>Video share</span>
+    <strong>
+      {summary.totalAds > 0
+        ? `${Math.round(
+            (summary.videoAds /
+              summary.totalAds) *
+              100,
+          )}%`
+        : "—"}
+    </strong>
+    <small>
+      Of indexed creatives
+    </small>
+  </div>
+</div>
 
         <section className="zt-library">
           <div className="zt-library-head">
@@ -2426,9 +2432,33 @@ useEffect(() => {
               </button>
             </div>
 
-            {mediaUrl(
-              selectedAd,
-            ) ? (
+            {selectedAd.videoUrl ? (
+              <div className="zt-drawer-media">
+                <video
+                  src={
+                    safeUrl(
+                      selectedAd.videoUrl,
+                    ) ?? undefined
+                  }
+                  poster={
+                    safeUrl(
+                      selectedAd.thumbnailUrl ||
+                        selectedAd.imageUrl,
+                    ) ?? undefined
+                  }
+                  controls
+                  playsInline
+                  preload="metadata"
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                    display: "block",
+                    background: "#000",
+                  }}
+                />
+              </div>
+            ) : mediaUrl(selectedAd) ? (
               <div className="zt-drawer-media">
                 <img
                   src={

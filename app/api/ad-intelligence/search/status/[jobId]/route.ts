@@ -1,12 +1,15 @@
-import { NextRequest, NextResponse } from "next/server";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
 
 import {
   createClient as createServerAuthClient,
 } from "@/lib/supabase/server";
 
 import {
-  getCollectionJob,
-} from "@/lib/ad-intelligence/global/store";
+  createGlobalServiceClient,
+} from "@/lib/ad-intelligence/global/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,76 +27,179 @@ export async function GET(
       await createServerAuthClient();
 
     const {
-      data: { user },
+      data: {
+        user,
+      },
       error: userError,
-    } = await auth.auth.getUser();
+    } =
+      await auth.auth.getUser();
 
-    if (userError || !user) {
+    if (
+      userError ||
+      !user
+    ) {
       return NextResponse.json(
         {
           success: false,
           error: "Unauthorized",
+          message:
+            "You must be signed in to check collection status.",
         },
-        { status: 401 },
+        {
+          status: 401,
+        },
       );
     }
 
-    const { jobId } =
+    const {
+      jobId,
+    } =
       await context.params;
 
     const normalizedJobId =
       jobId?.trim();
 
-    if (!normalizedJobId) {
+    if (
+      !normalizedJobId
+    ) {
       return NextResponse.json(
         {
           success: false,
           error: "Missing jobId.",
         },
-        { status: 400 },
+        {
+          status: 400,
+        },
       );
     }
 
-    const job =
-      await getCollectionJob(
-        normalizedJobId,
+    const client =
+      createGlobalServiceClient();
+
+    const {
+      data,
+      error,
+    } =
+      await client.rpc(
+        "adspy_get_collection_job",
+        {
+          p_job_id:
+            normalizedJobId,
+        },
       );
 
-    if (!job) {
+    if (error) {
+      console.error(
+        "[AdSpy Status] RPC failed:",
+        error,
+      );
+
       return NextResponse.json(
         {
           success: false,
-          error: "Collection job not found.",
+          error:
+            "Collection status lookup failed.",
+          message:
+            error.message,
+          retryable: true,
         },
-        { status: 404 },
+        {
+          status: 500,
+        },
+      );
+    }
+
+    const row =
+      Array.isArray(data)
+        ? data[0] ?? null
+        : data ?? null;
+
+    if (!row) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Collection job not found.",
+        },
+        {
+          status: 404,
+        },
       );
     }
 
     return NextResponse.json({
       success: true,
+
       job: {
-        id: job.id,
-        collectionKey: job.collectionKey,
-        query: job.query,
-        country: job.country,
-        platform: job.platform,
-        mode: job.mode,
-        status: job.status,
-        stage: job.stage,
-        discoveredAds: job.discoveredAds,
-        normalizedAds: job.normalizedAds,
-        persistedAds: job.persistedAds,
-        errorMessage: job.errorMessage,
-        startedAt: job.startedAt,
-        completedAt: job.completedAt,
-        lastRequestedAt: job.lastRequestedAt,
-        updatedAt: job.updatedAt,
-        createdAt: job.createdAt,
+        id: row.id,
+
+        collectionKey:
+          row.collection_key,
+
+        query:
+          row.query,
+
+        country:
+          row.country,
+
+        platform:
+          row.platform,
+
+        mode:
+          row.mode,
+
+        status:
+          row.status,
+
+        stage:
+          row.stage,
+
+        discoveredAds:
+          Number(
+            row.discovered_ads ??
+              0,
+          ),
+
+        normalizedAds:
+          Number(
+            row.normalized_ads ??
+              0,
+          ),
+
+        persistedAds:
+          Number(
+            row.persisted_ads ??
+              0,
+          ),
+
+        errorMessage:
+          row.error_message ??
+          null,
+
+        startedAt:
+          row.started_at ??
+          null,
+
+        completedAt:
+          row.completed_at ??
+          null,
+
+        lastRequestedAt:
+          row.last_requested_at ??
+          null,
+
+        updatedAt:
+          row.updated_at ??
+          null,
+
+        createdAt:
+          row.created_at ??
+          null,
       },
     });
   } catch (error) {
     console.error(
-      "[AdSpy job status]",
+      "[AdSpy Status] Unexpected error:",
       error,
     );
 
@@ -101,11 +207,16 @@ export async function GET(
       {
         success: false,
         error:
+          "Failed to load collection status.",
+        message:
           error instanceof Error
             ? error.message
-            : "Failed to read collection status.",
+            : "Unknown error",
+        retryable: true,
       },
-      { status: 500 },
+      {
+        status: 500,
+      },
     );
   }
 }
