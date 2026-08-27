@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import type { CompetitorAd } from "../types";
+import type { AdPlatform, CompetitorAd } from "../types";
 import { detectLanguages } from "./language";
 import { extractGeography } from "./geography";
 import { createGlobalServiceClient } from "./supabase";
