@@ -1,10 +1,24 @@
 import type { NextRequest } from "next/server";
-import { updateSession } from "@/lib/supabase/middleware";
 
-export async function proxy(request: NextRequest) {
-  return updateSession(request);
+import {
+  updateSession,
+} from "@/lib/supabase/middleware";
+
+export async function proxy(
+  request: NextRequest,
+) {
+  return updateSession(
+    request,
+  );
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/login", "/auth/:path*", "/brand-vault/:path*", "/records/:path*"]
+  matcher: [
+    "/dashboard/:path*",
+    "/adspy/:path*",
+    "/login",
+    "/auth/:path*",
+    "/brand-vault/:path*",
+    "/records/:path*",
+  ],
 };

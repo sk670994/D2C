@@ -1,103 +1,236 @@
-"use client";
-
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { redirect } from "next/navigation";
 
 import { AdSpySection } from "@/components/dashboard/AdSpySection";
 import { SignOutButton } from "@/components/auth/SignOutButton";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/supabase/server";
+import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 
-type Platform = "meta" | "google" | "linkedin";
+type Suggestion = {
+  id: string;
+  label: string;
+  type: "advertiser" | "creator" | "keyword";
+};
 
-export default function AdSpyPage() {
-  const router = useRouter();
+async function loadSuggestionCatalog(): Promise<Suggestion[]> {
+  const client = createGlobalServiceClient();
 
-  const [authChecked, setAuthChecked] = useState(false);
-  const [email, setEmail] = useState("");
-  const [query, setQuery] = useState("");
-  const [country, setCountry] = useState("IN");
-  const [platform, setPlatform] = useState<Platform>("meta");
+  const [
+    brandsResult,
+    aliasesResult,
+    creatorsResult,
+    keywordResult,
+  ] = await Promise.all([
+    client
+      .from("ad_intelligence_brands")
+      .select("id,canonical_name")
+      .not("canonical_name", "is", null)
+      .order("canonical_name", {
+        ascending: true,
+      })
+      .limit(1000),
 
-  useEffect(() => {
-    let active = true;
-    const supabase = createClient();
+    client
+      .from("ad_intelligence_brand_aliases")
+      .select("brand_id,alias")
+      .not("alias", "is", null)
+      .order("alias", {
+        ascending: true,
+      })
+      .limit(500),
 
-    const checkAuth = async () => {
-      try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
+    client
+      .from("ad_intelligence_creators")
+      .select("id,canonical_name")
+      .not("canonical_name", "is", null)
+      .order("canonical_name", {
+        ascending: true,
+      })
+      .limit(500),
 
-        if (!active) {
-          return;
-        }
+    client
+      .from("ad_intelligence_creatives")
+      .select(
+        "id,headline,product_name,advertiser_name",
+      )
+      .order("updated_at", {
+        ascending: false,
+      })
+      .limit(800),
+  ]);
 
-        if (!user) {
-          router.replace("/login?next=/adspy");
-          return;
-        }
+  if (brandsResult.error) {
+    console.error(
+      "[AdSpy catalog] Brand lookup failed:",
+      brandsResult.error,
+    );
+  }
 
-        setEmail(user.email ?? "");
-        setAuthChecked(true);
-      } catch (error) {
-        console.error("[AdSpyPage] Auth check failed:", error);
+  if (aliasesResult.error) {
+    console.error(
+      "[AdSpy catalog] Alias lookup failed:",
+      aliasesResult.error,
+    );
+  }
 
-        if (!active) {
-          return;
-        }
+  if (creatorsResult.error) {
+    console.error(
+      "[AdSpy catalog] Creator lookup failed:",
+      creatorsResult.error,
+    );
+  }
 
-        router.replace("/login?next=/adspy");
-      }
-    };
+  if (keywordResult.error) {
+    console.error(
+      "[AdSpy catalog] Keyword lookup failed:",
+      keywordResult.error,
+    );
+  }
 
-    void checkAuth();
+  const suggestions: Suggestion[] = [];
+  const seen = new Set<string>();
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!active) {
-        return;
-      }
+  const push = (
+    type: Suggestion["type"],
+    id: string,
+    label: string,
+  ) => {
+    const clean = label.trim();
 
-      if (!session?.user) {
-        router.replace("/login?next=/adspy");
-        return;
-      }
+    if (!clean) {
+      return;
+    }
 
-      setEmail(session.user.email ?? "");
-      setAuthChecked(true);
+    const key =
+      `${type}:${clean.toLowerCase()}`;
+
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+
+    suggestions.push({
+      id,
+      label: clean,
+      type,
     });
+  };
 
-    return () => {
-      active = false;
-      subscription.unsubscribe();
-    };
-  }, [router]);
+  for (
+    const row of brandsResult.data ?? []
+  ) {
+    push(
+      "advertiser",
+      String(row.id),
+      String(
+        row.canonical_name ?? "",
+      ),
+    );
+  }
 
-  if (!authChecked) {
-    return (
-      <main className="zt-adspy-shell">
-        <div
-          className="zt-library-loading"
-          style={{
-            minHeight: "100vh",
-            border: 0,
-          }}
-        >
-          <strong>Loading AdSpy...</strong>
-        </div>
-      </main>
+  for (
+    const row of aliasesResult.data ?? []
+  ) {
+    push(
+      "advertiser",
+      String(
+        row.brand_id ?? row.alias,
+      ),
+      String(
+        row.alias ?? "",
+      ),
+    );
+  }
+
+  for (
+    const row of creatorsResult.data ?? []
+  ) {
+    push(
+      "creator",
+      String(row.id),
+      String(
+        row.canonical_name ?? "",
+      ),
+    );
+  }
+
+  for (
+    const row of keywordResult.data ?? []
+  ) {
+    push(
+      "keyword",
+      `${row.id}:headline`,
+      String(
+        row.headline ?? "",
+      ),
+    );
+
+    push(
+      "keyword",
+      `${row.id}:product`,
+      String(
+        row.product_name ?? "",
+      ),
+    );
+  }
+
+  return suggestions;
+}
+
+export default async function AdSpyPage() {
+  const supabase =
+    await createClient();
+
+  const {
+    data: {
+      user,
+    },
+    error,
+  } =
+    await supabase.auth.getUser();
+
+  if (
+    error ||
+    !user
+  ) {
+    redirect(
+      "/login?next=/adspy",
+    );
+  }
+
+  let suggestionCatalog: Suggestion[] =
+    [];
+
+  try {
+    suggestionCatalog =
+      await loadSuggestionCatalog();
+  } catch (catalogError) {
+    /*
+     * Do not prevent AdSpy from opening simply because
+     * the optional suggestion catalog failed.
+     */
+    console.error(
+      "[AdSpy page] Suggestion catalog failed:",
+      catalogError,
     );
   }
 
   return (
     <main className="zt-adspy-shell">
       <header className="zt-appbar">
-        <Link href="/dashboard" className="zt-brand">
-          <span className="zt-brand-mark">Z</span>
-          <span>zooptrack</span>
+        <Link
+          href="/dashboard"
+          className="zt-brand"
+        >
+          <span className="zt-brand-mark">
+            Z
+          </span>
+
+          <span>
+            zooptrack
+          </span>
         </Link>
 
         <nav
@@ -128,12 +261,13 @@ export default function AdSpyPage() {
         <div className="zt-app-actions">
           <span
             className="zt-app-email"
-            title={email}
+            title={user.email ?? ""}
           >
-            {email}
+            {user.email ?? ""}
           </span>
 
           <ThemeToggle />
+
           <SignOutButton />
         </div>
       </header>
@@ -151,8 +285,9 @@ export default function AdSpyPage() {
           </h1>
 
           <p>
-            Search public Meta creatives, isolate durable
-            hooks and offers, then carry the evidence into
+            Search public Meta creatives,
+            isolate durable hooks and offers,
+            then carry the evidence into
             your next profitable experiment.
           </p>
         </div>
@@ -169,12 +304,9 @@ export default function AdSpyPage() {
       </section>
 
       <AdSpySection
-        query={query}
-        country={country}
-        platform={platform}
-        onQueryChange={setQuery}
-        onCountryChange={setCountry}
-        onPlatformChange={setPlatform}
+        initialSuggestionCatalog={
+          suggestionCatalog
+        }
       />
     </main>
   );

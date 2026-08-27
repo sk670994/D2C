@@ -21,7 +21,13 @@ import {
   Video,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 type Platform = "meta" | "google" | "linkedin";
 type SearchMode = "advertiser" | "keyword";
@@ -88,17 +94,39 @@ type Intelligence = {
     headline?: string | null;
     runningDays?: number | null;
   } | null;
-  reach: { status: "unavailable"; reason: string };
+  reach: {
+    status: "unavailable";
+    reason: string;
+  };
 };
 
-export type AdSpySectionProps = {
-  query: string;
-  country: string;
+type SearchResponse = {
+  success: boolean;
+  query?: string;
+  country?: string;
   platform?: Platform;
-  onQueryChange: (query: string) => void;
-  onCountryChange: (country: string) => void;
-  onPlatformChange?: (platform: Platform) => void;
-  onResultCountChange?: (count: number) => void;
+  mode?: SearchMode;
+  ads?: Ad[];
+  total?: number;
+  page?: number;
+  limit?: number;
+  totalPages?: number;
+  summary?: Summary;
+  intelligence?: Intelligence | null;
+  lastUpdatedAt?: string | null;
+  isRefreshing?: boolean;
+  error?: string;
+};
+
+type TrackResponse = {
+  success: boolean;
+  tracked?: boolean;
+  id?: string | null;
+  jobId?: string | null;
+  dispatched?: boolean;
+  lastCollectedAt?: string | null;
+  error?: string;
+  job?: Job | null;
 };
 
 const EMPTY_SUMMARY: Summary = {
@@ -125,10 +153,27 @@ const FILTERS = [
 
 type FilterId = (typeof FILTERS)[number][0];
 
+const ACTIVE_JOB_STATUSES = [
+  "queued",
+  "scraping",
+  "normalizing",
+  "enriching",
+  "finalizing",
+];
+
+function isActiveJobStatus(status?: string | null) {
+  return Boolean(status && ACTIVE_JOB_STATUSES.includes(status));
+}
+
 function dateLabel(value?: string | null) {
   if (!value) return "—";
+
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
+
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+
   return date.toLocaleDateString("en-IN", {
     day: "2-digit",
     month: "short",
@@ -138,35 +183,61 @@ function dateLabel(value?: string | null) {
 
 function safeUrl(value?: string | null) {
   if (!value) return null;
+
   try {
-    return new URL(value).toString();
+    const parsed = new URL(value);
+
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return null;
+    }
+
+    return parsed.toString();
   } catch {
     return null;
   }
 }
 
 function truncate(value?: string | null, size = 150) {
-  const text = String(value ?? "").replace(/\s+/g, " ").trim();
-  if (!text) return "No copy captured from the public source.";
-  return text.length > size ? `${text.slice(0, size).trim()}…` : text;
-}
-
-function mediaUrl(ad: Ad) {
-  return safeUrl(ad.thumbnailUrl || ad.imageUrl || ad.videoUrl);
-}
-
-function hook(ad: Ad) {
-  const text = String(ad.primaryText || ad.headline || "")
+  const text = String(value ?? "")
     .replace(/\s+/g, " ")
     .trim();
 
-  if (!text) return "No hook detected";
+  if (!text) {
+    return "No copy captured from the public source.";
+  }
+
+  return text.length > size
+    ? `${text.slice(0, size).trim()}…`
+    : text;
+}
+
+function mediaUrl(ad: Ad) {
+  return safeUrl(
+    ad.thumbnailUrl ||
+      ad.imageUrl ||
+      ad.videoUrl,
+  );
+}
+
+function hook(ad: Ad) {
+  const text = String(
+    ad.primaryText ||
+      ad.headline ||
+      "",
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text) {
+    return "No hook detected";
+  }
 
   return (
     text
       .split(/[.!?।！？]/)[0]
       ?.trim()
-      .slice(0, 110) || "No hook detected"
+      .slice(0, 110) ||
+    "No hook detected"
   );
 }
 
@@ -184,9 +255,15 @@ function Stat({
   return (
     <div className="zt-stat">
       <div className="zt-stat-top">
-        <span className="zt-stat-icon">{icon}</span>
-        <span className="zt-stat-label">{label}</span>
+        <span className="zt-stat-icon">
+          {icon}
+        </span>
+
+        <span className="zt-stat-label">
+          {label}
+        </span>
       </div>
+
       <strong>{value}</strong>
       <small>{hint}</small>
     </div>
@@ -211,7 +288,12 @@ function CreativeCard({
         {image ? (
           <img
             src={image}
-            alt={ad.headline || ad.productName || ad.advertiserName || "Creative"}
+            alt={
+              ad.headline ||
+              ad.productName ||
+              ad.advertiserName ||
+              "Creative"
+            }
             loading="lazy"
           />
         ) : (
@@ -222,20 +304,36 @@ function CreativeCard({
         )}
 
         <div className="zt-ad-media-top">
-          <span className={active ? "zt-pill zt-pill-green" : "zt-pill zt-pill-dark"}>
+          <span
+            className={
+              active
+                ? "zt-pill zt-pill-green"
+                : "zt-pill zt-pill-dark"
+            }
+          >
             <span className="zt-dot" />
             {active ? "Active" : "Inactive"}
           </span>
 
           <span className="zt-pill zt-pill-glass">
-            {type === "video" ? <Video size={13} /> : type === "carousel" ? <Layers3 size={13} /> : <ImageIcon size={13} />}
+            {type === "video" ? (
+              <Video size={13} />
+            ) : type === "carousel" ? (
+              <Layers3 size={13} />
+            ) : (
+              <ImageIcon size={13} />
+            )}
+
             {type}
           </span>
         </div>
 
         {type === "video" ? (
           <span className="zt-play">
-            <Play size={16} fill="currentColor" />
+            <Play
+              size={16}
+              fill="currentColor"
+            />
           </span>
         ) : null}
       </div>
@@ -243,27 +341,45 @@ function CreativeCard({
       <div className="zt-ad-body">
         <div className="zt-ad-brand-row">
           <div>
-            <span className="zt-overline">{ad.advertiserName || "Unknown advertiser"}</span>
-            <h3>{ad.headline || ad.productName || "Untitled creative"}</h3>
+            <span className="zt-overline">
+              {ad.advertiserName ||
+                "Unknown advertiser"}
+            </span>
+
+            <h3>
+              {ad.headline ||
+                ad.productName ||
+                "Untitled creative"}
+            </h3>
           </div>
 
           {ad.runningDays ? (
-            <span className="zt-age">{ad.runningDays}d</span>
+            <span className="zt-age">
+              {ad.runningDays}d
+            </span>
           ) : null}
         </div>
 
         <p className="zt-ad-copy">
-          {truncate(ad.primaryText || ad.description)}
+          {truncate(
+            ad.primaryText ||
+              ad.description,
+          )}
         </p>
 
         <div className="zt-ad-meta">
           <div>
             <span>First seen</span>
-            <strong>{dateLabel(ad.firstSeen)}</strong>
+            <strong>
+              {dateLabel(ad.firstSeen)}
+            </strong>
           </div>
+
           <div>
             <span>CTA</span>
-            <strong>{ad.callToAction || "—"}</strong>
+            <strong>
+              {ad.callToAction || "—"}
+            </strong>
           </div>
         </div>
 
@@ -283,7 +399,11 @@ function CreativeCard({
               className="zt-icon-btn"
               title="Open source"
               onClick={() =>
-                window.open(source, "_blank", "noopener,noreferrer")
+                window.open(
+                  source,
+                  "_blank",
+                  "noopener,noreferrer",
+                )
               }
             >
               <ExternalLink size={15} />
@@ -295,108 +415,406 @@ function CreativeCard({
   );
 }
 
+export type AdSpySectionProps = {
+  query?: string;
+  country?: string;
+  platform?: Platform;
+  onQueryChange?: (query: string) => void;
+  onCountryChange?: (country: string) => void;
+  onPlatformChange?: (platform: Platform) => void;
+  onResultCountChange?: (count: number) => void;
+  initialSuggestionCatalog?: Suggestion[];
+};
+
 export function AdSpySection({
-  query,
-  country,
+  query = "",
+  country = "IN",
   platform = "meta",
   onQueryChange,
   onCountryChange,
   onPlatformChange,
+  onResultCountChange,
+  initialSuggestionCatalog = [],
 }: AdSpySectionProps) {
-  const [input, setInput] = useState(query ?? "");
-  const [mode, setMode] = useState<SearchMode>("advertiser");
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [suggestionOpen, setSuggestionOpen] = useState(false);
-  const [suggestionLoading, setSuggestionLoading] = useState(false);
+  const [input, setInput] = useState(
+    query,
+  );
+
+  const [countryInput, setCountryInput] =
+    useState(country.toUpperCase());
+
+  const [mode, setMode] =
+    useState<SearchMode>("advertiser");
+
+  const [suggestions, setSuggestions] =
+    useState<Suggestion[]>([]);
+
+  const [suggestionOpen, setSuggestionOpen] =
+    useState(false);
+
+  const [suggestionLoading, setSuggestionLoading] =
+    useState(false);
 
   const [ads, setAds] = useState<Ad[]>([]);
-  const [summary, setSummary] = useState<Summary>(EMPTY_SUMMARY);
-  const [intelligence, setIntelligence] = useState<Intelligence | null>(null);
-  const [job, setJob] = useState<Job | null>(null);
+  const [summary, setSummary] =
+    useState<Summary>(EMPTY_SUMMARY);
+
+  const [intelligence, setIntelligence] =
+    useState<Intelligence | null>(null);
+
+  const [job, setJob] =
+    useState<Job | null>(null);
+
   const [pagination, setPagination] = useState({
     page: 1,
     total: 0,
     totalPages: 0,
   });
 
-  const [filter, setFilter] = useState<FilterId>("all");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [selectedAd, setSelectedAd] = useState<Ad | null>(null);
-  const [tracked, setTracked] = useState(false);
+  const [filter, setFilter] =
+    useState<FilterId>("all");
 
-  const searchRef = useRef<HTMLInputElement>(null);
-  const requestIdRef = useRef(0);
+  const [loading, setLoading] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
+
+  const [selectedAd, setSelectedAd] =
+    useState<Ad | null>(null);
+
+  const [tracked, setTracked] =
+    useState(false);
+
+  const [trackingLoading, setTrackingLoading] =
+    useState(false);
+
+  const [trackedLastCollectedAt, setTrackedLastCollectedAt] =
+    useState<string | null>(null);
+
+  const [lastUpdatedAt, setLastUpdatedAt] =
+    useState<string | null>(null);
+
+  const searchRef =
+    useRef<HTMLInputElement>(null);
+
+  const searchWrapRef =
+    useRef<HTMLDivElement>(null);
+
+  const requestIdRef =
+    useRef(0);
+
+  const searchAbortRef =
+    useRef<AbortController | null>(null);
+
+  const mountedRef =
+    useRef(true);
 
   useEffect(() => {
-    setInput(query ?? "");
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      searchAbortRef.current?.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    setInput(query);
   }, [query]);
 
-  const fetchSuggestions = useCallback(
-    async (value: string) => {
-      const q = value.trim();
+  useEffect(() => {
+    const normalized = country
+      .trim()
+      .toUpperCase();
+    if (normalized) {
+      setCountryInput(normalized);
+    }
+  }, [country]);
 
-      if (q.length < 2) {
-        setSuggestions([]);
-        setSuggestionLoading(false);
-        return;
+  useEffect(() => {
+    const handlePointerDown = (
+      event: MouseEvent,
+    ) => {
+      if (
+        !searchWrapRef.current?.contains(
+          event.target as Node,
+        )
+      ) {
+        setSuggestionOpen(false);
       }
+    };
 
-      setSuggestionLoading(true);
+    document.addEventListener(
+      "mousedown",
+      handlePointerDown,
+    );
 
+    return () => {
+      document.removeEventListener(
+        "mousedown",
+        handlePointerDown,
+      );
+    };
+  }, []);
+
+  const visibleSuggestionCatalog = useMemo(() => {
+    const queryText = input.trim().toLocaleLowerCase();
+
+    if (queryText.length < 2) {
+      return [];
+    }
+
+    const ranked = initialSuggestionCatalog
+      .filter((suggestion) => {
+        if (mode === "advertiser") {
+          return suggestion.type === "advertiser";
+        }
+        return true;
+      })
+      .filter((suggestion) =>
+        suggestion.label
+          .toLocaleLowerCase()
+          .includes(queryText),
+      )
+      .map((suggestion) => {
+        const label = suggestion.label
+          .trim()
+          .toLocaleLowerCase();
+        let score = 0;
+
+        if (label === queryText) score += 1000;
+        if (label.startsWith(queryText)) score += 500;
+
+        const wordMatch = label
+          .split(/\s+/)
+          .some((word) => word.startsWith(queryText));
+        if (wordMatch) score += 250;
+
+        score += 100;
+
+        return { suggestion, score };
+      })
+      .sort((a, b) => {
+        if (b.score !== a.score) {
+          return b.score - a.score;
+        }
+        return a.suggestion.label.localeCompare(
+          b.suggestion.label,
+          undefined,
+          { sensitivity: "base" },
+        );
+      })
+      .slice(0, 8)
+      .map(({ suggestion }) => suggestion);
+
+    return ranked;
+  }, [input, initialSuggestionCatalog, mode]);
+
+  useEffect(() => {
+    setSuggestions(visibleSuggestionCatalog);
+    setSuggestionLoading(false);
+
+    if (input.trim().length < 2) {
+      setSuggestionOpen(false);
+      return;
+    }
+
+    setSuggestionOpen(true);
+  }, [input, visibleSuggestionCatalog]);
+
+  const refreshCollection = useCallback(
+    async ({
+      searchQuery,
+      searchCountry,
+      searchPlatform,
+      searchMode,
+    }: {
+      searchQuery: string;
+      searchCountry: string;
+      searchPlatform: Platform;
+      searchMode: SearchMode;
+    }) => {
       try {
         const url = new URL(
-          "/api/ad-intelligence/autocomplete",
+          "/api/ad-intelligence/refresh",
           window.location.origin,
         );
 
-        url.searchParams.set("q", q);
-        url.searchParams.set("mode", mode);
-
-        const response = await fetch(url, {
-          cache: "no-store",
-        });
-
-        const data = await response.json();
-
-        setSuggestions(
-          data?.success && Array.isArray(data.suggestions)
-            ? data.suggestions.slice(0, 8)
-            : [],
+        url.searchParams.set(
+          "q",
+          searchQuery,
         );
+
+        url.searchParams.set(
+          "country",
+          searchCountry
+            .trim()
+            .toUpperCase(),
+        );
+
+        url.searchParams.set(
+          "platform",
+          searchPlatform,
+        );
+
+        url.searchParams.set(
+          "mode",
+          searchMode,
+        );
+
+        const response = await fetch(
+          url,
+          {
+            method: "POST",
+            cache: "no-store",
+          },
+        );
+
+        const data =
+          (await response.json()) as {
+            success?: boolean;
+            job?: Job | null;
+          };
+
+        if (
+          !response.ok ||
+          !data.success ||
+          !data.job
+        ) {
+          return;
+        }
+
+        if (mountedRef.current) {
+          setJob(data.job);
+        }
       } catch {
-        setSuggestions([]);
-      } finally {
-        setSuggestionLoading(false);
+        // Search results remain usable if background refresh cannot start.
       }
     },
-    [mode],
+    [],
   );
 
-  useEffect(() => {
-    const timer = window.setTimeout(
-      () => void fetchSuggestions(input),
-      260,
-    );
+  const loadTrackedStatus = useCallback(
+    async ({
+      searchQuery,
+      searchCountry,
+      searchPlatform,
+    }: {
+      searchQuery: string;
+      searchCountry: string;
+      searchPlatform: Platform;
+    }) => {
+      try {
+        const url = new URL(
+          "/api/ad-intelligence/track",
+          window.location.origin,
+        );
 
-    return () => window.clearTimeout(timer);
-  }, [input, fetchSuggestions]);
+        url.searchParams.set(
+          "query",
+          searchQuery,
+        );
+
+        url.searchParams.set(
+          "country",
+          searchCountry
+            .trim()
+            .toUpperCase(),
+        );
+
+        url.searchParams.set(
+          "platform",
+          searchPlatform,
+        );
+
+        const response = await fetch(
+          url,
+          {
+            cache: "no-store",
+          },
+        );
+
+        const data =
+          (await response.json()) as TrackResponse;
+
+        if (!response.ok) {
+          return;
+        }
+
+        if (!mountedRef.current) {
+          return;
+        }
+
+        setTracked(
+          data.tracked === true,
+        );
+
+        setTrackedLastCollectedAt(
+          data.lastCollectedAt ?? null,
+        );
+      } catch {
+        // Tracking state is non-blocking.
+      }
+    },
+    [],
+  );
 
   const search = useCallback(
-    async (page = 1, forcedQuery?: string) => {
-      const q = (forcedQuery ?? input).trim();
+    async (
+      page = 1,
+      forcedQuery?: string,
+      options?: {
+        skipBackgroundRefresh?: boolean;
+      },
+    ) => {
+      const q = (
+        forcedQuery ?? input
+      ).trim();
+
+      const normalizedCountry =
+        countryInput
+          .trim()
+          .toUpperCase();
 
       if (q.length < 2) {
-        setError("Enter at least 2 characters.");
+        setError(
+          "Enter at least 2 characters to search.",
+        );
         searchRef.current?.focus();
         return;
       }
 
-      const requestId = ++requestIdRef.current;
+      if (
+        normalizedCountry.length !== 2 ||
+        !/^[A-Z]{2}$/.test(
+          normalizedCountry,
+        )
+      ) {
+        setError(
+          "Enter a valid 2-letter country code, for example IN.",
+        );
+        return;
+      }
+
+      const requestId =
+        ++requestIdRef.current;
+
+      searchAbortRef.current?.abort();
+
+      const controller =
+        new AbortController();
+
+      searchAbortRef.current =
+        controller;
 
       setLoading(true);
       setError("");
       setSuggestionOpen(false);
+
+      if (page === 1) {
+        setFilter("all");
+      }
 
       try {
         const url = new URL(
@@ -404,195 +822,594 @@ export function AdSpySection({
           window.location.origin,
         );
 
-        url.searchParams.set("q", q);
+        url.searchParams.set(
+          "q",
+          q,
+        );
+
         url.searchParams.set(
           "country",
-          country.trim().toUpperCase() || "IN",
+          normalizedCountry,
         );
-        url.searchParams.set("platform", platform);
-        url.searchParams.set("mode", mode);
-        url.searchParams.set("page", String(page));
-        url.searchParams.set("limit", "24");
 
-        const response = await fetch(url, {
-          cache: "no-store",
-        });
+        url.searchParams.set(
+          "platform",
+          platform,
+        );
 
-        const data = await response.json();
+        url.searchParams.set(
+          "mode",
+          mode,
+        );
 
-        if (!response.ok || !data?.success) {
+        url.searchParams.set(
+          "page",
+          String(page),
+        );
+
+        url.searchParams.set(
+          "limit",
+          "24",
+        );
+
+        const response = await fetch(
+          url,
+          {
+            signal: controller.signal,
+            cache: "no-store",
+          },
+        );
+
+        const data =
+          (await response.json()) as SearchResponse;
+
+        if (
+          !response.ok ||
+          !data.success
+        ) {
           throw new Error(
-            data?.error || "Search failed.",
+            data.error ||
+              "Search failed.",
           );
         }
 
-        if (requestId !== requestIdRef.current) return;
+        if (
+          requestId !==
+          requestIdRef.current
+        ) {
+          return;
+        }
 
-        setAds(Array.isArray(data.ads) ? data.ads : []);
-        setSummary(data.summary ?? EMPTY_SUMMARY);
-        setIntelligence(data.intelligence ?? null);
-        setJob(data.collectionJob ?? null);
+        const nextAds =
+          Array.isArray(data.ads)
+            ? data.ads
+            : [];
+
+        setAds(nextAds);
+
+        setSummary(
+          data.summary ??
+            EMPTY_SUMMARY,
+        );
+
+        setIntelligence(
+          data.intelligence ??
+            null,
+        );
+
+        setLastUpdatedAt(
+          data.lastUpdatedAt ??
+            null,
+        );
+
         setPagination({
-          page: data.page ?? page,
-          total: data.total ?? 0,
-          totalPages: data.totalPages ?? 0,
+          page:
+            data.page ?? page,
+          total:
+            data.total ?? 0,
+          totalPages:
+            data.totalPages ?? 0,
         });
 
-        onQueryChange(q);
-      } catch (err) {
-        if (requestId !== requestIdRef.current) return;
+        setJob(null);
+
+        setSelectedAd(null);
+
+        setTracked(false);
+        setTrackedLastCollectedAt(
+          null,
+        );
+
+        onQueryChange?.(q);
+        onResultCountChange?.(
+          data.total ?? 0,
+        );
+
+        void loadTrackedStatus({
+          searchQuery: q,
+          searchCountry:
+            normalizedCountry,
+          searchPlatform: platform,
+        });
+
+        if (
+          !options?.skipBackgroundRefresh
+        ) {
+          void refreshCollection({
+            searchQuery: q,
+            searchCountry:
+              normalizedCountry,
+            searchPlatform:
+              platform,
+            searchMode: mode,
+          });
+        }
+      } catch (requestError) {
+        if (
+          requestError instanceof DOMException &&
+          requestError.name ===
+            "AbortError"
+        ) {
+          return;
+        }
+
+        if (
+          requestId !==
+          requestIdRef.current
+        ) {
+          return;
+        }
+
         setError(
-          err instanceof Error
-            ? err.message
-            : "Search failed.",
+          requestError instanceof Error
+            ? requestError.message
+            : "Search failed. Please try again.",
         );
       } finally {
-        if (requestId === requestIdRef.current) {
+        if (
+          requestId ===
+          requestIdRef.current
+        ) {
           setLoading(false);
         }
       }
     },
-    [country, input, mode, onQueryChange, platform],
+    [
+      countryInput,
+      input,
+      loadTrackedStatus,
+      mode,
+      onQueryChange,
+      onResultCountChange,
+      platform,
+      refreshCollection,
+    ],
   );
-
-  useEffect(() => {
-    if (!query || query.trim().length < 2) return;
-    void search(1, query);
-    // intentionally only when incoming query changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
 
   useEffect(() => {
     const status = job?.status;
 
     if (
       !job?.id ||
-      !status ||
-      !["queued", "scraping", "normalizing", "enriching", "finalizing"].includes(status)
+      !isActiveJobStatus(status)
     ) {
       return;
     }
 
     let cancelled = false;
 
-    const timer = window.setInterval(async () => {
-      if (cancelled) return;
+    const poll = async () => {
+      if (cancelled) {
+        return;
+      }
 
       try {
-        const response = await fetch(
-          `/api/ad-intelligence/search/status/${job.id}`,
-          { cache: "no-store" },
-        );
+        const response =
+          await fetch(
+            `/api/ad-intelligence/search/status/${job.id}`,
+            {
+              cache: "no-store",
+            },
+          );
 
-        const data = await response.json();
+        const data =
+          (await response.json()) as {
+            success?: boolean;
+            job?: Job;
+          };
 
-        if (!response.ok || !data?.success) return;
+        if (
+          !response.ok ||
+          !data.success ||
+          !data.job
+        ) {
+          return;
+        }
 
-        const nextJob = data.job as Job;
+        if (cancelled) {
+          return;
+        }
 
-        if (!cancelled) {
-          setJob(nextJob);
+        const nextJob =
+          data.job;
 
-          if (
-            nextJob.persistedAds > 0 ||
-            ["complete", "failed"].includes(nextJob.status)
-          ) {
-            await search(1, input);
-          }
+        setJob(nextJob);
+
+        if (
+          ["complete", "failed"].includes(
+            nextJob.status,
+          )
+        ) {
+          await search(
+            1,
+            input,
+            {
+              skipBackgroundRefresh: true,
+            },
+          );
         }
       } catch {
-        // polling is best effort
+        // Polling is best effort. Existing results stay visible.
       }
-    }, 3000);
+    };
+
+    void poll();
+
+    const timer =
+      window.setInterval(
+        () => {
+          void poll();
+        },
+        3000,
+      );
 
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [input, job?.id, job?.status, search]);
+  }, [
+    input,
+    job?.id,
+    job?.status,
+    search,
+  ]);
 
   const filteredAds = useMemo(() => {
     const list = [...ads];
 
     switch (filter) {
       case "active":
-        return list.filter((ad) => ad.isActive !== false);
+        return list.filter(
+          (ad) =>
+            ad.isActive !== false,
+        );
+
       case "video":
-        return list.filter((ad) => ad.creativeType === "video");
+        return list.filter(
+          (ad) =>
+            ad.creativeType ===
+            "video",
+        );
+
       case "image":
-        return list.filter((ad) => ad.creativeType === "image");
+        return list.filter(
+          (ad) =>
+            ad.creativeType ===
+            "image",
+        );
+
       case "carousel":
-        return list.filter((ad) => ad.creativeType === "carousel");
+        return list.filter(
+          (ad) =>
+            ad.creativeType ===
+            "carousel",
+        );
+
       case "creator":
-        return list.filter(Boolean).filter((ad) => Boolean(ad.creatorName));
+        return list.filter(
+          (ad) =>
+            Boolean(ad.creatorName),
+        );
+
       case "longest":
         return list.sort(
-          (a, b) => (b.runningDays ?? 0) - (a.runningDays ?? 0),
+          (a, b) =>
+            (b.runningDays ?? 0) -
+            (a.runningDays ?? 0),
         );
+
       default:
         return list;
     }
   }, [ads, filter]);
 
-  const topHook = intelligence?.topHooks?.[0];
-  const topOffer = intelligence?.topOffers?.[0];
-  const topCreator = intelligence?.topCreators?.[0];
+  const topHook =
+    intelligence?.topHooks?.[0];
 
-  const applySuggestion = (suggestion: Suggestion) => {
-    setInput(suggestion.label);
-    onQueryChange(suggestion.label);
+  const topOffer =
+    intelligence?.topOffers?.[0];
+
+  const topCreator =
+    intelligence?.topCreators?.[0];
+
+  const applySuggestion = (
+    suggestion: Suggestion,
+  ) => {
+    setInput(
+      suggestion.label,
+    );
+
+    onQueryChange?.(
+      suggestion.label,
+    );
+
     setSuggestionOpen(false);
-    void search(1, suggestion.label);
+
+    void search(
+      1,
+      suggestion.label,
+    );
   };
 
-  const trackCurrent = async () => {
-    const q = input.trim();
-    if (!q) return;
+  const clearSearch = () => {
+    searchAbortRef.current?.abort();
+    
+    setInput("");
+    onQueryChange?.("");
 
-    try {
-      const response = await fetch(
-        "/api/ad-intelligence/track",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            query: q,
-            country,
-            platform,
-          }),
-        },
-      );
+    setSuggestions([]);
+    setSuggestionOpen(false);
 
-      const data = await response.json();
+    setAds([]);
+    setSummary(
+      EMPTY_SUMMARY,
+    );
+    setIntelligence(null);
+    setJob(null);
 
-      if (!response.ok || !data?.success) {
-        throw new Error(
-          data?.error || "Failed to track brand.",
-        );
+    setPagination({
+      page: 1,
+      total: 0,
+      totalPages: 0,
+    });
+
+    setTracked(false);
+    setTrackedLastCollectedAt(
+      null,
+    );
+
+    setLastUpdatedAt(null);
+    setSelectedAd(null);
+    setError("");
+  };
+
+  const changePlatform = (
+    nextPlatform: Platform,
+  ) => {
+    onPlatformChange?.(
+      nextPlatform,
+    );
+
+    setSuggestions([]);
+    setSuggestionOpen(false);
+    setTracked(false);
+    setTrackedLastCollectedAt(
+      null,
+    );
+    setJob(null);
+    setSelectedAd(null);
+  };
+
+  const changeMode = (
+    nextMode: SearchMode,
+  ) => {
+    if (nextMode === mode) {
+      return;
+    }
+
+    setMode(nextMode);
+    setSuggestions([]);
+    setSuggestionOpen(false);
+    setTracked(false);
+    setTrackedLastCollectedAt(
+      null,
+    );
+    setJob(null);
+    setSelectedAd(null);
+  };
+
+  const trackCurrent =
+    async () => {
+      const q = input.trim();
+
+      if (
+        !q ||
+        q.length < 2 ||
+        mode !== "advertiser"
+      ) {
+        return;
       }
 
-      setTracked(true);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Failed to track brand.",
-      );
-    }
-  };
+      const normalizedCountry =
+        countryInput
+          .trim()
+          .toUpperCase();
+
+      if (
+        normalizedCountry.length !== 2 ||
+        !/^[A-Z]{2}$/.test(
+          normalizedCountry,
+        )
+      ) {
+        setError(
+          "Enter a valid 2-letter country code before tracking.",
+        );
+        return;
+      }
+
+      setTrackingLoading(true);
+      setError("");
+
+      try {
+        if (tracked) {
+          const url = new URL(
+            "/api/ad-intelligence/track",
+            window.location.origin,
+          );
+
+          url.searchParams.set(
+            "query",
+            q,
+          );
+
+          url.searchParams.set(
+            "country",
+            normalizedCountry,
+          );
+
+          url.searchParams.set(
+            "platform",
+            platform,
+          );
+
+          const response =
+            await fetch(
+              url,
+              {
+                method: "DELETE",
+                cache: "no-store",
+              },
+            );
+
+          const data =
+            (await response.json()) as TrackResponse;
+
+          if (
+            !response.ok ||
+            !data.success
+          ) {
+            throw new Error(
+              data.error ||
+                "Failed to stop tracking.",
+            );
+          }
+
+          setTracked(false);
+          setTrackedLastCollectedAt(
+            null,
+          );
+          return;
+        }
+
+        const response =
+          await fetch(
+            "/api/ad-intelligence/track",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+              body: JSON.stringify({
+                query: q,
+                country:
+                  normalizedCountry,
+                platform,
+              }),
+              cache: "no-store",
+            },
+          );
+
+        const data =
+          (await response.json()) as TrackResponse;
+
+        if (
+          !response.ok ||
+          !data.success
+        ) {
+          throw new Error(
+            data.error ||
+              "Failed to track competitor.",
+          );
+        }
+
+        setTracked(true);
+
+        if (
+          data.job
+        ) {
+          setJob(data.job);
+        } else if (
+          data.jobId
+        ) {
+          const statusResponse =
+            await fetch(
+              `/api/ad-intelligence/search/status/${data.jobId}`,
+              {
+                cache: "no-store",
+              },
+            );
+
+          if (
+            statusResponse.ok
+          ) {
+            const statusData =
+              (await statusResponse.json()) as {
+                success?: boolean;
+                job?: Job;
+              };
+
+            if (
+              statusData.success &&
+              statusData.job
+            ) {
+              setJob(
+                statusData.job,
+              );
+            }
+          }
+        }
+
+        void loadTrackedStatus({
+          searchQuery: q,
+          searchCountry:
+            normalizedCountry,
+          searchPlatform: platform,
+        });
+      } catch (trackError) {
+        setError(
+          trackError instanceof Error
+            ? trackError.message
+            : "Failed to update tracking.",
+        );
+      } finally {
+        setTrackingLoading(false);
+      }
+    };
+
+  const activeJob =
+    isActiveJobStatus(
+      job?.status,
+    );
 
   return (
     <>
       <section className="zt-adspy">
         <div className="zt-adspy-hero">
           <div>
-            <span className="zt-eyebrow">AD INTELLIGENCE</span>
-            <h2>Research competitors without losing the signal.</h2>
+            <span className="zt-eyebrow">
+              AD INTELLIGENCE
+            </span>
+
+            <h2>
+              Research competitors without losing the signal.
+            </h2>
+
             <p>
-              Search the indexed public market, see what is running,
-              and let Zooptrack keep the dataset fresh in the background.
+              Search the indexed public market,
+              see what is running, and let
+              Zooptrack update the dataset in
+              the background.
             </p>
           </div>
 
@@ -605,114 +1422,195 @@ export function AdSpySection({
         <div className="zt-search-panel">
           <div className="zt-search-row">
             <div className="zt-select-wrap">
-              <label>Platform</label>
+              <label>
+                Platform
+              </label>
+
               <select
                 value={platform}
                 onChange={(event) =>
-                  onPlatformChange?.(
+                  changePlatform(
                     event.target.value as Platform,
                   )
                 }
               >
-                <option value="meta">Meta</option>
-                <option value="google">Google / YouTube</option>
-                <option value="linkedin">LinkedIn</option>
+                <option value="meta">
+                  Meta
+                </option>
+
+                <option value="google">
+                  Google / YouTube
+                </option>
+
+                <option value="linkedin">
+                  LinkedIn
+                </option>
               </select>
             </div>
 
-            <div className="zt-search-wrap">
-              <label>Brand or keyword</label>
+            <div
+              ref={searchWrapRef}
+              className="zt-search-wrap"
+            >
+              <label>
+                Brand or keyword
+              </label>
 
               <div className="zt-search-field">
                 <Search size={18} />
+
                 <input
                   ref={searchRef}
                   value={input}
                   onChange={(event) => {
-                    const next = event.target.value;
+                    const next =
+                      event.target.value;
+
                     setInput(next);
-                    onQueryChange(next);
-                    setSuggestionOpen(true);
+
+                    onQueryChange?.(next);
+
+                    setSuggestionOpen(
+                      next.trim().length >= 2,
+                    );
                   }}
                   onFocus={() => {
-                    if (input.trim().length >= 2) {
-                      setSuggestionOpen(true);
+                    if (
+                      suggestions.length >
+                      0
+                    ) {
+                      setSuggestionOpen(
+                        true,
+                      );
                     }
                   }}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter") {
+                    if (
+                      event.key ===
+                      "Enter"
+                    ) {
                       event.preventDefault();
                       void search();
                     }
 
-                    if (event.key === "Escape") {
-                      setSuggestionOpen(false);
+                    if (
+                      event.key ===
+                      "Escape"
+                    ) {
+                      setSuggestionOpen(
+                        false,
+                      );
                     }
                   }}
                   placeholder="Search a brand, advertiser or keyword"
                   aria-label="Search a brand, advertiser or keyword"
+                  aria-expanded={
+                    suggestionOpen
+                  }
+                  aria-autocomplete="list"
                 />
 
                 {input ? (
                   <button
                     type="button"
                     className="zt-clear"
-                    onClick={() => {
-                      setInput("");
-                      onQueryChange("");
-                      setSuggestions([]);
-                      setSuggestionOpen(false);
-                    }}
+                    onClick={
+                      clearSearch
+                    }
+                    aria-label="Clear search"
                   >
                     <X size={16} />
                   </button>
                 ) : null}
               </div>
 
-              {suggestionOpen && input.trim().length >= 2 ? (
-                <div className="zt-suggestions">
+              {suggestionOpen &&
+              input.trim().length >= 2 ? (
+                <div
+                  className="zt-suggestions"
+                  role="listbox"
+                  aria-label="Search suggestions"
+                >
                   <div className="zt-suggestion-head">
-                    <span>Suggestions</span>
+                    <span>
+                      Suggestions
+                    </span>
+
                     {suggestionLoading ? (
-                      <Loader2 size={14} className="zt-spin" />
+                      <Loader2
+                        size={14}
+                        className="zt-spin"
+                      />
                     ) : null}
                   </div>
 
                   {suggestions.length ? (
-                    suggestions.map((suggestion) => (
-                      <button
-                        key={`${suggestion.type}:${suggestion.id}`}
-                        type="button"
-                        className="zt-suggestion"
-                        onMouseDown={(event) =>
-                          event.preventDefault()
-                        }
-                        onClick={() =>
-                          applySuggestion(suggestion)
-                        }
-                      >
-                        <span className="zt-suggestion-icon">
-                          {suggestion.type === "advertiser" ? (
-                            <UserRound size={15} />
-                          ) : suggestion.type === "creator" ? (
-                            <Sparkles size={15} />
-                          ) : (
-                            <Tag size={15} />
-                          )}
-                        </span>
-                        <span>
-                          <strong>{suggestion.label}</strong>
-                          <small>
-                            {suggestion.type === "advertiser"
-                              ? "Advertiser"
-                              : suggestion.type === "creator"
+                    suggestions.map(
+                      (
+                        suggestion,
+                      ) => (
+                        <button
+                          key={`${suggestion.type}:${suggestion.id}`}
+                          type="button"
+                          className="zt-suggestion"
+                          role="option"
+                          onMouseDown={(
+                            event,
+                          ) =>
+                            event.preventDefault()
+                          }
+                          onClick={() =>
+                            applySuggestion(
+                              suggestion,
+                            )
+                          }
+                        >
+                          <span className="zt-suggestion-icon">
+                            {suggestion.type ===
+                            "advertiser" ? (
+                              <UserRound
+                                size={15}
+                              />
+                            ) : suggestion.type ===
+                              "creator" ? (
+                              <Sparkles
+                                size={15}
+                              />
+                            ) : (
+                              <Tag
+                                size={15}
+                              />
+                            )}
+                          </span>
+
+                          <span>
+                            <strong>
+                              {
+                                suggestion.label
+                              }
+                            </strong>
+
+                            <small>
+                              {suggestion.type ===
+                              "advertiser"
+                                ? "Advertiser"
+                                : suggestion.type ===
+                                  "creator"
                                 ? "Creator"
                                 : "Creative keyword"}
-                          </small>
-                        </span>
-                        <ArrowUpRight size={14} />
-                      </button>
-                    ))
+                            </small>
+                          </span>
+
+                          <ArrowUpRight
+                            size={14}
+                          />
+                        </button>
+                      ),
+                    )
+                  ) : suggestionLoading ? (
+                    <div className="zt-suggestion-empty">
+                      Finding matching indexed suggestions…
+                    </div>
                   ) : (
                     <div className="zt-suggestion-empty">
                       No matching indexed suggestions.
@@ -723,30 +1621,47 @@ export function AdSpySection({
             </div>
 
             <div className="zt-country-wrap">
-              <label>Country</label>
+              <label>
+                Country
+              </label>
+
               <input
-                value={country}
+                value={countryInput}
                 maxLength={2}
-                onChange={(event) =>
-                  onCountryChange(
-                    event.target.value.toUpperCase(),
-                  )
-                }
+                onChange={(event) => {
+                  const nextCountry = event.target.value
+                    .replace(/[^a-z]/gi, "")
+                    .slice(0, 2)
+                    .toUpperCase();
+
+                  setCountryInput(nextCountry);
+                  onCountryChange?.(nextCountry);
+                }}
+                aria-label="Country code"
+                placeholder="IN"
               />
             </div>
 
             <button
               type="button"
               className="zt-search-btn"
-              onClick={() => void search()}
+              onClick={() =>
+                void search()
+              }
               disabled={loading}
             >
               {loading ? (
-                <Loader2 size={16} className="zt-spin" />
+                <Loader2
+                  size={16}
+                  className="zt-spin"
+                />
               ) : (
                 <Search size={16} />
               )}
-              {loading ? "Searching" : "Search"}
+
+              {loading
+                ? "Searching"
+                : "Search"}
             </button>
 
             <button
@@ -756,107 +1671,197 @@ export function AdSpySection({
                   ? "zt-track-btn zt-track-done"
                   : "zt-track-btn"
               }
-              onClick={() => void trackCurrent()}
+              onClick={() =>
+                void trackCurrent()
+              }
+              disabled={
+                trackingLoading ||
+                mode !== "advertiser" ||
+                input.trim().length < 2
+              }
+              title={
+                mode ===
+                "advertiser"
+                  ? tracked
+                    ? "Stop tracking this competitor"
+                    : "Track this competitor"
+                  : "Switch to Advertiser mode to track a competitor"
+              }
             >
-              {tracked ? <Check size={16} /> : <Bookmark size={16} />}
-              {tracked ? "Tracked" : "Track"}
+              {trackingLoading ? (
+                <Loader2
+                  size={16}
+                  className="zt-spin"
+                />
+              ) : tracked ? (
+                <Check size={16} />
+              ) : (
+                <Bookmark size={16} />
+              )}
+
+              {trackingLoading
+                ? "Updating"
+                : tracked
+                ? "Tracked"
+                : "Track"}
             </button>
           </div>
 
           <div className="zt-mode-row">
-            <span>Search mode</span>
+            <span>
+              Search mode
+            </span>
+
             <button
               type="button"
-              className={mode === "advertiser" ? "zt-mode active" : "zt-mode"}
-              onClick={() => {
-                setMode("advertiser");
-                setSuggestionOpen(false);
-              }}
+              className={
+                mode === "advertiser"
+                  ? "zt-mode active"
+                  : "zt-mode"
+              }
+              onClick={() =>
+                changeMode(
+                  "advertiser",
+                )
+              }
             >
               Advertiser
             </button>
+
             <button
               type="button"
-              className={mode === "keyword" ? "zt-mode active" : "zt-mode"}
-              onClick={() => {
-                setMode("keyword");
-                setSuggestionOpen(false);
-              }}
+              className={
+                mode === "keyword"
+                  ? "zt-mode active"
+                  : "zt-mode"
+              }
+              onClick={() =>
+                changeMode(
+                  "keyword",
+                )
+              }
             >
               Keyword
             </button>
+
             <span className="zt-mode-help">
-              {mode === "advertiser"
-                ? "Exact competitor identity first."
+              {mode ===
+              "advertiser"
+                ? "Search a competitor, then optionally track it."
                 : "Search creative copy, products and metadata."}
             </span>
+
+            {tracked &&
+            trackedLastCollectedAt ? (
+              <span className="zt-mode-help">
+                Last tracked refresh:{" "}
+                {dateLabel(
+                  trackedLastCollectedAt,
+                )}
+              </span>
+            ) : null}
           </div>
 
-          {job && (
+          {activeJob ? (
             <div className="zt-job-strip">
               <div className="zt-job-main">
-                {job.status === "complete" ? (
-                  <Check size={15} />
-                ) : (
-                  <RefreshCw size={15} className="zt-spin-soft" />
-                )}
+                <RefreshCw
+                  size={15}
+                  className="zt-spin-soft"
+                />
+
                 <strong>
-                  {job.status === "complete"
-                    ? "Market refresh complete"
-                    : "Refreshing source data"}
+                  Updating {input.trim()}
                 </strong>
+
                 <span>
-                  {job.discoveredAds} discovered · {job.persistedAds} indexed
+                  Existing results remain available while
+                  Zooptrack refreshes the source data.
                 </span>
               </div>
 
-              <div className="zt-job-progress">
+              <div
+                className="zt-job-progress"
+                aria-label="Background refresh progress"
+              >
                 <span
                   style={{
                     width: `${Math.min(
                       100,
                       Math.max(
-                        6,
-                        job.discoveredAds
-                          ? (job.persistedAds / job.discoveredAds) * 100
-                          : 6,
+                        8,
+                        job?.discoveredAds
+                          ? (job.persistedAds /
+                              job.discoveredAds) *
+                            100
+                          : 8,
                       ),
                     )}%`,
                   }}
                 />
               </div>
             </div>
-          )}
+          ) : null}
 
           {error ? (
-            <div className="zt-error">{error}</div>
+            <div
+              className="zt-error"
+              role="alert"
+            >
+              {error}
+            </div>
           ) : null}
         </div>
 
         <div className="zt-stats-grid">
           <Stat
-            icon={<Activity size={16} />}
+            icon={
+              <Activity
+                size={16}
+              />
+            }
             label="Indexed"
-            value={summary.totalAds}
-            hint="Public creatives in the indexed market"
+            value={
+              summary.totalAds
+            }
+            hint="Total creatives matching this search"
           />
+
           <Stat
-            icon={<Activity size={16} />}
-            label="Active"
-            value={summary.activeAds}
-            hint={`${summary.totalAds ? Math.round((summary.activeAds / summary.totalAds) * 100) : 0}% of indexed ads`}
+            icon={
+              <Activity
+                size={16}
+              />
+            }
+            label="Active shown"
+            value={
+              summary.activeAds
+            }
+            hint="Active creatives on the current page"
           />
+
           <Stat
-            icon={<Video size={16} />}
-            label="Video mix"
-            value={summary.videoAds}
-            hint={`${summary.totalAds ? Math.round((summary.videoAds / summary.totalAds) * 100) : 0}% of indexed ads`}
+            icon={
+              <Video
+                size={16}
+              />
+            }
+            label="Video shown"
+            value={
+              summary.videoAds
+            }
+            hint="Video creatives on the current page"
           />
+
           <Stat
-            icon={<Clock3 size={16} />}
-            label="Longest running"
+            icon={
+              <Clock3
+                size={16}
+              />
+            }
+            label="Longest shown"
             value={`${summary.longestRunningDays}d`}
-            hint="Observed persistence signal"
+            hint="Longest running creative on this page"
           />
         </div>
 
@@ -864,9 +1869,15 @@ export function AdSpySection({
           <section className="zt-panel">
             <div className="zt-panel-head">
               <div>
-                <span className="zt-overline">CREATIVE INTELLIGENCE</span>
-                <h3>What keeps showing up?</h3>
+                <span className="zt-overline">
+                  CREATIVE INTELLIGENCE
+                </span>
+
+                <h3>
+                  What keeps showing up?
+                </h3>
               </div>
+
               <span className="zt-derived">
                 <Sparkles size={13} />
                 Derived from observed source data
@@ -875,8 +1886,15 @@ export function AdSpySection({
 
             <div className="zt-insight-cards">
               <div className="zt-insight-card">
-                <span>Top creator</span>
-                <strong>{topCreator?.label || "No creator signal"}</strong>
+                <span>
+                  Top creator
+                </span>
+
+                <strong>
+                  {topCreator?.label ||
+                    "No creator signal"}
+                </strong>
+
                 <small>
                   {topCreator
                     ? `${topCreator.count} observed creatives`
@@ -885,8 +1903,15 @@ export function AdSpySection({
               </div>
 
               <div className="zt-insight-card">
-                <span>Top offer</span>
-                <strong>{topOffer?.label || "No offer detected"}</strong>
+                <span>
+                  Top offer
+                </span>
+
+                <strong>
+                  {topOffer?.label ||
+                    "No offer detected"}
+                </strong>
+
                 <small>
                   {topOffer
                     ? `${topOffer.count} observed creatives`
@@ -895,8 +1920,15 @@ export function AdSpySection({
               </div>
 
               <div className="zt-insight-card">
-                <span>Top hook</span>
-                <strong>{topHook?.label || "No hook detected"}</strong>
+                <span>
+                  Top hook
+                </span>
+
+                <strong>
+                  {topHook?.label ||
+                    "No hook detected"}
+                </strong>
+
                 <small>
                   {topHook
                     ? `${topHook.count} observed creatives`
@@ -907,38 +1939,72 @@ export function AdSpySection({
 
             <div className="zt-longest">
               <div>
-                <span>Longest-running creative</span>
+                <span>
+                  Longest-running creative
+                </span>
+
                 <strong>
-                  {intelligence?.longestRunningAd?.headline ||
+                  {intelligence
+                    ?.longestRunningAd
+                    ?.headline ||
                     "No long-running creative identified yet"}
                 </strong>
               </div>
+
               <span className="zt-longest-days">
-                {intelligence?.longestRunningAd?.runningDays ?? 0} observed days
+                {intelligence
+                  ?.longestRunningAd
+                  ?.runningDays ??
+                  0}{" "}
+                observed days
               </span>
             </div>
           </section>
 
           <section className="zt-panel zt-performance">
-            <span className="zt-overline">MARKET MIX</span>
-            <h3>Observed audience signals</h3>
+            <span className="zt-overline">
+              MARKET MIX
+            </span>
+
+            <h3>
+              Observed creative signals
+            </h3>
 
             <div className="zt-mix-row">
-              <span>Creators</span>
-              <strong>{summary.creatorAds}</strong>
+              <span>
+                Creators
+              </span>
+
+              <strong>
+                {summary.creatorAds}
+              </strong>
             </div>
+
             <div className="zt-mix-row">
-              <span>Video</span>
-              <strong>{summary.videoAds}</strong>
+              <span>
+                Video
+              </span>
+
+              <strong>
+                {summary.videoAds}
+              </strong>
             </div>
+
             <div className="zt-mix-row">
-              <span>Static + carousel</span>
-              <strong>{summary.imageAds + summary.carouselAds}</strong>
+              <span>
+                Static + carousel
+              </span>
+
+              <strong>
+                {summary.imageAds +
+                  summary.carouselAds}
+              </strong>
             </div>
 
             <div className="zt-performance-note">
-              Reach and impressions are not exposed reliably by the public source.
-              Zooptrack ranks persistence and repetition without inventing conversion metrics.
+              Reach and impressions are not exposed reliably by
+              the public source. Zooptrack does not invent conversion
+              metrics from unavailable data.
             </div>
           </section>
         </div>
@@ -946,84 +2012,158 @@ export function AdSpySection({
         <section className="zt-library">
           <div className="zt-library-head">
             <div>
-              <span className="zt-overline">CREATIVE LIBRARY</span>
-              <h3>Research the ads, not the scorecards.</h3>
+              <span className="zt-overline">
+                CREATIVE LIBRARY
+              </span>
+
+              <h3>
+                Research the ads, not the scorecards.
+              </h3>
             </div>
 
             <span className="zt-result-count">
               {pagination.total} indexed
+              {lastUpdatedAt
+                ? ` · Updated ${dateLabel(
+                    lastUpdatedAt,
+                  )}`
+                : ""}
             </span>
           </div>
 
           <div className="zt-filter-row">
-            {FILTERS.map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                className={filter === id ? "zt-filter active" : "zt-filter"}
-                onClick={() => setFilter(id)}
-              >
-                {label}
-              </button>
-            ))}
+            {FILTERS.map(
+              ([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={
+                    filter === id
+                      ? "zt-filter active"
+                      : "zt-filter"
+                  }
+                  onClick={() =>
+                    setFilter(id)
+                  }
+                >
+                  {label}
+                </button>
+              ),
+            )}
           </div>
 
-          {loading && !ads.length ? (
+          {loading &&
+          !ads.length ? (
             <div className="zt-library-loading">
-              <Loader2 size={30} className="zt-spin" />
-              <strong>Loading indexed creatives</strong>
-              <span>Fetching the latest public source data.</span>
+              <Loader2
+                size={30}
+                className="zt-spin"
+              />
+
+              <strong>
+                Searching indexed creatives
+              </strong>
+
+              <span>
+                Results are loaded from Zooptrack's
+                indexed market; source refresh happens
+                separately in the background.
+              </span>
             </div>
           ) : filteredAds.length ? (
             <div className="zt-ad-grid">
-              {filteredAds.map((ad) => (
-                <CreativeCard
-                  key={`${ad.platform}:${ad.id}`}
-                  ad={ad}
-                  onOpen={() => setSelectedAd(ad)}
-                />
-              ))}
+              {filteredAds.map(
+                (ad) => (
+                  <CreativeCard
+                    key={`${ad.platform}:${ad.id}`}
+                    ad={ad}
+                    onOpen={() =>
+                      setSelectedAd(
+                        ad,
+                      )
+                    }
+                  />
+                ),
+              )}
             </div>
           ) : (
             <div className="zt-library-empty">
               <div className="zt-empty-icon">
                 <Search size={20} />
               </div>
+
               <strong>
-                {job &&
-                ["queued", "scraping", "normalizing", "enriching", "finalizing"].includes(job.status)
-                  ? "Collecting public creatives"
+                {activeJob
+                  ? "No indexed results yet"
                   : "No indexed creatives match this view."}
               </strong>
+
               <span>
-                {job &&
-                ["queued", "scraping", "normalizing", "enriching", "finalizing"].includes(job.status)
-                  ? "Existing results remain available while Zooptrack refreshes the market."
-                  : "Try another mode or search term."}
+                {activeJob
+                  ? "Zooptrack is collecting the public source in the background. Existing results are not blocked."
+                  : "Try another mode, search term or filter."}
               </span>
             </div>
           )}
 
-          {pagination.totalPages > 1 ? (
+          {pagination.totalPages >
+          1 ? (
             <div className="zt-pagination">
               <button
                 type="button"
-                disabled={pagination.page <= 1}
-                onClick={() => void search(pagination.page - 1)}
+                disabled={
+                  pagination.page <=
+                  1
+                }
+                onClick={() =>
+                  void search(
+                    pagination.page -
+                      1,
+                    undefined,
+                    {
+                      skipBackgroundRefresh:
+                        true,
+                    },
+                  )
+                }
               >
-                <ChevronLeft size={16} />
+                <ChevronLeft
+                  size={16}
+                />
                 Previous
               </button>
+
               <span>
-                Page {pagination.page} of {pagination.totalPages}
+                Page{" "}
+                {pagination.page}{" "}
+                of{" "}
+                {
+                  pagination.totalPages
+                }
               </span>
+
               <button
                 type="button"
-                disabled={pagination.page >= pagination.totalPages}
-                onClick={() => void search(pagination.page + 1)}
+                disabled={
+                  pagination.page >=
+                  pagination.totalPages
+                }
+                onClick={() =>
+                  void search(
+                    pagination.page +
+                      1,
+                    undefined,
+                    {
+                      skipBackgroundRefresh:
+                        true,
+                    },
+                  )
+                }
               >
                 Next
-                <ChevronRight size={16} />
+                <ChevronRight
+                  size={16}
+                />
               </button>
             </div>
           ) : null}
@@ -1034,42 +2174,68 @@ export function AdSpySection({
         <div
           className="zt-drawer-backdrop"
           role="presentation"
-          onMouseDown={() => setSelectedAd(null)}
+          onMouseDown={() =>
+            setSelectedAd(null)
+          }
         >
           <aside
             className="zt-drawer"
             role="dialog"
             aria-modal="true"
             aria-label="Creative intelligence"
-            onMouseDown={(event) => event.stopPropagation()}
+            onMouseDown={(event) =>
+              event.stopPropagation()
+            }
           >
             <div className="zt-drawer-head">
               <div>
-                <span className="zt-overline">CREATIVE INTELLIGENCE</span>
-                <h3>{selectedAd.headline || selectedAd.productName || "Creative"}</h3>
+                <span className="zt-overline">
+                  CREATIVE INTELLIGENCE
+                </span>
+
+                <h3>
+                  {selectedAd.headline ||
+                    selectedAd.productName ||
+                    "Creative"}
+                </h3>
               </div>
+
               <button
                 type="button"
                 className="zt-icon-btn"
-                onClick={() => setSelectedAd(null)}
+                onClick={() =>
+                  setSelectedAd(
+                    null,
+                  )
+                }
                 aria-label="Close"
               >
                 <X size={17} />
               </button>
             </div>
 
-            {mediaUrl(selectedAd) ? (
+            {mediaUrl(
+              selectedAd,
+            ) ? (
               <div className="zt-drawer-media">
                 <img
-                  src={mediaUrl(selectedAd) as string}
-                  alt={selectedAd.headline || "Creative"}
+                  src={
+                    mediaUrl(
+                      selectedAd,
+                    ) as string
+                  }
+                  alt={
+                    selectedAd.headline ||
+                    "Creative"
+                  }
                 />
               </div>
             ) : null}
 
             <div className="zt-drawer-content">
               <div className="zt-drawer-brand">
-                {selectedAd.advertiserName || "Unknown advertiser"}
+                {selectedAd.advertiserName ||
+                  "Unknown advertiser"}
               </div>
 
               <p className="zt-drawer-copy">
@@ -1080,53 +2246,114 @@ export function AdSpySection({
 
               <div className="zt-detail-grid">
                 <div>
-                  <span>Hook</span>
-                  <strong>{hook(selectedAd)}</strong>
+                  <span>
+                    Hook
+                  </span>
+
+                  <strong>
+                    {hook(
+                      selectedAd,
+                    )}
+                  </strong>
                 </div>
+
                 <div>
-                  <span>Format</span>
-                  <strong>{selectedAd.creativeType || "Unknown"}</strong>
+                  <span>
+                    Format
+                  </span>
+
+                  <strong>
+                    {selectedAd.creativeType ||
+                      "Unknown"}
+                  </strong>
                 </div>
+
                 <div>
-                  <span>Running</span>
-                  <strong>{selectedAd.runningDays ?? 0} days</strong>
+                  <span>
+                    Running
+                  </span>
+
+                  <strong>
+                    {selectedAd.runningDays ??
+                      0}{" "}
+                    days
+                  </strong>
                 </div>
+
                 <div>
-                  <span>CTA</span>
-                  <strong>{selectedAd.callToAction || "—"}</strong>
+                  <span>
+                    CTA
+                  </span>
+
+                  <strong>
+                    {selectedAd.callToAction ||
+                      "—"}
+                  </strong>
                 </div>
+
                 <div>
-                  <span>First seen</span>
-                  <strong>{dateLabel(selectedAd.firstSeen)}</strong>
+                  <span>
+                    First seen
+                  </span>
+
+                  <strong>
+                    {dateLabel(
+                      selectedAd.firstSeen,
+                    )}
+                  </strong>
                 </div>
+
                 <div>
-                  <span>Last seen</span>
-                  <strong>{dateLabel(selectedAd.lastSeen)}</strong>
+                  <span>
+                    Last seen
+                  </span>
+
+                  <strong>
+                    {dateLabel(
+                      selectedAd.lastSeen,
+                    )}
+                  </strong>
                 </div>
               </div>
 
               <div className="zt-drawer-actions">
-                {safeUrl(selectedAd.sourceUrl) ? (
+                {safeUrl(
+                  selectedAd.sourceUrl,
+                ) ? (
                   <a
-                    href={safeUrl(selectedAd.sourceUrl) as string}
+                    href={
+                      safeUrl(
+                        selectedAd.sourceUrl,
+                      ) as string
+                    }
                     target="_blank"
                     rel="noreferrer"
                     className="zt-btn zt-btn-dark"
                   >
                     Open Ad Library
-                    <ArrowUpRight size={14} />
+                    <ArrowUpRight
+                      size={14}
+                    />
                   </a>
                 ) : null}
 
-                {safeUrl(selectedAd.landingPage) ? (
+                {safeUrl(
+                  selectedAd.landingPage,
+                ) ? (
                   <a
-                    href={safeUrl(selectedAd.landingPage) as string}
+                    href={
+                      safeUrl(
+                        selectedAd.landingPage,
+                      ) as string
+                    }
                     target="_blank"
                     rel="noreferrer"
                     className="zt-btn zt-btn-light"
                   >
                     Landing page
-                    <ArrowUpRight size={14} />
+                    <ArrowUpRight
+                      size={14}
+                    />
                   </a>
                 ) : null}
               </div>
