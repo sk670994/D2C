@@ -4,9 +4,15 @@ import { inngest } from "@/inngest/client";
 
 import { adProviders } from "@/lib/ad-intelligence/providers";
 
-import type { AdPlatform } from "@/lib/ad-intelligence/types";
+import type {
+  AdPlatform,
+  CompetitorAd,
+} from "@/lib/ad-intelligence/types";
 
-import type { AdSearchMode } from "@/lib/ad-intelligence/provider";
+import type {
+  AdSearchMode,
+  CollectionDepth,
+} from "@/lib/ad-intelligence/provider";
 
 import {
   markTrackedBrandCollected,
@@ -24,6 +30,13 @@ type CollectionEvent = {
   platform: AdPlatform;
   mode: AdSearchMode;
   collectionKey: string;
+  collectionDepth?: CollectionDepth;
+};
+
+type PersistState = {
+  discoveredAds: number;
+  normalizedAds: number;
+  persistedAds: number;
 };
 
 export const collectAdIntelligence =
@@ -82,6 +95,12 @@ export const collectAdIntelligence =
       const startedAt =
         new Date().toISOString();
 
+      const collectionDepth =
+        data.collectionDepth ===
+        "quick"
+          ? "quick"
+          : "deep";
+
       await step.run(
         "mark-scraping",
         async () => {
@@ -97,128 +116,196 @@ export const collectAdIntelligence =
         },
       );
 
-      const providerResult =
-        await step.run(
-          "collect-public-creatives",
-          async () => {
-            const provider =
-              adProviders[
-                data.platform
-              ];
+      const state: PersistState = {
+        discoveredAds: 0,
+        normalizedAds: 0,
+        persistedAds: 0,
+      };
 
-            if (!provider) {
-              throw new Error(
-                `No provider configured for ${data.platform}.`,
+      /*
+       * Persist one provider result in chunks and update the
+       * collection job after every chunk.
+       *
+       * The quick phase intentionally uses distinct Inngest
+       * step IDs from the deep phase so a quick-first job can
+       * continue into a deep refresh without colliding with
+       * cached step results.
+       */
+      const persistProviderResult = async (
+        phase: "quick" | "deep",
+        ads: CompetitorAd[],
+      ) => {
+        state.discoveredAds +=
+          ads.length;
+
+        const totalChunks =
+          Math.max(
+            1,
+            Math.ceil(
+              ads.length /
+                CHUNK_SIZE,
+            ),
+          );
+
+        for (
+          let offset = 0;
+          offset < ads.length;
+          offset += CHUNK_SIZE
+        ) {
+          const chunkIndex =
+            Math.floor(
+              offset /
+                CHUNK_SIZE,
+            ) + 1;
+
+          const chunk =
+            ads.slice(
+              offset,
+              offset +
+                CHUNK_SIZE,
+            );
+
+          const result =
+            await step.run(
+              `persist-${phase}-chunk-${chunkIndex}`,
+              async () =>
+                processAdChunk({
+                  ads: chunk,
+                }),
+            );
+
+          state.normalizedAds +=
+            chunk.length;
+
+          state.persistedAds +=
+            Number(
+              result.insertedOrUpdated ??
+                0,
+            );
+
+          await step.run(
+            `progress-${phase}-chunk-${chunkIndex}`,
+            async () => {
+              const finalChunk =
+                chunkIndex ===
+                totalChunks;
+
+              await updateCollectionJob(
+                data.jobId,
+                {
+                  status:
+                    finalChunk &&
+                    phase === "deep"
+                      ? "finalizing"
+                      : "enriching",
+
+                  stage:
+                    finalChunk &&
+                    phase === "deep"
+                      ? "finalizing"
+                      : "enriching",
+
+                  discoveredAds:
+                    state.discoveredAds,
+
+                  normalizedAds:
+                    state.normalizedAds,
+
+                  persistedAds:
+                    state.persistedAds,
+                },
               );
-            }
-
-            const result =
-              await provider.search({
-                query: data.query,
-                country: data.country,
-                platform:
-                  data.platform,
-                mode: data.mode,
-              });
-
-            return {
-              ads: result.ads ?? [],
-            };
-          },
-        );
-
-      const ads =
-        providerResult.ads ?? [];
-
-      await step.run(
-        "record-discovery",
-        async () => {
-          await updateCollectionJob(
-            data.jobId,
-            {
-              status: "normalizing",
-              stage: "normalizing",
-              discoveredAds:
-                ads.length,
-              normalizedAds: 0,
-              persistedAds: 0,
             },
           );
-        },
-      );
+        }
+      };
 
-      let persistedAds = 0;
-      let normalizedAds = 0;
+      const collectPhase =
+        async (
+          phase:
+            | "quick"
+            | "deep",
+        ) => {
+          return step.run(
+            `collect-public-creatives-${phase}`,
+            async () => {
+              const provider =
+                adProviders[
+                  data.platform
+                ];
 
-      const totalChunks =
-        Math.max(
-          1,
-          Math.ceil(
-            ads.length /
-              CHUNK_SIZE,
-          ),
-        );
+              if (!provider) {
+                throw new Error(
+                  `No provider configured for ${data.platform}.`,
+                );
+              }
 
-      for (
-        let offset = 0;
-        offset < ads.length;
-        offset += CHUNK_SIZE
+              const result =
+                await provider.search({
+                  query:
+                    data.query,
+
+                  country:
+                    data.country,
+
+                  platform:
+                    data.platform,
+
+                  mode:
+                    data.mode,
+
+                  collectionDepth:
+                    phase,
+                });
+
+              return {
+                ads:
+                  result.ads ??
+                  [],
+              };
+            },
+          );
+        };
+
+      /*
+       * QUICK-FIRST mode:
+       *
+       * The first request returns a small, fast Meta crawl.
+       * Those records are persisted immediately. Only then do
+       * we start the deeper crawl.
+       */
+      if (
+        collectionDepth ===
+        "quick"
       ) {
-        const chunkIndex =
-          Math.floor(
-            offset /
-              CHUNK_SIZE,
-          ) + 1;
-
-        const chunk =
-          ads.slice(
-            offset,
-            offset + CHUNK_SIZE,
+        const quickResult =
+          await collectPhase(
+            "quick",
           );
 
-        const result =
-          await step.run(
-            `persist-chunk-${chunkIndex}`,
-            async () =>
-              processAdChunk({
-                ads: chunk,
-              }),
-          );
-
-        normalizedAds +=
-          chunk.length;
-
-        persistedAds +=
-          Number(
-            result.insertedOrUpdated ??
-              0,
-          );
-
-        await step.run(
-          `progress-${chunkIndex}`,
-          async () => {
-            const finalChunk =
-              chunkIndex ===
-              totalChunks;
-
-            await updateCollectionJob(
-              data.jobId,
-              {
-                status: finalChunk
-                  ? "finalizing"
-                  : "enriching",
-
-                stage: finalChunk
-                  ? "finalizing"
-                  : "enriching",
-
-                normalizedAds,
-                persistedAds,
-              },
-            );
-          },
+        await persistProviderResult(
+          "quick",
+          quickResult.ads,
         );
       }
+
+      /*
+       * DEEP mode:
+       *
+       * This is the existing full collection path.
+       * In quick-first mode it starts only after the quick
+       * batch has been persisted, so the user can see the
+       * first results while this phase runs.
+       */
+      const deepResult =
+        await collectPhase(
+          "deep",
+        );
+
+      await persistProviderResult(
+        "deep",
+        deepResult.ads,
+      );
 
       /*
        * A search can legitimately return zero ads.
@@ -234,11 +321,13 @@ export const collectAdIntelligence =
               stage: "complete",
 
               discoveredAds:
-                ads.length,
+                state.discoveredAds,
 
-              normalizedAds,
+              normalizedAds:
+                state.normalizedAds,
 
-              persistedAds,
+              persistedAds:
+                state.persistedAds,
 
               completedAt:
                 new Date().toISOString(),
@@ -262,18 +351,28 @@ export const collectAdIntelligence =
         "mark-tracked-brand-collected",
         async () => {
           await markTrackedBrandCollected({
-            query: data.query,
-            country: data.country,
-            platform: data.platform,
+            query:
+              data.query,
+            country:
+              data.country,
+            platform:
+              data.platform,
           });
         },
       );
 
       return {
-        jobId: data.jobId,
-        discoveredAds: ads.length,
-        normalizedAds,
-        persistedAds,
+        jobId:
+          data.jobId,
+
+        discoveredAds:
+          state.discoveredAds,
+
+        normalizedAds:
+          state.normalizedAds,
+
+        persistedAds:
+          state.persistedAds,
       };
     },
   );

@@ -56,6 +56,21 @@ const POST_SCROLL_WAIT_MS = 500;
 const DEFAULT_MAX_SCROLLS = 90;
 
 /*
+ * QUICK collection is intended for a user-triggered first search.
+ *
+ * It deliberately uses a small crawl budget so a previously unseen
+ * brand can produce a useful first result set quickly.
+ *
+ * DEEP collection keeps the existing crawl ceiling below.
+ */
+const QUICK_INITIAL_WAIT_MS = 1000;
+const QUICK_SCROLL_WAIT_MS = 225;
+const QUICK_POST_SCROLL_WAIT_MS = 300;
+const QUICK_MAX_SCROLLS = 14;
+const QUICK_TARGET_LIBRARY_IDS = 24;
+const QUICK_STABLE_ROUNDS = 3;
+
+/*
  * Maximum target for one provider collection.
  *
  * This is a ceiling, not a guarantee that Meta will expose
@@ -1406,6 +1421,7 @@ function deduplicateAds(
 async function scrapeMetaOnce(
   query: string,
   country: string,
+  collectionDepth: "quick" | "deep",
 ): Promise<CompetitorAd[]> {
   const currentBrowser =
     await getMetaBrowser();
@@ -1442,6 +1458,39 @@ async function scrapeMetaOnce(
 
   let previousCount = 0;
 
+  const isQuickCollection =
+    collectionDepth === "quick";
+
+  const initialWaitMs =
+    isQuickCollection
+      ? QUICK_INITIAL_WAIT_MS
+      : INITIAL_WAIT_MS;
+
+  const scrollWaitMs =
+    isQuickCollection
+      ? QUICK_SCROLL_WAIT_MS
+      : SCROLL_WAIT_MS;
+
+  const postScrollWaitMs =
+    isQuickCollection
+      ? QUICK_POST_SCROLL_WAIT_MS
+      : POST_SCROLL_WAIT_MS;
+
+  const maxScrolls =
+    isQuickCollection
+      ? QUICK_MAX_SCROLLS
+      : DEFAULT_MAX_SCROLLS;
+
+  const targetLibraryIds =
+    isQuickCollection
+      ? QUICK_TARGET_LIBRARY_IDS
+      : TARGET_LIBRARY_IDS;
+
+  const stableRoundLimit =
+    isQuickCollection
+      ? QUICK_STABLE_ROUNDS
+      : STABLE_ROUNDS;
+
   try {
     await page.goto(
       buildLibraryUrl(
@@ -1458,13 +1507,13 @@ async function scrapeMetaOnce(
     );
 
     await page.waitForTimeout(
-      INITIAL_WAIT_MS,
+      initialWaitMs,
     );
 
     for (
       let scroll = 0;
       scroll <
-        DEFAULT_MAX_SCROLLS;
+        maxScrolls;
       scroll += 1
     ) {
       const cards =
@@ -1534,6 +1583,7 @@ async function scrapeMetaOnce(
         {
           query,
           country,
+          collectionDepth,
           scroll:
             scroll + 1,
           visible:
@@ -1546,7 +1596,7 @@ async function scrapeMetaOnce(
 
       if (
         currentCount >=
-        TARGET_LIBRARY_IDS
+        targetLibraryIds
       ) {
         break;
       }
@@ -1565,7 +1615,7 @@ async function scrapeMetaOnce(
 
       if (
         stableRounds >=
-          STABLE_ROUNDS &&
+          stableRoundLimit &&
         currentCount > 0
       ) {
         break;
@@ -1577,7 +1627,7 @@ async function scrapeMetaOnce(
       );
 
       await page.waitForTimeout(
-        SCROLL_WAIT_MS,
+        scrollWaitMs,
       );
     }
 
@@ -1585,7 +1635,7 @@ async function scrapeMetaOnce(
      * One final extraction after the last scroll.
      */
     await page.waitForTimeout(
-      POST_SCROLL_WAIT_MS,
+      postScrollWaitMs,
     );
 
     const finalCards =
@@ -1683,10 +1733,17 @@ export const deepMetaProvider:
           const startedAt =
             Date.now();
 
+          const collectionDepth =
+            input.collectionDepth ===
+            "quick"
+              ? "quick"
+              : "deep";
+
           const scraped =
             await scrapeMetaOnce(
               query,
               country,
+              collectionDepth,
             );
 
           const ads =
@@ -1727,6 +1784,7 @@ export const deepMetaProvider:
             {
               query,
               country,
+              collectionDepth,
               ads:
                 ads.length,
               attempt,

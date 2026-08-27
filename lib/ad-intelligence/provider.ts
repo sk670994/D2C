@@ -7,6 +7,10 @@ export type AdSearchMode =
   | "advertiser"
   | "keyword";
 
+export type CollectionDepth =
+  | "quick"
+  | "deep";
+
 export type AdSearchInput = {
   query: string;
 
@@ -19,6 +23,8 @@ export type AdSearchInput = {
   page?: number;
 
   limit?: number;
+
+  collectionDepth?: CollectionDepth;
 };
 
 export type ProviderResult = {

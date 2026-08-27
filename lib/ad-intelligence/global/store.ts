@@ -4,6 +4,27 @@ import type { AdPlatform, CompetitorAd } from "../types";
 import { createGlobalServiceClient } from "./supabase";
 import type { CollectionJob, CollectionJobStatus, GlobalAdRecord, GlobalLanguage, GlobalMarket, GlobalSearchResult, GlobalSearchSummary } from "./types";
 
+const COLLECTION_JOB_SELECT =
+  [
+    "id",
+    "collection_key",
+    "query",
+    "country",
+    "platform",
+    "mode",
+    "status",
+    "stage",
+    "discovered_ads",
+    "normalized_ads",
+    "persisted_ads",
+    "error_message",
+    "started_at",
+    "completed_at",
+    "last_requested_at",
+    "updated_at",
+    "created_at",
+  ].join(",");
+
 export function normalizeCollectionQuery(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
@@ -35,7 +56,7 @@ function mapJob(row: any): CollectionJob {
 }
 
 export async function getCollectionJob(jobId: string): Promise<CollectionJob | null> {
-  const { data, error } = await createGlobalServiceClient().from("ad_intelligence_collection_jobs").select("*").eq("id", jobId).maybeSingle();
+  const { data, error } = await createGlobalServiceClient().from("ad_intelligence_collection_jobs").select(COLLECTION_JOB_SELECT).eq("id", jobId).maybeSingle();
   if (error) throw new Error(`Failed to read collection job: ${error.message}`);
   return data ? mapJob(data) : null;
 }
@@ -67,7 +88,7 @@ export async function getOrCreateCollectionJob(input: {
     throw new Error(`Failed to create collection job: ${insertError.message}`);
   }
 
-  const { data, error } = await client.from("ad_intelligence_collection_jobs").select("*").eq("collection_key", collectionKey).single();
+  const { data, error } = await client.from("ad_intelligence_collection_jobs").select(COLLECTION_JOB_SELECT).eq("collection_key", collectionKey).single();
   if (error || !data) throw new Error(`Failed to load collection job: ${error?.message ?? "missing row"}`);
   return mapJob(data);
 }
@@ -87,7 +108,7 @@ export async function requestCollectionRefresh(job: CollectionJob, minIntervalMi
     .eq("id", job.id)
     .in("status", ["complete", "failed"])
     .lt("last_requested_at", cutoff)
-    .select("*")
+    .select(COLLECTION_JOB_SELECT)
     .maybeSingle();
 
   if (data) return { job: mapJob(data), shouldEnqueue: true };

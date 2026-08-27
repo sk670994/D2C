@@ -23,6 +23,7 @@ type SearchSummary = {
   totalAds: number;
   activeAds: number;
   inactiveAds: number;
+  unknownAds: number;
   videoAds: number;
   imageAds: number;
   carouselAds: number;
@@ -45,9 +46,9 @@ type Intelligence = {
     count: number;
   }>;
   longestRunningAd: {
-    advertiserName?: string | null;
-    headline?: string | null;
-    runningDays?: number | null;
+    advertiserName: string | null;
+    headline: string | null;
+    runningDays: number | null;
   } | null;
   reach: {
     status: "unavailable";
@@ -55,14 +56,51 @@ type Intelligence = {
   };
 };
 
-function escapeLike(
-  value: string,
+type MetricsRow = {
+  total_ads: number | null;
+  active_ads: number | null;
+  inactive_ads: number | null;
+  unknown_ads: number | null;
+  video_ads: number | null;
+  image_ads: number | null;
+  carousel_ads: number | null;
+  creator_ads: number | null;
+  average_running_days:
+    | number
+    | string
+    | null;
+  longest_running_days:
+    | number
+    | null;
+  last_observed_at:
+    | string
+    | null;
+  top_creators:
+    | Array<{
+        label: string;
+        count: number;
+      }>
+    | null;
+  top_offers:
+    | Array<{
+        label: string;
+        count: number;
+      }>
+    | null;
+  top_hooks:
+    | Array<{
+        label: string;
+        count: number;
+      }>
+    | null;
+};
+
+function normalizeText(
+  value: unknown,
 ) {
-  return value
-    .replace(
-      /[%_,]/g,
-      " ",
-    )
+  return String(
+    value ?? "",
+  )
     .replace(
       /\s+/g,
       " ",
@@ -80,15 +118,15 @@ function safeDateMs(
     return null;
   }
 
-  const time =
+  const timestamp =
     new Date(
       value,
     ).getTime();
 
   return Number.isFinite(
-    time,
+    timestamp,
   )
-    ? time
+    ? timestamp
     : null;
 }
 
@@ -100,7 +138,9 @@ function runningDays(
       row.first_seen_at,
     );
 
-  if (first == null) {
+  if (
+    first === null
+  ) {
     return null;
   }
 
@@ -119,231 +159,60 @@ function runningDays(
   );
 }
 
-function buildHook(
-  row: any,
-) {
-  const text =
-    String(
-      row.primary_text ??
-        row.headline ??
-        "",
-    )
-      .replace(
-        /\s+/g,
-        " ",
-      )
-      .trim();
-
-  if (!text) {
-    return null;
-  }
-
-  return (
-    text
-      .split(
-        /[.!?।！？]/,
-      )[0]
-      ?.trim()
-      .slice(
-        0,
-        90,
-      ) ||
-    null
-  );
-}
-
-function buildTop(
-  counts: Map<
-    string,
-    number
-  >,
-  limit = 5,
-) {
-  return Array.from(
-    counts.entries(),
-  )
-    .sort(
-      (a, b) =>
-        b[1] -
-        a[1],
-    )
-    .slice(
-      0,
-      limit,
-    )
-    .map(
-      ([label, count]) => ({
-        label,
-        count,
-      }),
-    );
-}
-
-function deriveIntelligence(
-  rows: any[],
-): Intelligence {
-  const creators =
-    new Map<
-      string,
-      number
-    >();
-
-  const offers =
-    new Map<
-      string,
-      number
-    >();
-
-  const hooks =
-    new Map<
-      string,
-      number
-    >();
-
-  let longest:
-    | {
-        advertiserName?: string | null;
-        headline?: string | null;
-        runningDays?: number | null;
-      }
-    | null = null;
-
-  for (const row of rows) {
-    const creator =
-      String(
-        row.creator_name ??
-          "",
-      ).trim();
-
-    if (creator) {
-      creators.set(
-        creator,
-        (creators.get(
-          creator,
-        ) ?? 0) + 1,
-      );
-    }
-
-    const offer =
-      String(
-        row.offer ??
-          "",
-      ).trim();
-
-    if (offer) {
-      offers.set(
-        offer,
-        (offers.get(
-          offer,
-        ) ?? 0) + 1,
-      );
-    }
-
-    const hook =
-      buildHook(row);
-
-    if (hook) {
-      hooks.set(
-        hook,
-        (hooks.get(
-          hook,
-        ) ?? 0) + 1,
-      );
-    }
-
-    const days =
-      runningDays(row);
-
-    if (
-      days != null &&
-      (
-        !longest ||
-        days >
-          Number(
-            longest.runningDays ??
-              0,
-          )
-      )
-    ) {
-      longest = {
-        advertiserName:
-          row.advertiser_name ??
-          null,
-        headline:
-          row.headline ??
-          null,
-        runningDays:
-          days,
-      };
-    }
-  }
-
-  return {
-    topCreators:
-      buildTop(
-        creators,
-      ),
-
-    topOffers:
-      buildTop(
-        offers,
-      ),
-
-    topHooks:
-      buildTop(
-        hooks,
-      ),
-
-    longestRunningAd:
-      longest,
-
-    reach: {
-      status:
-        "unavailable",
-
-      reason:
-        "The current public source does not expose a reliable per-ad reach figure to Zooptrack.",
-    },
-  };
-}
-
 function mapCreative(
   row: any,
   markets: any[],
   languages: any[],
 ): CompetitorAd & {
   brandId?: string | null;
-  dataProvenance?: Record<
-    string,
-    DataSource
-  >;
+  dataProvenance?:
+    | Record<
+        string,
+        DataSource
+      >
+    | Record<
+        string,
+        unknown
+      >;
   languages?: Array<{
     code: string;
     name: string;
     source: DataSource;
-    confidence?: number | null;
+    confidence?:
+      | number
+      | null;
   }>;
   markets?: Array<{
     countryCode: string;
-    countryName?: string | null;
-    stateName?: string | null;
-    cityName?: string | null;
-    regionName?: string | null;
+    countryName?:
+      | string
+      | null;
+    stateName?:
+      | string
+      | null;
+    cityName?:
+      | string
+      | null;
+    regionName?:
+      | string
+      | null;
     source: DataSource;
-    confidence?: number | null;
+    confidence?:
+      | number
+      | null;
   }>;
 } {
-  const creativeMarkets =
+  const attachedMarkets =
     markets.filter(
-      (market) =>
-        market.creative_id ===
+      (item) =>
+        item.creative_id ===
         row.id,
     );
 
-  const creativeLanguages =
+  const attachedLanguages =
     languages.filter(
-      (language) =>
-        language.creative_id ===
+      (item) =>
+        item.creative_id ===
         row.id,
     );
 
@@ -372,7 +241,7 @@ function mapCreative(
       "unknown",
 
     country:
-      creativeMarkets[0]
+      attachedMarkets[0]
         ?.country ??
       null,
 
@@ -483,32 +352,6 @@ function mapCreative(
       row.transcript_status ??
       "not_video",
 
-    metricSources: {
-      creativeScore:
-        "unavailable",
-
-      longevityScore:
-        "derived",
-
-      relevanceScore:
-        "unavailable",
-
-      engagementPotentialScore:
-        "unavailable",
-
-      reach:
-        "unavailable",
-
-      clicks:
-        "unavailable",
-
-      ctr:
-        "unavailable",
-
-      impressions:
-        "unavailable",
-    },
-
     longevityScore:
       undefined,
 
@@ -517,6 +360,25 @@ function mapCreative(
 
     engagementPotentialScore:
       undefined,
+
+    metricSources: {
+      creativeScore:
+        "unavailable",
+      longevityScore:
+        "derived",
+      relevanceScore:
+        "unavailable",
+      engagementPotentialScore:
+        "unavailable",
+      reach:
+        "unavailable",
+      clicks:
+        "unavailable",
+      ctr:
+        "unavailable",
+      impressions:
+        "unavailable",
+    },
 
     intelligence:
       undefined,
@@ -534,21 +396,18 @@ function mapCreative(
       {},
 
     languages:
-      creativeLanguages.map(
+      attachedLanguages.map(
         (item) => ({
           code:
             item.language_code,
-
           name:
             item.language_name ??
             item.language_code,
-
           source:
             item.source ===
             "provider"
               ? "provider"
               : "heuristic",
-
           confidence:
             item.confidence ??
             null,
@@ -556,39 +415,97 @@ function mapCreative(
       ),
 
     markets:
-      creativeMarkets.map(
+      attachedMarkets.map(
         (item) => ({
           countryCode:
             item.country,
-
           countryName:
             item.country_name ??
             null,
-
           stateName:
             item.state_name ??
             null,
-
           cityName:
             item.city_name ??
             null,
-
           regionName:
             item.region ??
             null,
-
           source:
             item.source ===
             "provider"
               ? "provider"
               : "derived",
-
           confidence:
             item.confidence ??
             null,
         }),
       ),
-  } as any;
+  } as CompetitorAd & {
+    brandId?: string | null;
+    dataProvenance?: Record<
+      string,
+      unknown
+    >;
+    languages?: Array<{
+      code: string;
+      name: string;
+      source: DataSource;
+      confidence?:
+        | number
+        | null;
+    }>;
+    markets?: Array<{
+      countryCode: string;
+      countryName?: string | null;
+      stateName?: string | null;
+      cityName?: string | null;
+      regionName?: string | null;
+      source: DataSource;
+      confidence?:
+        | number
+        | null;
+    }>;
+  };
+}
+
+function emptyResult(
+  page: number,
+  limit: number,
+) {
+  return {
+    ads: [] as any[],
+    total: 0,
+    page,
+    limit,
+    totalPages: 0,
+    languages: [],
+    markets: [],
+    lastUpdatedAt: null,
+    summary: {
+      totalAds: 0,
+      activeAds: 0,
+      inactiveAds: 0,
+      unknownAds: 0,
+      videoAds: 0,
+      imageAds: 0,
+      carouselAds: 0,
+      creatorAds: 0,
+      averageRunningDays: 0,
+      longestRunningDays: 0,
+    } satisfies SearchSummary,
+    intelligence: {
+      topCreators: [],
+      topOffers: [],
+      topHooks: [],
+      longestRunningAd: null,
+      reach: {
+        status: "unavailable" as const,
+        reason:
+          "The current public source does not expose a reliable per-ad reach figure to Zooptrack.",
+      },
+    },
+  };
 }
 
 export async function searchGlobalAdsAccurate(
@@ -605,50 +522,137 @@ export async function searchGlobalAdsAccurate(
     createGlobalServiceClient();
 
   const query =
-    input.query.trim();
+    normalizeText(
+      input.query,
+    );
 
   const country =
-    input.country
-      .trim()
-      .toUpperCase();
+    normalizeText(
+      input.country ||
+        "IN",
+    ).toUpperCase();
 
-  /*
-   * First determine which creatives are actually
-   * associated with the requested country.
-   *
-   * This is what the old search implementation
-   * explicitly did not do. 
-   */
-  const {
-    data: marketRows,
-    error: marketError,
-  } =
-    await client
-      .from(
-        "ad_intelligence_markets",
-      )
-      .select(
-        "creative_id",
-      )
-      .eq(
-        "country",
-        country,
-      );
-
-  if (marketError) {
-    throw new Error(
-      `Failed to resolve country results: ${marketError.message}`,
+  if (
+    query.length <
+      2
+  ) {
+    return emptyResult(
+      input.page,
+      input.limit,
     );
   }
 
-  const creativeIds =
+  /*
+   * The RPC performs the expensive global work in PostgreSQL:
+   * country eligibility, global counts, longevity and intelligence.
+   */
+  const {
+    data:
+      metricsData,
+    error:
+      metricsError,
+  } =
+    await client.rpc(
+      "adspy_search_metrics",
+      {
+        p_query:
+          query,
+        p_country:
+          country,
+        p_platform:
+          input.platform,
+        p_mode:
+          input.mode,
+      },
+    );
+
+  if (
+    metricsError
+  ) {
+    throw new Error(
+      `AdSpy metrics failed: ${metricsError.message}`,
+    );
+  }
+
+  const metrics =
+    (
+      Array.isArray(
+        metricsData,
+      )
+        ? metricsData[0]
+        : metricsData
+    ) as
+      | MetricsRow
+      | null;
+
+  if (
+    !metrics ||
+    Number(
+      metrics.total_ads ??
+        0,
+    ) === 0
+  ) {
+    return emptyResult(
+      input.page,
+      input.limit,
+    );
+  }
+
+  /*
+   * Resolve ONLY the IDs for the requested page inside PostgreSQL.
+   *
+   * The previous implementation first downloaded every market
+   * row for the country and then passed thousands of UUIDs through
+   * PostgREST `.in("id", ...)`. That can produce HTTP 400 responses
+   * as the generated request becomes too large.
+   *
+   * The RPC keeps country filtering and pagination server-side.
+   */
+  const {
+    data:
+      pageIdRows,
+    error:
+      pageIdError,
+  } =
+    await client.rpc(
+      "adspy_search_page_ids",
+      {
+        p_query:
+          query,
+        p_country:
+          country,
+        p_platform:
+          input.platform,
+        p_mode:
+          input.mode,
+        p_page:
+          input.page,
+        p_limit:
+          input.limit,
+      },
+    );
+
+  if (
+    pageIdError
+  ) {
+    throw new Error(
+      `AdSpy page lookup failed: ${pageIdError.message}`,
+    );
+  }
+
+  const fetchedPageIds =
     Array.from(
       new Set(
         (
-          marketRows ??
-          []
+          (pageIdRows ??
+            []) as Array<{
+            creative_id:
+              string;
+          }>
         ).map(
-          (row: any) =>
+          (
+            row,
+          ) =>
             String(
               row.creative_id,
             ),
@@ -657,34 +661,13 @@ export async function searchGlobalAdsAccurate(
     );
 
   if (
-    creativeIds.length ===
+    fetchedPageIds.length ===
     0
   ) {
-    return {
-      ads: [],
-      total: 0,
-      page: input.page,
-      limit: input.limit,
-      totalPages: 0,
-      summary: {
-        totalAds: 0,
-        activeAds: 0,
-        inactiveAds: 0,
-        videoAds: 0,
-        imageAds: 0,
-        carouselAds: 0,
-        creatorAds: 0,
-        averageRunningDays: 0,
-        longestRunningDays: 0,
-      } satisfies SearchSummary,
-      intelligence:
-        deriveIntelligence(
-          [],
-        ),
-      languages: [],
-      markets: [],
-      lastUpdatedAt: null,
-    };
+    return emptyResult(
+      input.page,
+      input.limit,
+    );
   }
 
   let creativeQuery =
@@ -692,20 +675,13 @@ export async function searchGlobalAdsAccurate(
       .from(
         "ad_intelligence_creatives",
       )
-      .select("*")
-      .eq(
-        "platform",
-        input.platform,
+      .select(
+        "*",
       )
       .in(
         "id",
-        creativeIds,
+        fetchedPageIds,
       );
-
-  const escaped =
-    escapeLike(
-      query,
-    );
 
   if (
     input.mode ===
@@ -714,161 +690,75 @@ export async function searchGlobalAdsAccurate(
     creativeQuery =
       creativeQuery.ilike(
         "advertiser_name",
-        `%${escaped}%`,
+        `%${query.replace(
+          /[%_,]/g,
+          " ",
+        )}%`,
       );
   } else {
+    const safe =
+      query.replace(
+        /[%_,]/g,
+        " ",
+      );
+
     creativeQuery =
       creativeQuery.or(
         [
-          `advertiser_name.ilike.%${escaped}%`,
-          `creator_name.ilike.%${escaped}%`,
-          `headline.ilike.%${escaped}%`,
-          `product_name.ilike.%${escaped}%`,
-          `primary_text.ilike.%${escaped}%`,
-          `description.ilike.%${escaped}%`,
-          `offer.ilike.%${escaped}%`,
-          `landing_page_url.ilike.%${escaped}%`,
+          `advertiser_name.ilike.%${safe}%`,
+          `creator_name.ilike.%${safe}%`,
+          `headline.ilike.%${safe}%`,
+          `product_name.ilike.%${safe}%`,
+          `primary_text.ilike.%${safe}%`,
+          `description.ilike.%${safe}%`,
+          `offer.ilike.%${safe}%`,
+          `landing_page_url.ilike.%${safe}%`,
         ].join(","),
       );
   }
 
   const {
-    data: allRows,
+    data:
+      pageRows,
     error:
-      creativeError,
+      pageError,
   } =
     await creativeQuery
       .order(
         "is_currently_active",
         {
-          ascending: false,
-          nullsFirst: false,
+          ascending:
+            false,
+          nullsFirst:
+            false,
         },
       )
       .order(
         "last_seen_at",
         {
-          ascending: false,
-          nullsFirst: false,
+          ascending:
+            false,
+          nullsFirst:
+            false,
         },
       );
 
-  if (creativeError) {
+  if (
+    pageError
+  ) {
     throw new Error(
-      `Accurate global search failed: ${creativeError.message}`,
+      `AdSpy page query failed: ${pageError.message}`,
     );
   }
 
   const rows =
-    allRows ?? [];
-
-  /*
-   * Calculate global statistics from the entire
-   * filtered dataset, not just page 1.
-   */
-  const activeRows =
-    rows.filter(
-      (row: any) =>
-        row.is_currently_active !==
-        false,
-    );
-
-  const videoAds =
-    rows.filter(
-      (row: any) =>
-        row.creative_type ===
-        "video",
-    ).length;
-
-  const imageAds =
-    rows.filter(
-      (row: any) =>
-        row.creative_type ===
-        "image",
-    ).length;
-
-  const carouselAds =
-    rows.filter(
-      (row: any) =>
-        row.creative_type ===
-        "carousel",
-    ).length;
-
-  const creatorAds =
-    rows.filter(
-      (row: any) =>
-        Boolean(
-          String(
-            row.creator_name ??
-              "",
-          ).trim(),
-        ),
-    ).length;
-
-  const running =
-    rows
-      .map(
-        runningDays,
-      )
-      .filter(
-        (
-          value,
-        ): value is number =>
-          typeof value ===
-            "number" &&
-          Number.isFinite(
-            value,
-          ),
-      );
-
-  const averageRunningDays =
-    running.length
-      ? running.reduce(
-          (
-            sum,
-            value,
-          ) =>
-            sum + value,
-          0,
-        ) /
-        running.length
-      : 0;
-
-  const longestRunningDays =
-    running.length
-      ? Math.max(
-          ...running,
-        )
-      : 0;
-
-  const total =
-    rows.length;
-
-  const totalPages =
-    total > 0
-      ? Math.ceil(
-          total /
-            input.limit,
-        )
-      : 0;
-
-  const from =
-    Math.max(
-      0,
-      input.page - 1,
-    ) *
-    input.limit;
-
-  const pageRows =
-    rows.slice(
-      from,
-      from + input.limit,
-    );
+    pageRows ?? [];
 
   const pageIds =
-    pageRows.map(
-      (row: any) =>
-        row.id,
+    rows.map(
+      (
+        row: any,
+      ) => row.id,
     );
 
   let markets: any[] =
@@ -881,25 +771,33 @@ export async function searchGlobalAdsAccurate(
     pageIds.length
   ) {
     const [
-      marketResult,
-      languageResult,
+      marketsResult,
+      languagesResult,
     ] =
       await Promise.all([
         client
           .from(
             "ad_intelligence_markets",
           )
-          .select("*")
+          .select(
+            "*",
+          )
           .in(
             "creative_id",
             pageIds,
+          )
+          .eq(
+            "country",
+            country,
           ),
 
         client
           .from(
             "ad_intelligence_languages",
           )
-          .select("*")
+          .select(
+            "*",
+          )
           .in(
             "creative_id",
             pageIds,
@@ -907,33 +805,35 @@ export async function searchGlobalAdsAccurate(
       ]);
 
     if (
-      marketResult.error
+      marketsResult.error
     ) {
       throw new Error(
-        `Failed to load markets: ${marketResult.error.message}`,
+        `AdSpy market enrichment failed: ${marketsResult.error.message}`,
       );
     }
 
     if (
-      languageResult.error
+      languagesResult.error
     ) {
       throw new Error(
-        `Failed to load languages: ${languageResult.error.message}`,
+        `AdSpy language enrichment failed: ${languagesResult.error.message}`,
       );
     }
 
     markets =
-      marketResult.data ??
+      marketsResult.data ??
       [];
 
     languages =
-      languageResult.data ??
+      languagesResult.data ??
       [];
   }
 
   const ads =
-    pageRows.map(
-      (row: any) =>
+    rows.map(
+      (
+        row: any,
+      ) =>
         mapCreative(
           row,
           markets,
@@ -941,95 +841,179 @@ export async function searchGlobalAdsAccurate(
         ),
     );
 
-  const latest =
-    rows.reduce<
-      string | null
-    >(
-      (
-        latestValue,
-        row: any,
-      ) => {
-        const value =
-          row.updated_at ??
-          row.last_seen_at ??
-          row.first_seen_at ??
-          null;
-
-        if (!value) {
-          return latestValue;
-        }
-
-        if (!latestValue) {
-          return String(
-            value,
-          );
-        }
-
-        return new Date(
-          value,
-        ).getTime() >
-          new Date(
-            latestValue,
-          ).getTime()
-          ? String(value)
-          : latestValue;
-      },
-      null,
+  const total =
+    Number(
+      metrics.total_ads ??
+        0,
     );
+
+  const totalPages =
+    total > 0
+      ? Math.ceil(
+          total /
+            input.limit,
+        )
+      : 0;
+
+  const longest =
+    rows
+      .map(
+        (
+          row: any,
+        ) => ({
+          advertiserName:
+            row.advertiser_name ??
+            null,
+          headline:
+            row.headline ??
+            null,
+          runningDays:
+            runningDays(
+              row,
+            ),
+        }),
+      )
+      .filter(
+        (
+          row,
+        ) =>
+          typeof row.runningDays ===
+            "number" &&
+          Number.isFinite(
+            row.runningDays,
+          ),
+      )
+      .sort(
+        (
+          a,
+          b,
+        ) =>
+          Number(
+            b.runningDays ??
+              0,
+          ) -
+          Number(
+            a.runningDays ??
+              0,
+          ),
+      )[0] ??
+    null;
+
+  /*
+   * The global RPC gives us the actual intelligence.
+   * We only use the current page to preserve the complete
+   * creative record payload.
+   */
+  const intelligence: Intelligence =
+    {
+      topCreators:
+        metrics.top_creators ??
+        [],
+
+      topOffers:
+        metrics.top_offers ??
+        [],
+
+      topHooks:
+        metrics.top_hooks ??
+        [],
+
+      longestRunningAd:
+        longest ?? {
+          advertiserName:
+            null,
+          headline:
+            null,
+          runningDays:
+            Number(
+              metrics.longest_running_days ??
+                0,
+            ) ||
+            null,
+        },
+
+      reach: {
+        status:
+          "unavailable",
+
+        reason:
+          "The current public source does not expose a reliable per-ad reach figure to Zooptrack.",
+      },
+    };
 
   return {
     ads,
-
     total,
-
     page:
       input.page,
-
     limit:
       input.limit,
-
     totalPages,
-
+    languages,
+    markets,
     lastUpdatedAt:
-      latest,
-
+      metrics.last_observed_at ??
+      null,
     summary: {
       totalAds:
         total,
 
       activeAds:
-        activeRows.length,
-
-      inactiveAds:
-        Math.max(
-          0,
-          total -
-            activeRows.length,
+        Number(
+          metrics.active_ads ??
+            0,
         ),
 
-      videoAds,
+      inactiveAds:
+        Number(
+          metrics.inactive_ads ??
+            0,
+        ),
 
-      imageAds,
+      unknownAds:
+        Number(
+          metrics.unknown_ads ??
+            0,
+        ),
 
-      carouselAds,
+      videoAds:
+        Number(
+          metrics.video_ads ??
+            0,
+        ),
 
-      creatorAds,
+      imageAds:
+        Number(
+          metrics.image_ads ??
+            0,
+        ),
+
+      carouselAds:
+        Number(
+          metrics.carousel_ads ??
+            0,
+        ),
+
+      creatorAds:
+        Number(
+          metrics.creator_ads ??
+            0,
+        ),
 
       averageRunningDays:
         Math.round(
-          averageRunningDays,
+          Number(
+            metrics.average_running_days ??
+              0,
+          ),
         ),
 
-      longestRunningDays,
+      longestRunningDays:
+        Number(
+          metrics.longest_running_days ??
+            0,
+        ),
     } satisfies SearchSummary,
-
-    intelligence:
-      deriveIntelligence(
-        rows,
-      ),
-
-    languages,
-
-    markets,
+    intelligence,
   };
 }

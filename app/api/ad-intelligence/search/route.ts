@@ -1,53 +1,145 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
-import { searchGlobalAds } from "@/lib/ad-intelligence/global/store";
+import { searchGlobalAdsAccurate } from "@/lib/ad-intelligence/global/accurate-search";
 import type { AdPlatform } from "@/lib/ad-intelligence/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function normalizePlatform(value: string | null): AdPlatform {
-  if (value === "google" || value === "linkedin") return value;
+function normalizePlatform(
+  value: string | null,
+): AdPlatform {
+  if (
+    value === "google" ||
+    value === "linkedin"
+  ) {
+    return value;
+  }
+
   return "meta";
 }
 
-function normalizeMode(value: string | null): "advertiser" | "keyword" {
-  return value === "keyword" ? "keyword" : "advertiser";
+function normalizeMode(
+  value: string | null,
+): "advertiser" | "keyword" {
+  return value === "keyword"
+    ? "keyword"
+    : "advertiser";
 }
 
-export async function GET(request: NextRequest) {
-  try {
-    const auth = await createServerAuthClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await auth.auth.getUser();
+function normalizeCountry(
+  value: string | null,
+) {
+  const country =
+    (value ?? "IN")
+      .trim()
+      .toUpperCase();
 
-    if (authError || !user) {
+  return /^[A-Z]{2}$/.test(country)
+    ? country
+    : "IN";
+}
+
+export async function GET(
+  request: NextRequest,
+) {
+  const requestStartedAt =
+    Date.now();
+
+  try {
+    const auth =
+      await createServerAuthClient();
+
+    const {
+      data: {
+        user,
+      },
+      error: authError,
+    } =
+      await auth.auth.getUser();
+
+    if (
+      authError ||
+      !user
+    ) {
       return NextResponse.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 },
+        {
+          success: false,
+          error: "Unauthorized",
+        },
+        {
+          status: 401,
+        },
       );
     }
 
-    const params = request.nextUrl.searchParams;
-    const query = (params.get("q") ?? "").trim();
-    const country = (params.get("country") ?? "IN").trim().toUpperCase();
-    const platform = normalizePlatform(params.get("platform"));
-    const mode = normalizeMode(params.get("mode"));
+    const params =
+      request.nextUrl.searchParams;
 
-    const rawPage = Number(params.get("page") ?? "1");
-    const rawLimit = Number(params.get("limit") ?? "24");
+    const query =
+      (
+        params.get("q") ?? ""
+      ).trim();
+
+    const country =
+      normalizeCountry(
+        params.get(
+          "country",
+        ),
+      );
+
+    const platform =
+      normalizePlatform(
+        params.get(
+          "platform",
+        ),
+      );
+
+    const mode =
+      normalizeMode(
+        params.get("mode"),
+      );
+
+    const rawPage =
+      Number(
+        params.get("page") ??
+          "1",
+      );
+
+    const rawLimit =
+      Number(
+        params.get("limit") ??
+          "24",
+      );
 
     const page =
-      Number.isFinite(rawPage) && rawPage >= 1 ? Math.floor(rawPage) : 1;
+      Number.isFinite(
+        rawPage,
+      ) &&
+      rawPage >= 1
+        ? Math.floor(
+            rawPage,
+          )
+        : 1;
+
     const limit =
-      Number.isFinite(rawLimit) && rawLimit >= 1
-        ? Math.min(60, Math.floor(rawLimit))
+      Number.isFinite(
+        rawLimit,
+      ) &&
+      rawLimit >= 1
+        ? Math.min(
+            60,
+            Math.floor(
+              rawLimit,
+            ),
+          )
         : 24;
 
-    if (query.length < 2) {
+    if (
+      query.length <
+      2
+    ) {
       return NextResponse.json({
         success: true,
         query,
@@ -63,6 +155,7 @@ export async function GET(request: NextRequest) {
           totalAds: 0,
           activeAds: 0,
           inactiveAds: 0,
+          unknownAds: 0,
           videoAds: 0,
           imageAds: 0,
           carouselAds: 0,
@@ -76,8 +169,10 @@ export async function GET(request: NextRequest) {
           topHooks: [],
           longestRunningAd: null,
           reach: {
-            status: "unavailable",
-            reason: "A public reach figure is not exposed reliably.",
+            status:
+              "unavailable",
+            reason:
+              "A public reach figure is not exposed reliably.",
           },
         },
         languages: [],
@@ -86,21 +181,23 @@ export async function GET(request: NextRequest) {
         isRefreshing: false,
         collectionJobId: null,
         collectionJob: null,
+        meta: {
+          durationMs:
+            Date.now() -
+            requestStartedAt,
+        },
       });
     }
 
-    // Search is deliberately read-only and fast.
-    // Source refresh/collection is initiated separately by the client
-    // through /api/ad-intelligence/refresh so a slow provider never blocks
-    // the first search response.
-    const result = await searchGlobalAds({
-      query,
-      country,
-      platform,
-      mode,
-      page,
-      limit,
-    });
+    const result =
+      await searchGlobalAdsAccurate({
+        query,
+        country,
+        platform,
+        mode,
+        page,
+        limit,
+      });
 
     return NextResponse.json({
       success: true,
@@ -112,26 +209,44 @@ export async function GET(request: NextRequest) {
       total: result.total,
       page: result.page,
       limit: result.limit,
-      totalPages: result.totalPages,
-      summary: result.summary,
-      intelligence: result.intelligence,
-      languages: result.languages,
-      markets: result.markets,
-      lastUpdatedAt: result.lastUpdatedAt,
+      totalPages:
+        result.totalPages,
+      summary:
+        result.summary,
+      intelligence:
+        result.intelligence,
+      languages:
+        result.languages,
+      markets:
+        result.markets,
+      lastUpdatedAt:
+        result.lastUpdatedAt,
       isRefreshing: false,
       collectionJobId: null,
       collectionJob: null,
+      meta: {
+        durationMs:
+          Date.now() -
+          requestStartedAt,
+      },
     });
   } catch (error) {
-    console.error("[AdSpy] Search failed:", error);
+    console.error(
+      "[AdSpy] Search failed:",
+      error,
+    );
 
     return NextResponse.json(
       {
         success: false,
         error:
-          error instanceof Error ? error.message : "AdSpy search failed.",
+          error instanceof Error
+            ? error.message
+            : "AdSpy search failed.",
       },
-      { status: 500 },
+      {
+        status: 500,
+      },
     );
   }
 }

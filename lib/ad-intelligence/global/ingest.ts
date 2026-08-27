@@ -27,6 +27,31 @@ function toDateOrNull(value: string | null | undefined): string | null {
   return Number.isFinite(t) ? new Date(t).toISOString() : null;
 }
 
+function earliestDate(
+  existing: string | null | undefined,
+  candidate: string | null | undefined,
+): string | null {
+  const existingDate =
+    toDateOrNull(existing);
+  const candidateDate =
+    toDateOrNull(candidate);
+
+  if (!existingDate) {
+    return candidateDate;
+  }
+
+  if (!candidateDate) {
+    return existingDate;
+  }
+
+  return (
+    new Date(candidateDate).getTime() <
+    new Date(existingDate).getTime()
+      ? candidateDate
+      : existingDate
+  );
+}
+
 function observationKey(input: { creativeId: string; country: string | null; region: string | null; language: string | null; publisherPlatform: string | null; day: string }): string {
   return [input.creativeId, input.day, input.country ?? "", input.region ?? "", input.language ?? "", input.publisherPlatform ?? ""].join("|");
 }
@@ -65,7 +90,98 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
   if (brandLookupError) throw new Error(`Brand lookup failed: ${brandLookupError.message}`);
   const brandIds = new Map<string, string>((brandRows ?? []).map((row: any) => [row.normalized_name, row.id]));
 
-  const creativeRows = ads.map((ad) => ({
+  /*
+   * Preserve historical first_seen_at.
+   *
+   * Meta will not expose the start date on every rendered card on
+   * every scrape. A later scrape must never erase a previously
+   * verified first_seen_at with null.
+   */
+  const externalKeys = Array.from(
+    new Set(
+      ads.map((ad) =>
+        buildExternalKey(ad),
+      ),
+    ),
+  );
+
+  let existingCreativeHistory: Array<{
+    platform: AdPlatform;
+    external_ad_key: string;
+    first_seen_at: string | null;
+    last_seen_at: string | null;
+  }> = [];
+
+  if (externalKeys.length) {
+    const {
+      data,
+      error,
+    } = await client
+      .from("ad_intelligence_creatives")
+      .select(
+        "platform,external_ad_key,first_seen_at,last_seen_at",
+      )
+      .in(
+        "external_ad_key",
+        externalKeys,
+      );
+
+    if (error) {
+      throw new Error(
+        `Creative history lookup failed: ${error.message}`,
+      );
+    }
+
+    existingCreativeHistory =
+      (data ?? []) as typeof existingCreativeHistory;
+  }
+
+  const existingCreativeHistoryMap =
+    new Map<
+      string,
+      {
+        first_seen_at: string | null;
+        last_seen_at: string | null;
+      }
+    >(
+      existingCreativeHistory.map(
+        (row) => [
+          `${row.platform}:${row.external_ad_key}`,
+          {
+            first_seen_at:
+              row.first_seen_at ??
+              null,
+            last_seen_at:
+              row.last_seen_at ??
+              null,
+          },
+        ],
+      ),
+    );
+
+  const creativeRows = ads.map((ad) => {
+    const externalAdKey =
+      buildExternalKey(ad);
+
+    const history =
+      existingCreativeHistoryMap.get(
+        `${ad.platform}:${externalAdKey}`,
+      );
+
+    const providerFirstSeen =
+      toDateOrNull(
+        ad.firstSeen,
+      );
+
+    const preservedFirstSeen =
+      earliestDate(
+        history?.first_seen_at ??
+          null,
+        providerFirstSeen,
+      );
+
+    return {
+
     brand_id: brandIds.get(normalize(ad.advertiserName)) ?? null,
     platform: ad.platform,
     external_ad_id: ad.id?.trim() || null,
@@ -94,9 +210,28 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
     transcript_status: ad.transcriptStatus ?? "not_video",
     metadata: { ...(ad.metadata ?? {}), publisherPlatforms: ad.publisherPlatforms ?? [] },
     intelligence: ad.intelligence ?? {},
-    first_seen_at: toDateOrNull(ad.firstSeen),
-    last_seen_at: toDateOrNull(ad.lastSeen) ?? now,
-    is_currently_active: ad.isActive ?? true,
+    /*
+     * first_seen_at is monotonic: only an earlier verified date
+     * can move it backwards. Missing provider dates never erase
+     * previously stored history.
+     */
+    first_seen_at:
+      preservedFirstSeen,
+
+    /*
+     * For an active ad, the latest observation is today. For an
+     * inactive ad, retain the provider end date when available,
+     * otherwise retain any previously known value.
+     */
+    last_seen_at:
+      (ad.isActive ?? true)
+        ? now
+        : toDateOrNull(ad.lastSeen) ??
+          history?.last_seen_at ??
+          now,
+
+    is_currently_active:
+      ad.isActive ?? true,
     data_provenance: {
       advertiser: "provider",
       creative: "provider",
@@ -106,7 +241,8 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
       market: (ad.metadata?.geoSource === "provider") ? "provider" : "unavailable",
       language: "heuristic",
     },
-  }));
+  };
+  });
 
   const { data: upsertedCreatives, error: creativeError } = await client.from("ad_intelligence_creatives")
     .upsert(creativeRows, { onConflict: "platform,external_ad_key" })

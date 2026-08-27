@@ -13,6 +13,7 @@ import {
 } from "@/lib/ad-intelligence/global/store";
 
 import type { AdPlatform } from "@/lib/ad-intelligence/types";
+import type { CollectionDepth } from "@/lib/ad-intelligence/provider";
 
 import { inngest } from "@/inngest/client";
 
@@ -25,7 +26,7 @@ const ACTIVE_STATUSES = [
   "normalizing",
   "enriching",
   "finalizing",
-];
+] as const;
 
 function normalizePlatform(
   value: string | null,
@@ -54,7 +55,7 @@ function isActiveStatus(
   return Boolean(
     status &&
       ACTIVE_STATUSES.includes(
-        status,
+        status as (typeof ACTIVE_STATUSES)[number],
       ),
   );
 }
@@ -175,8 +176,7 @@ export async function POST(
 
     /*
      * A completed/failed job may be eligible for another refresh.
-     * requestCollectionRefresh is atomic and has the server-side
-     * minimum-refresh guard.
+     * The store applies the refresh interval atomically.
      */
     if (
       job.status ===
@@ -191,19 +191,30 @@ export async function POST(
 
       job =
         refresh.job;
-
-      if (
-        refresh.shouldEnqueue
-      ) {
-        // The refresh below will claim and dispatch.
-      }
     }
+
+    /*
+     * Quick-first policy:
+     *
+     * - No previously discovered creatives -> quick Meta discovery.
+     * - Existing discovered creatives -> deep refresh.
+     *
+     * Non-Meta providers still receive "deep" because the current
+     * quick/deep implementation is Meta-specific.
+     */
+    const collectionDepth: CollectionDepth =
+      platform === "meta" &&
+      Number(
+        job.discoveredAds ?? 0,
+      ) === 0
+        ? "quick"
+        : "deep";
 
     /*
      * Queue -> claim -> dispatch.
      *
-     * Multiple browser tabs/users can hit this endpoint safely:
-     * claimCollectionDispatch prevents duplicate active dispatch.
+     * claimCollectionDispatch prevents duplicate active dispatches
+     * when multiple tabs/users hit the endpoint together.
      */
     if (
       job.status ===
@@ -229,32 +240,44 @@ export async function POST(
         await inngest.send({
           name:
             "zooptrack/ad-intelligence.collection.requested",
+
           data: {
             jobId:
               latest.id,
+
             query:
               latest.query,
+
             country:
               latest.country,
+
             platform:
               latest.platform,
+
             mode:
               latest.mode,
+
             collectionKey:
               buildCollectionKey({
                 query:
                   latest.query,
+
                 country:
                   latest.country,
+
                 platform:
                   latest.platform,
+
                 mode:
                   latest.mode,
               }),
+
+            collectionDepth,
           },
         });
 
-        job = latest;
+        job =
+          latest;
       }
     }
 
@@ -268,13 +291,18 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      job: mapJob(
-        finalJob,
-      ),
+
+      job:
+        mapJob(
+          finalJob,
+        ),
+
       isRefreshing:
         isActiveStatus(
           finalJob.status,
         ),
+
+      collectionDepth,
     });
   } catch (error) {
     console.error(

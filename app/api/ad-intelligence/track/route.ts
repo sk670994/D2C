@@ -24,6 +24,10 @@ import {
   inngest,
 } from "@/inngest/client";
 
+import type {
+  CollectionDepth,
+} from "@/lib/ad-intelligence/provider";
+
 const PLATFORMS: AdPlatform[] = [
   "meta",
   "google",
@@ -111,22 +115,129 @@ function mapJob(
     stage: job.stage,
     discoveredAds:
       Number(
-        job.discoveredAds ??
-          0,
+        job.discoveredAds ?? 0,
       ),
     normalizedAds:
       Number(
-        job.normalizedAds ??
-          0,
+        job.normalizedAds ?? 0,
       ),
     persistedAds:
       Number(
-        job.persistedAds ??
-          0,
+        job.persistedAds ?? 0,
       ),
     errorMessage:
       job.errorMessage ??
       null,
+  };
+}
+
+function chooseCollectionDepth(
+  platform: AdPlatform,
+  job: any,
+): CollectionDepth {
+  /*
+   * Track is an explicit user action. For a brand with no
+   * discovered creatives yet, use quick discovery first so
+   * the initial tracked dataset becomes available sooner.
+   *
+   * Existing tracked data gets a normal deep refresh.
+   */
+  if (
+    platform === "meta" &&
+    Number(
+      job.discoveredAds ?? 0,
+    ) === 0
+  ) {
+    return "quick";
+  }
+
+  return "deep";
+}
+
+async function dispatchIfQueued(
+  job: any,
+  collectionDepth: CollectionDepth,
+) {
+  if (
+    job.status !==
+    "queued"
+  ) {
+    return {
+      job,
+      dispatched: false,
+    };
+  }
+
+  const claimed =
+    await claimCollectionDispatch(
+      job.id,
+    );
+
+  if (!claimed) {
+    const current =
+      await getCollectionJob(
+        job.id,
+      );
+
+    return {
+      job: current ?? job,
+      dispatched: false,
+    };
+  }
+
+  const latest =
+    await getCollectionJob(
+      job.id,
+    );
+
+  if (!latest) {
+    throw new Error(
+      "Collection job disappeared after tracking.",
+    );
+  }
+
+  await inngest.send({
+    name:
+      "zooptrack/ad-intelligence.collection.requested",
+
+    data: {
+      jobId:
+        latest.id,
+
+      query:
+        latest.query,
+
+      country:
+        latest.country,
+
+      platform:
+        latest.platform,
+
+      mode:
+        latest.mode,
+
+      collectionKey:
+        buildCollectionKey({
+          query:
+            latest.query,
+
+          country:
+            latest.country,
+
+          platform:
+            latest.platform,
+
+          mode:
+            latest.mode,
+        }),
+
+      collectionDepth,
+    },
+  });
+
+  return {
+    job: latest,
+    dispatched: true,
   };
 }
 
@@ -243,14 +354,18 @@ export async function GET(
 
     return NextResponse.json({
       success: true,
+
       tracked:
         Boolean(data),
+
       id:
         data?.id ??
         null,
+
       lastCollectedAt:
         data?.last_collected_at ??
         null,
+
       refreshHours:
         data?.refresh_hours ??
         24,
@@ -340,97 +455,56 @@ export async function POST(
     await trackBrand({
       userId:
         user.id,
+
       query,
+
       country,
+
       platform,
     });
 
     let job =
-      await getOrCreateCollectionJob(
-        {
-          query,
-          country,
-          platform,
-          mode:
-            "advertiser",
-        },
+      await getOrCreateCollectionJob({
+        query,
+        country,
+        platform,
+        mode:
+          "advertiser",
+      });
+
+    const collectionDepth =
+      chooseCollectionDepth(
+        platform,
+        job,
       );
 
     let dispatched =
       false;
 
-    if (
-      job.status ===
-      "queued"
-    ) {
-      const claimed =
-        await claimCollectionDispatch(
-          job.id,
-        );
+    const dispatchResult =
+      await dispatchIfQueued(
+        job,
+        collectionDepth,
+      );
 
-      if (claimed) {
-        const latest =
-          await getCollectionJob(
-            job.id,
-          );
+    job =
+      dispatchResult.job;
 
-        if (!latest) {
-          throw new Error(
-            "Collection job disappeared after tracking.",
-          );
-        }
-
-        await inngest.send({
-          name:
-            "zooptrack/ad-intelligence.collection.requested",
-
-          data: {
-            jobId:
-              latest.id,
-
-            query:
-              latest.query,
-
-            country:
-              latest.country,
-
-            platform:
-              latest.platform,
-
-            mode:
-              latest.mode,
-
-            collectionKey:
-              buildCollectionKey({
-                query:
-                  latest.query,
-
-                country:
-                  latest.country,
-
-                platform:
-                  latest.platform,
-
-                mode:
-                  latest.mode,
-              }),
-          },
-        });
-
-        job =
-          latest;
-
-        dispatched =
-          true;
-      }
-    }
+    dispatched =
+      dispatchResult.dispatched;
 
     return NextResponse.json({
       success: true,
+
       tracked: true,
+
       jobId:
         job.id,
+
       dispatched,
+
+      collectionDepth,
+
       job:
         mapJob(job),
     });

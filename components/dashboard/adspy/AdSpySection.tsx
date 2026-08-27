@@ -507,6 +507,11 @@ export function AdSpySection({
   const searchAbortRef =
     useRef<AbortController | null>(null);
 
+  const previousPersistedAdsRef =
+    useRef(0);
+
+  const activePolledJobIdRef =
+    useRef<string | null>(null);
   const mountedRef =
     useRef(true);
 
@@ -759,7 +764,126 @@ export function AdSpySection({
     },
     [],
   );
+const refreshIndexedResults = useCallback(
+  async ({
+    searchQuery,
+    searchCountry,
+    searchPlatform,
+    searchMode,
+    requestId,
+  }: {
+    searchQuery: string;
+    searchCountry: string;
+    searchPlatform: Platform;
+    searchMode: SearchMode;
+    requestId: number;
+  }) => {
+    try {
+      const url = new URL(
+        "/api/ad-intelligence/search",
+        window.location.origin,
+      );
 
+      url.searchParams.set(
+        "q",
+        searchQuery,
+      );
+
+      url.searchParams.set(
+        "country",
+        searchCountry,
+      );
+
+      url.searchParams.set(
+        "platform",
+        searchPlatform,
+      );
+
+      url.searchParams.set(
+        "mode",
+        searchMode,
+      );
+
+      url.searchParams.set(
+        "page",
+        "1",
+      );
+
+      url.searchParams.set(
+        "limit",
+        "24",
+      );
+
+      const response =
+        await fetch(
+          url,
+          {
+            cache: "no-store",
+          },
+        );
+
+      const data =
+        (await response.json()) as SearchResponse;
+
+      if (
+        !response.ok ||
+        !data.success
+      ) {
+        return;
+      }
+
+      if (
+        !mountedRef.current ||
+        requestId !==
+          requestIdRef.current
+      ) {
+        return;
+      }
+
+      setAds(
+        Array.isArray(data.ads)
+          ? data.ads
+          : [],
+      );
+
+      setSummary(
+        data.summary ??
+          EMPTY_SUMMARY,
+      );
+
+      setIntelligence(
+        data.intelligence ??
+          null,
+      );
+
+      setLastUpdatedAt(
+        data.lastUpdatedAt ??
+          null,
+      );
+
+      setPagination({
+        page:
+          data.page ?? 1,
+        total:
+          data.total ?? 0,
+        totalPages:
+          data.totalPages ??
+          0,
+      });
+
+      onResultCountChange?.(
+        data.total ?? 0,
+      );
+    } catch {
+      /*
+       * Progressive refresh is deliberately best effort.
+       * Existing visible results must never disappear because
+       * one background poll failed.
+       */
+    }
+  },
+  [onResultCountChange],
+);
   const search = useCallback(
     async (
       page = 1,
@@ -932,8 +1056,24 @@ export function AdSpySection({
           searchPlatform: platform,
         });
 
+        /*
+         * SEARCH is read-only for an already indexed dataset.
+         *
+         * Only a first-page search with zero indexed results is
+         * allowed to kick off the quick-first collection flow.
+         * Existing brands must not trigger a scraper merely because
+         * the user searched them.
+         *
+         * Explicit callers can still suppress the background
+         * collection with skipBackgroundRefresh.
+         */
+        const shouldStartInitialCollection =
+          page === 1 &&
+          (data.total ?? 0) === 0 &&
+          !options?.skipBackgroundRefresh;
+
         if (
-          !options?.skipBackgroundRefresh
+          shouldStartInitialCollection
         ) {
           void refreshCollection({
             searchQuery: q,
@@ -986,93 +1126,205 @@ export function AdSpySection({
     ],
   );
 
-  useEffect(() => {
-    const status = job?.status;
+useEffect(() => {
+  const status = job?.status;
 
+  if (
+    !job?.id ||
+    !isActiveJobStatus(status)
+  ) {
+    return;
+  }
+
+  const searchQuery =
+    input.trim();
+
+  const searchCountry =
+    countryInput
+      .trim()
+      .toUpperCase();
+
+  const searchPlatform =
+    platform;
+
+  const searchMode =
+    mode;
+
+  if (
+    searchQuery.length <
+      2 ||
+    !/^[A-Z]{2}$/.test(
+      searchCountry,
+    )
+  ) {
+    return;
+  }
+
+  let cancelled = false;
+
+  let polling = false;
+
+  const poll = async () => {
     if (
-      !job?.id ||
-      !isActiveJobStatus(status)
+      cancelled ||
+      polling
     ) {
       return;
     }
 
-    let cancelled = false;
+    polling = true;
 
-    const poll = async () => {
-      if (cancelled) {
+    try {
+      const response =
+        await fetch(
+          `/api/ad-intelligence/search/status/${job.id}`,
+          {
+            cache: "no-store",
+          },
+        );
+
+      const data =
+        (await response.json()) as {
+          success?: boolean;
+          job?: Job;
+        };
+
+      if (
+        cancelled ||
+        !response.ok ||
+        !data.success ||
+        !data.job
+      ) {
         return;
       }
 
-      try {
-        const response =
-          await fetch(
-            `/api/ad-intelligence/search/status/${job.id}`,
-            {
-              cache: "no-store",
-            },
-          );
+      const nextJob =
+        data.job;
 
-        const data =
-          (await response.json()) as {
-            success?: boolean;
-            job?: Job;
-          };
-
-        if (
-          !response.ok ||
-          !data.success ||
-          !data.job
-        ) {
-          return;
-        }
-
-        if (cancelled) {
-          return;
-        }
-
-        const nextJob =
-          data.job;
-
-        setJob(nextJob);
-
-        if (
-          ["complete", "failed"].includes(
-            nextJob.status,
-          )
-        ) {
-          await search(
-            1,
-            input,
-            {
-              skipBackgroundRefresh: true,
-            },
-          );
-        }
-      } catch {
-        // Polling is best effort. Existing results stay visible.
+      if (
+        cancelled ||
+        !mountedRef.current
+      ) {
+        return;
       }
-    };
 
-    void poll();
-
-    const timer =
-      window.setInterval(
-        () => {
-          void poll();
-        },
-        3000,
+      setJob(
+        nextJob,
       );
 
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [
-    input,
-    job?.id,
-    job?.status,
-    search,
-  ]);
+      const persistedAds =
+        nextJob.persistedAds ??
+        0;
+
+      /*
+       * The baseline belongs to the current collection job and must
+       * survive React renders. The ref is reset only when the job ID
+       * changes, preventing duplicate refreshes from effect reruns.
+       */
+      if (
+        activePolledJobIdRef.current !==
+        nextJob.id
+      ) {
+        activePolledJobIdRef.current =
+          nextJob.id;
+
+        previousPersistedAdsRef.current =
+          persistedAds;
+
+        return;
+      }
+
+      const previousPersistedAds =
+        previousPersistedAdsRef.current;
+
+      const persistedAdsChanged =
+        persistedAds >
+        previousPersistedAds;
+
+      if (
+        persistedAdsChanged
+      ) {
+        previousPersistedAdsRef.current =
+          persistedAds;
+      }
+
+      /*
+       * The important part:
+       *
+       * Whenever the collector has persisted new creatives,
+       * fetch the currently indexed search results immediately.
+       *
+       * We do NOT wait for "complete".
+       */
+      if (
+        persistedAdsChanged
+      ) {
+        await refreshIndexedResults({
+          searchQuery,
+          searchCountry,
+          searchPlatform,
+          searchMode,
+          requestId:
+            requestIdRef.current,
+        });
+      }
+
+      /*
+       * Final refresh guarantees that the final global
+       * statistics are visible after collection completes.
+       */
+      if (
+        nextJob.status ===
+          "complete" ||
+        nextJob.status ===
+          "failed"
+      ) {
+        await refreshIndexedResults({
+          searchQuery,
+          searchCountry,
+          searchPlatform,
+          searchMode,
+          requestId:
+            requestIdRef.current,
+        });
+
+        return;
+      }
+    } catch {
+      /*
+       * Polling is best effort.
+       * Never remove already-visible results.
+       */
+    } finally {
+      polling = false;
+    }
+  };
+
+  void poll();
+
+  const timer =
+    window.setInterval(
+      () => {
+        void poll();
+      },
+      1800,
+    );
+
+  return () => {
+    cancelled = true;
+    window.clearInterval(
+      timer,
+    );
+  };
+}, [
+  countryInput,
+  input,
+  job?.id,
+  job?.status,
+  mode,
+  platform,
+  refreshIndexedResults,
+]);
 
   const filteredAds = useMemo(() => {
     const list = [...ads];
