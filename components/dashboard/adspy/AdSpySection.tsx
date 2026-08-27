@@ -507,11 +507,8 @@ export function AdSpySection({
   const searchAbortRef =
     useRef<AbortController | null>(null);
 
-  const previousPersistedAdsRef =
-    useRef(0);
-
-  const activePolledJobIdRef =
-    useRef<string | null>(null);
+    const previousPersistedAdsRef =
+  useRef(0);
   const mountedRef =
     useRef(true);
 
@@ -1056,24 +1053,8 @@ const refreshIndexedResults = useCallback(
           searchPlatform: platform,
         });
 
-        /*
-         * SEARCH is read-only for an already indexed dataset.
-         *
-         * Only a first-page search with zero indexed results is
-         * allowed to kick off the quick-first collection flow.
-         * Existing brands must not trigger a scraper merely because
-         * the user searched them.
-         *
-         * Explicit callers can still suppress the background
-         * collection with skipBackgroundRefresh.
-         */
-        const shouldStartInitialCollection =
-          page === 1 &&
-          (data.total ?? 0) === 0 &&
-          !options?.skipBackgroundRefresh;
-
         if (
-          shouldStartInitialCollection
+          !options?.skipBackgroundRefresh
         ) {
           void refreshCollection({
             searchQuery: q,
@@ -1216,37 +1197,15 @@ useEffect(() => {
         nextJob.persistedAds ??
         0;
 
-      /*
-       * The baseline belongs to the current collection job and must
-       * survive React renders. The ref is reset only when the job ID
-       * changes, preventing duplicate refreshes from effect reruns.
-       */
-      if (
-        activePolledJobIdRef.current !==
-        nextJob.id
-      ) {
-        activePolledJobIdRef.current =
-          nextJob.id;
-
-        previousPersistedAdsRef.current =
-          persistedAds;
-
-        return;
-      }
-
       const previousPersistedAds =
         previousPersistedAdsRef.current;
 
       const persistedAdsChanged =
-        persistedAds >
+        persistedAds !==
         previousPersistedAds;
 
-      if (
-        persistedAdsChanged
-      ) {
-        previousPersistedAdsRef.current =
-          persistedAds;
-      }
+      previousPersistedAdsRef.current =
+        persistedAds;
 
       /*
        * The important part:
@@ -1320,6 +1279,7 @@ useEffect(() => {
   countryInput,
   input,
   job?.id,
+  job?.persistedAds,
   job?.status,
   mode,
   platform,

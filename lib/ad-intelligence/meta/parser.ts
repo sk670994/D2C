@@ -145,6 +145,39 @@ const HINDI_MONTHS: Record<string, number> = {
   दिसम्बर: 11,
 };
 
+const DEVANAGARI_DIGITS: Record<string, string> = {
+  "०": "0",
+  "१": "1",
+  "२": "2",
+  "३": "3",
+  "४": "4",
+  "५": "5",
+  "६": "6",
+  "७": "7",
+  "८": "8",
+  "९": "9",
+};
+
+function normalizeDateText(
+  value: string | null | undefined,
+): string {
+  return (value ?? "")
+    .normalize("NFKC")
+    .replace(
+      /[०-९]/g,
+      (digit) =>
+        DEVANAGARI_DIGITS[digit] ??
+        digit,
+    )
+    .replace(
+      /[\u200B-\u200D\uFEFF]/g,
+      "",
+    )
+    .replace(/\u00A0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function createValidDate(
   year: number,
   month: number,
@@ -167,11 +200,33 @@ function createValidDate(
   return date;
 }
 
+function toIsoDate(
+  date: Date | null,
+): string | null {
+  if (!date) {
+    return null;
+  }
+
+  return [
+    date
+      .getFullYear()
+      .toString()
+      .padStart(4, "0"),
+    (date.getMonth() + 1)
+      .toString()
+      .padStart(2, "0"),
+    date
+      .getDate()
+      .toString()
+      .padStart(2, "0"),
+  ].join("-");
+}
+
 export function parseDate(
   value: string | null | undefined,
 ): Date | null {
   const cleaned =
-    normalizeExtractedText(value);
+    normalizeDateText(value);
 
   if (!cleaned) {
     return null;
@@ -202,7 +257,9 @@ export function parseDate(
 
   if (match) {
     const month =
-      HINDI_MONTHS[match[2]];
+      HINDI_MONTHS[
+        match[2]
+      ];
 
     if (month !== undefined) {
       return createValidDate(
@@ -216,7 +273,11 @@ export function parseDate(
   const native =
     new Date(cleaned);
 
-  if (!Number.isNaN(native.getTime())) {
+  if (
+    !Number.isNaN(
+      native.getTime(),
+    )
+  ) {
     return native;
   }
 
@@ -226,64 +287,165 @@ export function parseDate(
 export function extractDateRange(
   lines: string[],
 ): ParsedDateRange {
+  const normalizedLines =
+    lines
+      .map((rawLine) =>
+        normalizeDateText(rawLine),
+      )
+      .filter(Boolean);
+
   const englishRange =
-    /(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i;
+    /(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s*(?:-|–|—|to)\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i;
 
   const hindiRange =
-    /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[^\d\s]+\s+\d{4})/u;
+    /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s*(?:-|–|—|से)\s*(\d{1,2}\s+[^\d\s]+\s+\d{4})/u;
 
   const englishStarted =
-    /Started running on\s+(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i;
+    /(?:started\s+running\s+on|running\s+since)\s+(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i;
 
   const hindiStarted =
-    /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s+को\s+चलना\s+शुरू\s+हुआ/u;
+    /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s*(?:को\s*)?(?:चलना\s*शुरू\s*हुआ|चलना\s*शुरू\s*किया)/u;
 
-  for (const rawLine of lines) {
-    const line =
-      normalizeExtractedText(rawLine);
+  const englishDate =
+    /(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i;
 
-    if (!line) {
-      continue;
-    }
+  const hindiDate =
+    /(\d{1,2}\s+[^\d\s]+\s+\d{4})/u;
 
+  /*
+   * Prefer explicit ranges.
+   */
+  for (
+    const line of normalizedLines
+  ) {
     let match =
-      line.match(englishRange);
+      line.match(
+        englishRange,
+      );
 
     if (match) {
-      return {
-        firstSeen: match[1],
-        lastSeen: match[2],
-      };
+      const first =
+        parseDate(match[1]);
+
+      const last =
+        parseDate(match[2]);
+
+      if (first) {
+        return {
+          firstSeen:
+            toIsoDate(first),
+          lastSeen:
+            toIsoDate(last),
+        };
+      }
     }
 
     match =
-      line.match(hindiRange);
+      line.match(
+        hindiRange,
+      );
 
     if (match) {
-      return {
-        firstSeen: match[1],
-        lastSeen: match[2],
-      };
+      const first =
+        parseDate(match[1]);
+
+      const last =
+        parseDate(match[2]);
+
+      if (first) {
+        return {
+          firstSeen:
+            toIsoDate(first),
+          lastSeen:
+            toIsoDate(last),
+        };
+      }
+    }
+  }
+
+  /*
+   * Then explicit "started running" phrases.
+   */
+  for (
+    const line of normalizedLines
+  ) {
+    let match =
+      line.match(
+        englishStarted,
+      );
+
+    if (match) {
+      const first =
+        parseDate(match[1]);
+
+      if (first) {
+        return {
+          firstSeen:
+            toIsoDate(first),
+          lastSeen: null,
+        };
+      }
     }
 
     match =
-      line.match(englishStarted);
+      line.match(
+        hindiStarted,
+      );
 
     if (match) {
-      return {
-        firstSeen: match[1],
-        lastSeen: null,
-      };
+      const first =
+        parseDate(match[1]);
+
+      if (first) {
+        return {
+          firstSeen:
+            toIsoDate(first),
+          lastSeen: null,
+        };
+      }
+    }
+  }
+
+  /*
+   * Finally allow a standalone embedded date.
+   */
+  for (
+    const line of normalizedLines
+  ) {
+    let match =
+      line.match(
+        englishDate,
+      );
+
+    if (match) {
+      const first =
+        parseDate(match[1]);
+
+      if (first) {
+        return {
+          firstSeen:
+            toIsoDate(first),
+          lastSeen: null,
+        };
+      }
     }
 
     match =
-      line.match(hindiStarted);
+      line.match(
+        hindiDate,
+      );
 
     if (match) {
-      return {
-        firstSeen: match[1],
-        lastSeen: null,
-      };
+      const first =
+        parseDate(match[1]);
+
+      if (first) {
+        return {
+          firstSeen:
+            toIsoDate(first),
+          lastSeen: null,
+        };
+      }
     }
   }
 
@@ -417,22 +579,70 @@ export function isDateOnly(
   value: string,
 ): boolean {
   const text =
-    value.trim();
+    normalizeDateText(value);
 
-  return (
-    /^\d{1,2}\s+[A-Za-z]+\s+\d{4}$/i.test(
-      text,
-    ) ||
-    /^\d{1,2}\s+[^\d\s]+\s+\d{4}$/u.test(
-      text,
-    ) ||
-    /(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i.test(
-      text,
-    ) ||
-    /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[^\d\s]+\s+\d{4})/u.test(
+  if (!text) {
+    return false;
+  }
+
+  /*
+   * Explicit Meta "started running" phrases.
+   */
+  if (
+    /started\s+running\s+on\s+\d{1,2}\s+[A-Za-z]+\s+\d{4}/i.test(
       text,
     )
-  );
+  ) {
+    return true;
+  }
+
+  if (
+    /\d{1,2}\s+[^\d\s]+\s+\d{4}\s*(?:को\s*)?(?:चलना\s*शुरू\s*हुआ|चलना\s*शुरू\s*किया)/u.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+
+  /*
+   * Date ranges.
+   */
+  if (
+    /(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s*(?:-|–|—|to)\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    /(\d{1,2}\s+[^\d\s]+\s+\d{4})\s*(?:-|–|—|से)\s*(\d{1,2}\s+[^\d\s]+\s+\d{4})/u.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+
+  /*
+   * Plain standalone dates.
+   */
+  if (
+    /^\d{1,2}\s+[A-Za-z]+\s+\d{4}$/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    /^\d{1,2}\s+[^\d\s]+\s+\d{4}$/u.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 export function isPriceLine(

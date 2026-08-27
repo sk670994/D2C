@@ -7,6 +7,8 @@ import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { createClient } from "@/lib/supabase/server";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 
+import "../../components/dashboard/adspy/adspy.css";
+
 type Suggestion = {
   id: string;
   label: string;
@@ -16,76 +18,19 @@ type Suggestion = {
 async function loadSuggestionCatalog(): Promise<Suggestion[]> {
   const client = createGlobalServiceClient();
 
-  const [
-    brandsResult,
-    aliasesResult,
-    creatorsResult,
-    keywordResult,
-  ] = await Promise.all([
-    client
-      .from("ad_intelligence_brands")
-      .select("id,canonical_name")
-      .not("canonical_name", "is", null)
-      .order("canonical_name", {
-        ascending: true,
-      })
-      .limit(1000),
+  const { data, error } = await client
+    .from("ad_intelligence_creatives")
+    .select("id,advertiser_name,creator_name,headline,product_name")
+    .limit(1500);
 
-    client
-      .from("ad_intelligence_brand_aliases")
-      .select("brand_id,alias")
-      .not("alias", "is", null)
-      .order("alias", {
-        ascending: true,
-      })
-      .limit(500),
-
-    client
-      .from("ad_intelligence_creators")
-      .select("id,canonical_name")
-      .not("canonical_name", "is", null)
-      .order("canonical_name", {
-        ascending: true,
-      })
-      .limit(500),
-
-    client
-      .from("ad_intelligence_creatives")
-      .select(
-        "id,headline,product_name,advertiser_name",
-      )
-      .order("updated_at", {
-        ascending: false,
-      })
-      .limit(800),
-  ]);
-
-  if (brandsResult.error) {
-    console.error(
-      "[AdSpy catalog] Brand lookup failed:",
-      brandsResult.error,
-    );
-  }
-
-  if (aliasesResult.error) {
-    console.error(
-      "[AdSpy catalog] Alias lookup failed:",
-      aliasesResult.error,
-    );
-  }
-
-  if (creatorsResult.error) {
-    console.error(
-      "[AdSpy catalog] Creator lookup failed:",
-      creatorsResult.error,
-    );
-  }
-
-  if (keywordResult.error) {
-    console.error(
-      "[AdSpy catalog] Keyword lookup failed:",
-      keywordResult.error,
-    );
+  if (error) {
+    console.error("[AdSpy catalog] Creative catalog lookup failed:", {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    });
+    return [];
   }
 
   const suggestions: Suggestion[] = [];
@@ -94,220 +39,75 @@ async function loadSuggestionCatalog(): Promise<Suggestion[]> {
   const push = (
     type: Suggestion["type"],
     id: string,
-    label: string,
+    value: unknown,
   ) => {
-    const clean = label.trim();
+    const label = String(value ?? "").trim();
+    if (!label) return;
 
-    if (!clean) {
-      return;
-    }
-
-    const key =
-      `${type}:${clean.toLowerCase()}`;
-
-    if (seen.has(key)) {
-      return;
-    }
+    const key = `${type}:${label.toLocaleLowerCase()}`;
+    if (seen.has(key)) return;
 
     seen.add(key);
-
-    suggestions.push({
-      id,
-      label: clean,
-      type,
-    });
+    suggestions.push({ id, label, type });
   };
 
-  for (
-    const row of brandsResult.data ?? []
-  ) {
-    push(
-      "advertiser",
-      String(row.id),
-      String(
-        row.canonical_name ?? "",
-      ),
-    );
+  for (const row of data ?? []) {
+    push("advertiser", `advertiser:${row.id}`, row.advertiser_name);
+    push("creator", `creator:${row.id}`, row.creator_name);
+    push("keyword", `headline:${row.id}`, row.headline);
+    push("keyword", `product:${row.id}`, row.product_name);
   }
 
-  for (
-    const row of aliasesResult.data ?? []
-  ) {
-    push(
-      "advertiser",
-      String(
-        row.brand_id ?? row.alias,
-      ),
-      String(
-        row.alias ?? "",
-      ),
-    );
-  }
-
-  for (
-    const row of creatorsResult.data ?? []
-  ) {
-    push(
-      "creator",
-      String(row.id),
-      String(
-        row.canonical_name ?? "",
-      ),
-    );
-  }
-
-  for (
-    const row of keywordResult.data ?? []
-  ) {
-    push(
-      "keyword",
-      `${row.id}:headline`,
-      String(
-        row.headline ?? "",
-      ),
-    );
-
-    push(
-      "keyword",
-      `${row.id}:product`,
-      String(
-        row.product_name ?? "",
-      ),
-    );
-  }
-
-  return suggestions;
+  return suggestions.slice(0, 2000);
 }
 
 export default async function AdSpyPage() {
-  const supabase =
-    await createClient();
+  const supabase = await createClient();
 
   const {
-    data: {
-      user,
-    },
+    data: { user },
     error,
-  } =
-    await supabase.auth.getUser();
+  } = await supabase.auth.getUser();
 
-  if (
-    error ||
-    !user
-  ) {
-    redirect(
-      "/login?next=/adspy",
-    );
+  if (error || !user) {
+    redirect("/login?next=/adspy");
   }
 
-  let suggestionCatalog: Suggestion[] =
-    [];
+  let suggestionCatalog: Suggestion[] = [];
 
   try {
-    suggestionCatalog =
-      await loadSuggestionCatalog();
+    suggestionCatalog = await loadSuggestionCatalog();
   } catch (catalogError) {
-    /*
-     * Do not prevent AdSpy from opening simply because
-     * the optional suggestion catalog failed.
-     */
-    console.error(
-      "[AdSpy page] Suggestion catalog failed:",
-      catalogError,
-    );
+    console.error("[AdSpy page] Suggestion catalog failed:", catalogError);
   }
 
   return (
-    <main className="zt-adspy-shell">
+    <main>
       <header className="zt-appbar">
-        <Link
-          href="/dashboard"
-          className="zt-brand"
-        >
-          <span className="zt-brand-mark">
-            Z
-          </span>
-
-          <span>
-            zooptrack
-          </span>
+        <Link href="/dashboard" className="zt-brand">
+          <span className="zt-brand-mark">Z</span>
+          <span>zooptrack</span>
         </Link>
 
-        <nav
-          className="zt-appnav"
-          aria-label="Product navigation"
-        >
-          <Link href="/dashboard">
-            Profit OS
-          </Link>
-
-          <Link
-            href="/adspy"
-            className="active"
-            aria-current="page"
-          >
+        <nav className="zt-appnav" aria-label="Product navigation">
+          <Link href="/dashboard">Profit OS</Link>
+          <Link href="/adspy" className="active" aria-current="page">
             AdSpy
           </Link>
-
-          <Link href="/zwirk">
-            ZWIRK
-          </Link>
-
-          <Link href="/brand-vault">
-            Brand Vault
-          </Link>
+          <Link href="/zwirk">ZWIRK</Link>
+          <Link href="/brand-vault">Brand Vault</Link>
         </nav>
 
         <div className="zt-app-actions">
-          <span
-            className="zt-app-email"
-            title={user.email ?? ""}
-          >
+          <span className="zt-app-email" title={user.email ?? ""}>
             {user.email ?? ""}
           </span>
-
           <ThemeToggle />
-
           <SignOutButton />
         </div>
       </header>
 
-      <section className="zt-hero">
-        <div className="zt-hero-copy">
-          <span className="zt-eyebrow">
-            Competitive creative intelligence
-          </span>
-
-          <h1>
-            See what competitors launch.
-            <br />
-            Know what to test next.
-          </h1>
-
-          <p>
-            Search public Meta creatives,
-            isolate durable hooks and offers,
-            then carry the evidence into
-            your next profitable experiment.
-          </p>
-        </div>
-
-        <div className="zt-hero-side">
-          <Link href="/zwirk">
-            Ask ZWIRK about results
-          </Link>
-
-          <span>
-            Meta Ad Library · India-first
-          </span>
-        </div>
-      </section>
-
-      <AdSpySection
-        initialSuggestionCatalog={
-          suggestionCatalog
-        }
-      />
+      <AdSpySection initialSuggestionCatalog={suggestionCatalog} />
     </main>
   );
 }
