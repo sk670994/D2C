@@ -228,6 +228,8 @@ function buildPrompt(
 
     "Do not fabricate certainty.",
 
+    "Tag material statements as FACT, DERIVED, OBSERVED, ASSUMPTION, or RECOMMENDATION.",
+
     "If you make an assumption, clearly label it.",
 
     "",

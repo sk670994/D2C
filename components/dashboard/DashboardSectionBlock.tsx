@@ -4,6 +4,7 @@ import { MetricTile } from "@/components/dashboard/DashboardPrimitives";
 import type { MetricItem, MetricTone } from "@/components/dashboard/DashboardPrimitives";
 
 export function DashboardSectionBlock({
+  id,
   title,
   status,
   tone,
@@ -14,6 +15,7 @@ export function DashboardSectionBlock({
   onApply,
   onSave
 }: {
+  id?: string;
   title: string;
   status: string;
   tone: MetricTone;
@@ -25,7 +27,7 @@ export function DashboardSectionBlock({
   onSave: () => void;
 }) {
   return (
-    <motion.section className={`surface section-surface section-block tone-${tone}`} variants={{ hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0 } }}>
+    <motion.section id={id} className={`surface section-surface section-block tone-${tone}`} variants={{ hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0 } }}>
       <div className="section-head section-head-rich">
         <h3>{title}</h3>
         <span className={`status-dot status-${tone}`}>{status}</span>

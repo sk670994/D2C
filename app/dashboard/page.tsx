@@ -9,13 +9,13 @@ import type { CalculatedReport, ParsedReport } from "@/lib/types/domain";
 import { calculateReport } from "@/lib/calc/report";
 import { DEFAULT_REPORT_INPUT } from "@/lib/constants/defaultInput";
 import { createClient } from "@/lib/supabase/client";
-import { generateDecisions, generateMoneyAlerts } from "@/lib/llm/decision-engine";
-import type { OpportunityScan, MoneyAlert } from "@/lib/llm/decision-engine";
 import { InsightList, MetricTile, NumberField } from "@/components/dashboard/DashboardPrimitives";
 import type { MetricItem, MetricTone } from "@/components/dashboard/DashboardPrimitives";
 import { DashboardSectionBlock } from "@/components/dashboard/DashboardSectionBlock";
 import { DashboardInsightsSection } from "@/components/dashboard/DashboardInsightsSection";
 import { DashboardCommandRail, DashboardExecutionControls, DashboardHero } from "@/components/dashboard/DashboardChrome";
+import { CommandCenter } from "@/components/command/CommandCenter";
+import { AppNav } from "@/components/app/AppNav";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -259,8 +259,6 @@ export default function DashboardPage() {
   const [authChecked, setAuthChecked] = useState(false);
   const [adMetrics, setAdMetrics] = useState<AdMetricRow[]>([]);
   const [adMetricsLoading, setAdMetricsLoading] = useState(false);
-  const [decisions, setDecisions] = useState<OpportunityScan | null>(null);
-  const [moneyAlerts, setMoneyAlerts] = useState<MoneyAlert[]>([]);
   const [connectedAccounts, setConnectedAccounts] = useState<ConnectedAdAccount[]>([]);
   const [adLibraryQuery, setAdLibraryQuery] = useState("");
   const [adLibraryCountry, setAdLibraryCountry] = useState("IN");
@@ -622,13 +620,6 @@ const merged = {
 };
 
 setReport(merged);
-
-  // Generate decisions and alerts automatically
-  const newDecisions = generateDecisions(next);
-  const newAlerts = generateMoneyAlerts(next);
-
-  setDecisions(newDecisions);
-  setMoneyAlerts(newAlerts);
 
   sessionStorage.setItem("reportInput", JSON.stringify(inputToUse));
   sessionStorage.setItem("report", JSON.stringify(merged));
@@ -1739,6 +1730,7 @@ setReport(merged);
     return (
       <DashboardSectionBlock
         key={id}
+        id={id}
         title={sectionTitle}
         status={sectionHealth}
         tone={tone}
@@ -1791,6 +1783,8 @@ setReport(merged);
   }, [monthlyRecords]);
 
   return (
+    <div className="zt-app-shell">
+    <AppNav email={userEmail} />
     <motion.div className="dashboard-shell" initial="hidden" animate="visible" variants={stagger}>
       <DashboardCommandRail
         items={sectionOptions}
@@ -1812,6 +1806,13 @@ setReport(merged);
       />
 
       <main className="dashboard-content-grid">
+        <CommandCenter
+          report={report}
+          userName={userName}
+          connectedAds={connectedAccounts.length > 0}
+          onGoSection={(id) => goToSection(id as DashboardSectionId)}
+        />
+
         <DashboardHero userEmail={userEmail} userName={userName} />
 
         <motion.section className="hero-kpi-grid" variants={fadeUp}>
@@ -2031,16 +2032,16 @@ setReport(merged);
       {showOnboarding ? (
         <div className="palette-backdrop" onClick={closeOnboarding}>
           <div className="palette-card onboarding-card" onClick={(e) => e.stopPropagation()}>
-            <h3>Welcome to Zooptrack Command Center</h3>
-            <p className="muted-text">Quick start in 3 steps:</p>
+            <h3>Welcome to Command Center</h3>
+            <p className="muted-text">One outcome: where you are losing money, and what to do next.</p>
             <ol>
-              <li>Load sample data to see a full working model.</li>
-              <li>Edit inputs section-by-section and apply changes.</li>
-              <li>Review profit leak signals and save the scenario that makes sense.</li>
+              <li>Load sample economics or enter COGS, ads and returns.</li>
+              <li>Read today&apos;s attention items — not every chart.</li>
+              <li>Ask ZWIRK, then create an experiment from a recommendation.</li>
             </ol>
             <div className="action-row">
-              <Button type="button" onClick={() => { loadSampleData(); closeOnboarding(); }}>Load Sample + Start</Button>
-              <Button type="button" variant="secondary" onClick={closeOnboarding}>Skip</Button>
+              <Button type="button" onClick={() => { loadSampleData(); closeOnboarding(); }}>Load sample and see the brief</Button>
+              <Button type="button" variant="secondary" onClick={closeOnboarding}>I&apos;ll enter my numbers</Button>
             </div>
           </div>
         </div>
@@ -2068,5 +2069,6 @@ setReport(merged);
         </div>
       ) : null}
     </motion.div>
+    </div>
   );
 }

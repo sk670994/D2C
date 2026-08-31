@@ -21,13 +21,7 @@ import {
   Video,
   X,
 } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { ProductAnalyzePanel } from "@/components/product-analysis/ProductAnalyzePanel";
 
 type Platform = "meta" | "google" | "linkedin";
 type SearchMode = "advertiser" | "keyword";
@@ -952,11 +946,14 @@ const refreshIndexedResults = useCallback(
       forcedQuery?: string,
       options?: {
         skipBackgroundRefresh?: boolean;
+        forcedMode?: SearchMode;
       },
     ) => {
       const q = (
         forcedQuery ?? input
       ).trim();
+
+      const searchModeUsed = options?.forcedMode ?? mode;
 
       const normalizedCountry =
         countryInput
@@ -1025,7 +1022,7 @@ const refreshIndexedResults = useCallback(
 
         url.searchParams.set(
           "mode",
-          mode,
+          searchModeUsed,
         );
 
         url.searchParams.set(

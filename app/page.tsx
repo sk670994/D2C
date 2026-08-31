@@ -8,31 +8,31 @@ export default function HomePage() {
     <main className="main marketing-page">
       <header className="marketing-hero">
         <div>
-          <p className="eyebrow">Profitability OS for Indian D2C brands</p>
-          <h1>Know which ads actually make money.</h1>
+          <p className="eyebrow">Indian D2C decision engine</p>
+          <h1>Your ads. Your margins. Your market. One decision loop.</h1>
           <p className="hero-copy">
-            Track true profit after COD, returns, shipping and payment fees. Find hidden loss points, recover margin, and scale with confidence.
+            Connect your store economics and ad accounts. Zooptrack shows what is actually profitable after COD, returns, shipping and fees, what competitors are testing, and what you should do next.
           </p>
           <div className="hero-actions">
             <Link href="/login">
-              <Button type="button">Start Free Workspace</Button>
+              <Button type="button">Start free</Button>
             </Link>
             <Link href="/dashboard">
-              <Button type="button" variant="secondary">View Live Dashboard</Button>
+              <Button type="button" variant="secondary">Open Command Center</Button>
             </Link>
           </div>
           <div className="hero-meta-row">
-            <span className="tag tag-good">COD & returns adjusted profit</span>
-            <span className="tag">Daily loss alerts</span>
-            <span className="tag">India D2C margin guardrails</span>
+            <span className="tag tag-good">True contribution, not vanity ROAS</span>
+            <span className="tag">Competitor creatives</span>
+            <span className="tag">ZWIRK tells you what to do</span>
           </div>
         </div>
         <Card className="hero-card">
           <CardHeader>
             <div className="hero-card-header">
               <div>
-                <CardTitle>Daily Profit Pulse</CardTitle>
-                <CardDescription>Clear financial signals, not just charts.</CardDescription>
+                <CardTitle>Today&apos;s brief</CardTitle>
+                <CardDescription>Attention first. Charts second.</CardDescription>
               </div>
               <ThemeToggle />
             </div>
@@ -40,49 +40,56 @@ export default function HomePage() {
           <CardContent className="hero-card-content">
             <div className="hero-kpi-stack">
               <div className="hero-kpi">
-                <span>Contribution Margin</span>
-                <strong>39.9%</strong>
+                <span>Profit</span>
+                <strong>₹63,240</strong>
               </div>
               <div className="hero-kpi">
-                <span>Retained Revenue</span>
-                <strong>INR 31.2K</strong>
+                <span>True contribution ROAS</span>
+                <strong>2.7x</strong>
               </div>
               <div className="hero-kpi">
-                <span>Scale Verdict</span>
-                <strong>Ready with guardrails</strong>
+                <span>Attention</span>
+                <strong>CAC 33% above allowable</strong>
               </div>
             </div>
-            <Button type="button">See Full Breakdown</Button>
+            <Link href="/login">
+              <Button type="button">See the diagnosis</Button>
+            </Link>
           </CardContent>
         </Card>
       </header>
 
-      <section className="logo-strip">
-        <p className="muted-text">Trusted by operators from</p>
-        <div className="logo-row">
-          {["Retentia", "Bluemarch", "Fieldhouse", "Nexura", "Atlas D2C", "Brightlane"].map((logo) => (
-            <span key={logo} className="logo-pill">{logo}</span>
-          ))}
+      <section className="pathway-section">
+        <div className="section-head">
+          <h2>The product is the loop, not the modules</h2>
+          <p className="muted-text">You should never have to understand AdSpy, Brand Vault or Scenario Lab. You should understand the next action.</p>
         </div>
+        <ol className="marketing-loop">
+          <li>Understand the business — true profit after COD, RTO, shipping, COGS and fees</li>
+          <li>Understand the market — competitor creatives, offers and hooks</li>
+          <li>Find the leak or the opening</li>
+          <li>ZWIRK explains why, with evidence</li>
+          <li>Create an experiment, then measure whether it worked</li>
+        </ol>
       </section>
 
       <section className="marketing-grid">
         {[
           {
-            title: "True Profit Visibility",
-            body: "Stop relying on vanity ROAS. See profit after COD, returns, shipping, and fees."
+            title: "True profit visibility",
+            body: "Platform ROAS is a starting point. Contribution after returns and fees is the number you scale on."
           },
           {
-            title: "Hidden Loss Detection",
-            body: "Identify the campaigns, channels and checkout leaks that are draining cash."
+            title: "Market, not a database",
+            body: "Paste a product URL. See recurring angles, offers and formats — then what that means for your economics."
           },
           {
-            title: "Scale with Margin Guardrails",
-            body: "Only increase spend when your unit economics and break-even math are healthy."
+            title: "Decisions with a why",
+            body: "Every recommendation carries evidence, expected rupee impact, and a next action. AI does not invent your P&L."
           },
           {
-            title: "Transparent Calculations",
-            body: "Every number is traceable so founders can trust the output and explain it to their team."
+            title: "Transparent math",
+            body: "Open any headline metric and see the subtraction. Trust is a product feature when you are dealing with money."
           }
         ].map((item) => (
           <article key={item.title} className="marketing-card">
@@ -92,139 +99,76 @@ export default function HomePage() {
         ))}
       </section>
 
-      <section className="pathway-section">
-        <div className="section-head">
-          <h2>From raw spend to real profit</h2>
-          <p className="muted-text">A simple workflow designed for brands that need clarity fast.</p>
-        </div>
-        <div className="pathway-grid">
-          {[
-            {
-              title: "Connect ad, order and cost data",
-              body: "Bring ad spend, store orders, COD and product costs together in one place."
-            },
-            {
-              title: "Measure your true margin",
-              body: "See what cash you actually keep after returns, COD, shipping and fees."
-            },
-            {
-              title: "Spot the worst leaks",
-              body: "Identify exactly where campaigns and channels are losing money."
-            },
-            {
-              title: "Scale only when it pays",
-              body: "Use simple guardrails to increase spend safely and avoid blind growth."
-            }
-          ].map((step, index) => (
-            <div key={step.title} className="pathway-step">
-              <span className="pathway-index">{String(index + 1).padStart(2, "0")}</span>
-              <div>
-                <h3>{step.title}</h3>
-                <p className="muted-text">{step.body}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="testimonial-section">
-        <div className="section-head">
-          <h2>Echoes from growth teams</h2>
-          <p className="muted-text">Operators describe the clarity they gain in the first week.</p>
-        </div>
-        <div className="testimonial-grid">
-          {[
-            {
-              quote:
-                "We stopped guessing where margin was leaking. The scenario lab surfaced our top two fixes in 24 hours.",
-              name: "Aarav Mehta",
-              role: "Growth Lead, Fablet Studio"
-            },
-            {
-              quote:
-                "The readiness gates finally gave us a confident signal to scale spend without panic.",
-              name: "Lea Thompson",
-              role: "VP Performance, Lumenly"
-            },
-            {
-              quote:
-                "The dashboard feels like an operator co-pilot. Everything is concrete, not just charts.",
-              name: "Ray Chen",
-              role: "GM, Northlane D2C"
-            }
-          ].map((item) => (
-            <article key={item.name} className="testimonial-card">
-              <p className="testimonial-quote">“{item.quote}”</p>
-              <div className="testimonial-meta">
-                <span>{item.name}</span>
-                <span className="muted-text">{item.role}</span>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-
       <section className="pricing-section">
         <div className="section-head">
-          <h2>Pricing built for Indian D2C operators</h2>
-          <p className="muted-text">Start free, then upgrade when you need agency-grade reporting and multi-brand control.</p>
+          <h2>Price the decision loop, not extra dashboards</h2>
+          <p className="muted-text">Higher plans unlock history, tracked competitors, ZWIRK, alerts and experiments — not more charts.</p>
         </div>
         <div className="pricing-grid">
           <article className="pricing-card">
-            <h3>Starter</h3>
-            <p className="pricing-price">Free</p>
+            <h3>Free</h3>
+            <p className="pricing-price">₹0</p>
             <ul>
-              <li>Core profit calculator + weekly summary</li>
-              <li>Connect one store</li>
-              <li>Basic loss alerts</li>
+              <li>One brand · contribution model</li>
+              <li>Daily attention brief</li>
+              <li>Limited ZWIRK</li>
             </ul>
-            <Button type="button" variant="secondary">Get Started</Button>
+            <Link href="/login"><Button type="button" variant="secondary">Get started</Button></Link>
+          </article>
+          <article className="pricing-card">
+            <h3>Starter</h3>
+            <p className="pricing-price">₹999 / month</p>
+            <ul>
+              <li>Product URL → market search</li>
+              <li>WhatsApp-ready daily brief</li>
+              <li>Basic experiments</li>
+            </ul>
+            <Link href="/login"><Button type="button" variant="secondary">Start trial</Button></Link>
           </article>
           <article className="pricing-card featured">
             <h3>Growth</h3>
-            <p className="pricing-price">₹999 / month</p>
+            <p className="pricing-price">₹2,499 / month</p>
             <ul>
-              <li>Profit leak reports + channel profitability</li>
-              <li>WhatsApp & email summaries</li>
-              <li>Scale guardrails + export-ready numbers</li>
+              <li>Tracked competitors + market radar</li>
+              <li>Full ZWIRK on your numbers</li>
+              <li>True ROAS vs platform ROAS</li>
             </ul>
-            <Button type="button">Start 14-day Trial</Button>
+            <Link href="/login"><Button type="button">Start 14-day trial</Button></Link>
           </article>
           <article className="pricing-card">
-            <h3>Agency</h3>
-            <p className="pricing-price">₹4999+ / month</p>
+            <h3>Pro</h3>
+            <p className="pricing-price">₹4,999 / month</p>
             <ul>
-              <li>Multi-brand reporting</li>
-              <li>Client-ready profitability dashboards</li>
-              <li>Dedicated onboarding and support</li>
+              <li>Historical intelligence</li>
+              <li>Team workspace · exports</li>
+              <li>Alerts on CAC, RTO and leaks</li>
             </ul>
-            <Button type="button" variant="secondary">Talk to Sales</Button>
+            <Link href="/contact"><Button type="button" variant="secondary">Talk to us</Button></Link>
           </article>
         </div>
       </section>
 
       <section className="faq-section">
         <div className="section-head">
-          <h2>Got a quick question?</h2>
-          <p className="muted-text">Everything you need before you jump into the workspace.</p>
+          <h2>Before you connect data</h2>
         </div>
         <div className="faq-grid">
           {[
             {
-              q: "How fast can we get set up?",
-              a: "Most teams connect data and run their first scenario in under two minutes."
+              q: "Do you replace Shopify or Ads Manager?",
+              a: "No. We sit on top and turn those tabs into one decision: pause, test, or scale."
             },
             {
-              q: "Can we invite multiple operators?",
-              a: "Yes. Growth plan includes team workspaces and admin visibility."
+              q: "Will ZWIRK invent my profit?",
+              a: "No. Dashboard facts stay facts. AdSpy observations stay observations. Assumptions are labeled."
             },
             {
-              q: "Is this built for agencies?",
-              a: "The Agency tier supports multi-brand portfolios and client reporting."
+              q: "How fast is the first diagnosis?",
+              a: "Load sample economics immediately, or enter COGS and spend. The Command Center is the first screen, not an empty dashboard."
             },
             {
-              q: "Do you replace existing dashboards?",
-              a: "No. We sit on top and translate raw metrics into decisions."
+              q: "Is this built for Indian D2C?",
+              a: "Yes. COD, returns, shipping, GST-aware selling price and INR are first-class, not localization afterthoughts."
             }
           ].map((item) => (
             <article key={item.q} className="faq-card">
@@ -238,20 +182,19 @@ export default function HomePage() {
       <section className="cta-section">
         <Card className="cta-card">
           <CardHeader>
-            <CardTitle>Ready to diagnose your growth engine?</CardTitle>
-            <CardDescription>Spin up a workspace in under 2 minutes.</CardDescription>
+            <CardTitle>Stop opening eleven dashboards to make one decision.</CardTitle>
+            <CardDescription>Open Command Center. See what needs attention. Ask ZWIRK. Test it.</CardDescription>
           </CardHeader>
           <CardContent className="cta-actions">
             <Link href="/login">
-              <Button type="button">Start Free Workspace</Button>
+              <Button type="button">Start free workspace</Button>
             </Link>
             <Link href="/dashboard">
-              <Button type="button" variant="secondary">View Demo</Button>
+              <Button type="button" variant="secondary">View Command Center</Button>
             </Link>
           </CardContent>
         </Card>
       </section>
-
     </main>
   );
 }

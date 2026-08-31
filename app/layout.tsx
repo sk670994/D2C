@@ -1,9 +1,10 @@
 import "./globals.css";
 import type { Metadata } from "next";
+import { ZwirkDock } from "@/components/zwirk/ZwirkDock";
 
 export const metadata: Metadata = {
-  title: "Zooptrack — Profitability OS for Indian D2C Brands",
-  description: "Know your true profit after COD, returns, and shipping. Track campaign profitability and scale safely."
+  title: "Zooptrack — Know what makes money, what the market is doing, and what to do next",
+  description: "Profit-aware growth intelligence for Indian D2C brands. True contribution after COD, returns and fees, competitor creatives, and a decision copilot that tells you what to do next."
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -11,18 +12,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" data-theme="light" suppressHydrationWarning>
       <body>
         {children}
+        <ZwirkDock />
         <footer className="site-footer-global">
           <div className="site-footer-inner">
             <div className="footer-brand">
               <p className="eyebrow">Zooptrack</p>
-              <h3>Profitability OS for Indian D2C brands.</h3>
-              <p className="muted-text">Know your true profit after COD, returns, shipping and fees. Scale safely.</p>
+              <h3>Profit-aware growth intelligence for Indian D2C.</h3>
+              <p className="muted-text">Know what makes money. Know what the market is doing. Know what to do next.</p>
             </div>
             <div className="footer-columns">
               <div className="footer-column">
                 <p className="footer-title">Product</p>
                 <ul className="footer-list">
-                  <li><a href="/dashboard">Dashboard</a></li>
+                  <li><a href="/dashboard">Command Center</a></li>
+                  <li><a href="/adspy">Market intelligence</a></li>
                   <li><a href="/login">Get Started</a></li>
                 </ul>
               </div>

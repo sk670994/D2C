@@ -39,9 +39,17 @@ export function DashboardCommandRail({
     <aside className="command-rail surface">
       <div className="rail-top">
         <p className="eyebrow">Control</p>
-        <h3>Sections</h3>
+        <h3>Workspaces</h3>
       </div>
       <div className="section-list">
+        <Link href="/adspy" className="section-chip">
+          <span>Market</span>
+          <small className="rail-status rail-neutral">AdSpy</small>
+        </Link>
+        <Link href="/zwirk" className="section-chip">
+          <span>ZWIRK</span>
+          <small className="rail-status rail-neutral">Copilot</small>
+        </Link>
         {items.map((item) => {
           const status = statuses[item.id] ?? { label: "Not Searched", tone: "neutral" as MetricTone };
           return (
@@ -85,9 +93,9 @@ export function DashboardHero({
   return (
     <section className="surface hero-surface">
       <div>
-        <p className="eyebrow">Profitability Command Center</p>
-        <h1>Turn ad spend into real profit, not just clicks.</h1>
-        <p className="hero-copy">Measure true retained revenue, find hidden campaign losses, and only scale when the math is solid.</p>
+        <p className="eyebrow">Command Center</p>
+        <h1>Tell me where I am losing money and what to do next.</h1>
+        <p className="hero-copy">Profit, market, recommendation, experiment. Inputs below are the model — the brief above is the product.</p>
       </div>
       <div className="hero-meta">
         <span className="muted-text">{userEmail ? `Signed in as ${userName ? `${userName} (${userEmail})` : userEmail}` : "Not signed in"}</span>

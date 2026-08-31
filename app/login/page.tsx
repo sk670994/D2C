@@ -15,13 +15,13 @@ export default async function LoginPage({
     <main className="main auth-page">
       <div className="auth-shell">
         <div className="auth-hero">
-          <p className="eyebrow">Zooptrack Growth OS</p>
-          <h1 className="auth-title">Access the Zooptrack Growth Intelligence Command Center</h1>
-          <p className="auth-lead">Join your workspace to track unit economics, ad efficiency, and scale readiness in one place.</p>
+          <p className="eyebrow">Zooptrack</p>
+          <h1 className="auth-title">See the diagnosis, then decide.</h1>
+          <p className="auth-lead">True contribution after COD and returns, competitor creatives, and ZWIRK on what to do next.</p>
           <ul className="auth-points">
-            <li>Live KPI health checks across sections.</li>
-            <li>Scenario lab with cloud-sync snapshots.</li>
-            <li>AI-guided fixes and action plans.</li>
+            <li>Command Center opens on attention, not an empty dashboard.</li>
+            <li>Paste a product URL to read the market.</li>
+            <li>Recommendations carry evidence and rupee impact.</li>
           </ul>
         </div>
         <Card className="auth-card">
