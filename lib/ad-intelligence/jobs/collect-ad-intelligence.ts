@@ -123,13 +123,8 @@ export const collectAdIntelligence =
       };
 
       /*
-       * Persist one provider result in chunks and update the
+       * Persist provider results in chunks and update the
        * collection job after every chunk.
-       *
-       * The quick phase intentionally uses distinct Inngest
-       * step IDs from the deep phase so a quick-first job can
-       * continue into a deep refresh without colliding with
-       * cached step results.
        */
       const persistProviderResult = async (
         phase: "quick" | "deep",
@@ -220,6 +215,9 @@ export const collectAdIntelligence =
         }
       };
 
+      /*
+       * Run one provider collection phase.
+       */
       const collectPhase =
         async (
           phase:
@@ -268,11 +266,80 @@ export const collectAdIntelligence =
         };
 
       /*
-       * QUICK-FIRST mode:
+       * Mark the collection as complete.
        *
-       * The first request returns a small, fast Meta crawl.
-       * Those records are persisted immediately. Only then do
-       * we start the deeper crawl.
+       * This is used both for normal completion and for
+       * the quick-search-zero-results case.
+       */
+      const completeCollection =
+        async () => {
+          await step.run(
+            "complete-collection",
+            async () => {
+              await updateCollectionJob(
+                data.jobId,
+                {
+                  status: "complete",
+                  stage: "complete",
+
+                  discoveredAds:
+                    state.discoveredAds,
+
+                  normalizedAds:
+                    state.normalizedAds,
+
+                  persistedAds:
+                    state.persistedAds,
+
+                  completedAt:
+                    new Date().toISOString(),
+
+                  errorMessage: null,
+                },
+              );
+            },
+          );
+        };
+
+      /*
+       * Update tracking metadata after a successful
+       * collection.
+       */
+      const markTrackingComplete =
+        async () => {
+          await step.run(
+            "mark-tracked-brand-collected",
+            async () => {
+              await markTrackedBrandCollected(
+                {
+                  query:
+                    data.query,
+
+                  country:
+                    data.country,
+
+                  platform:
+                    data.platform,
+                },
+              );
+            },
+          );
+        };
+
+      /*
+       * QUICK-FIRST MODE
+       *
+       * For a brand that is not already indexed, the refresh
+       * route starts a quick collection.
+       *
+       * IMPORTANT:
+       *
+       * If the quick provider returns ZERO ads, we now stop
+       * here instead of automatically starting an expensive
+       * deep collection.
+       *
+       * This prevents a new/unknown brand from sitting on
+       * "Updating..." for a long time.
        */
       if (
         collectionDepth ===
@@ -287,15 +354,67 @@ export const collectAdIntelligence =
           "quick",
           quickResult.ads,
         );
+
+        /*
+         * QUICK SEARCH FOUND NOTHING
+         *
+         * Do not start the deep crawl automatically.
+         *
+         * The user should receive a completed "no ads found"
+         * result instead of waiting for the expensive deep
+         * provider crawl.
+         */
+        if (
+          quickResult.ads.length ===
+          0
+        ) {
+          console.info(
+            "[AdIntelligenceJob] Quick collection returned zero ads; skipping deep collection.",
+            {
+              query:
+                data.query,
+              country:
+                data.country,
+              platform:
+                data.platform,
+              mode:
+                data.mode,
+              jobId:
+                data.jobId,
+            },
+          );
+
+          await completeCollection();
+
+          await markTrackingComplete();
+
+          return {
+            jobId:
+              data.jobId,
+
+            discoveredAds:
+              state.discoveredAds,
+
+            normalizedAds:
+              state.normalizedAds,
+
+            persistedAds:
+              state.persistedAds,
+          };
+        }
       }
 
       /*
-       * DEEP mode:
+       * DEEP MODE
        *
-       * This is the existing full collection path.
-       * In quick-first mode it starts only after the quick
-       * batch has been persisted, so the user can see the
-       * first results while this phase runs.
+       * There are two ways to reach this block:
+       *
+       * 1. The job was explicitly started as "deep".
+       * 2. Quick collection found at least one ad.
+       *
+       * In the second case, quick results are already
+       * persisted and visible before the deep collection
+       * finishes.
        */
       const deepResult =
         await collectPhase(
@@ -308,58 +427,12 @@ export const collectAdIntelligence =
       );
 
       /*
-       * A search can legitimately return zero ads.
-       * In that case the collection is still complete.
+       * A collection that returns zero ads is still a
+       * successful collection.
        */
-      await step.run(
-        "complete-collection",
-        async () => {
-          await updateCollectionJob(
-            data.jobId,
-            {
-              status: "complete",
-              stage: "complete",
+      await completeCollection();
 
-              discoveredAds:
-                state.discoveredAds,
-
-              normalizedAds:
-                state.normalizedAds,
-
-              persistedAds:
-                state.persistedAds,
-
-              completedAt:
-                new Date().toISOString(),
-
-              errorMessage: null,
-            },
-          );
-        },
-      );
-
-      /*
-       * Update tracking metadata after
-       * a successful collection.
-       *
-       * This is intentionally based on
-       * the tracked query/country/platform
-       * because the collection event does
-       * not currently carry a tracked-brand UUID.
-       */
-      await step.run(
-        "mark-tracked-brand-collected",
-        async () => {
-          await markTrackedBrandCollected({
-            query:
-              data.query,
-            country:
-              data.country,
-            platform:
-              data.platform,
-          });
-        },
-      );
+      await markTrackingComplete();
 
       return {
         jobId:
