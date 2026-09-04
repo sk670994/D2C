@@ -456,7 +456,7 @@ export default function ZwirkPage() {
       null
     );
 
-  const [brandVaultStatus] =
+  const [brandVaultStatus, setBrandVaultStatus] =
     useState<BrandVaultStatus>(
       "loading"
     );
@@ -494,6 +494,47 @@ export default function ZwirkPage() {
    * Load saved chat
    * --------------------------------------------------
    */
+  useEffect(() => {
+    let active = true;
+
+    void fetch("/api/brand-vault", {
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!active) return;
+
+        if (!response.ok) {
+          setBrandVaultStatus("incomplete");
+          return;
+        }
+
+        const data = (await response.json()) as {
+          brandVault?: Record<string, unknown> | null;
+        };
+        const vault = data.brandVault;
+        const hasCoreFields = Boolean(
+          vault &&
+          typeof vault === "object" &&
+          Object.values(vault).some((value) =>
+            typeof value === "string"
+              ? value.trim().length > 0
+              : value != null,
+          ),
+        );
+
+        setBrandVaultStatus(
+          hasCoreFields ? "complete" : "incomplete",
+        );
+      })
+      .catch(() => {
+        if (active) setBrandVaultStatus("incomplete");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   useEffect(() => {
     const saved =
       localStorage.getItem(

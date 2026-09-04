@@ -27,7 +27,7 @@ export function ZwirkDock() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [queued, setQueued] = useState<string | null>(null);
 
-  const isApp = ["/dashboard", "/adspy", "/brand-vault", "/records"].some((path) => pathname.startsWith(path));
+  const isApp = ["/dashboard", "/adspy", "/brand-vault", "/records", "/zwirk"].some((path) => pathname.startsWith(path));
 
   const context = useMemo(() => {
     try {

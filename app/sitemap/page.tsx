@@ -15,7 +15,7 @@ const links = [
 
 export default function SitemapPage() {
   return (
-    <main className="main policy-page">
+    <main className="main policy-page sitemap-page">
       <header className="policy-hero">
         <p className="eyebrow">
           Navigation

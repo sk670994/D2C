@@ -20,5 +20,6 @@ export const config = {
     "/auth/:path*",
     "/brand-vault/:path*",
     "/records/:path*",
+    "/zwirk/:path*",
   ],
 };

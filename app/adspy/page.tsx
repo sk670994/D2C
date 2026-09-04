@@ -82,7 +82,7 @@ export default async function AdSpyPage() {
   }
 
   return (
-    <main>
+    <main className="adspy-page">
       <header className="zt-appbar">
         <Link href="/dashboard" className="zt-brand">
           <span className="zt-brand-mark">Z</span>

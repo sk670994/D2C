@@ -692,6 +692,66 @@ export function AdSpySection({
     setSuggestionOpen(true);
   }, [input, visibleSuggestionCatalog]);
 
+  useEffect(() => {
+    const searchQuery = input.trim();
+
+    if (searchQuery.length < 2) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setSuggestionLoading(true);
+
+      try {
+        const url = new URL(
+          "/api/ad-intelligence/autocomplete",
+          window.location.origin,
+        );
+        url.searchParams.set("q", searchQuery);
+        url.searchParams.set("mode", mode);
+
+        const response = await fetch(url, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        const data = (await response.json()) as {
+          success?: boolean;
+          suggestions?: Suggestion[];
+        };
+
+        if (!response.ok || !data.success || !mountedRef.current) {
+          return;
+        }
+
+        const serverSuggestions = data.suggestions ?? [];
+        const merged = new Map<string, Suggestion>();
+
+        for (const suggestion of [
+          ...serverSuggestions,
+          ...visibleSuggestionCatalog,
+        ]) {
+          const key = `${suggestion.type}:${suggestion.label.toLocaleLowerCase()}`;
+          if (!merged.has(key)) merged.set(key, suggestion);
+        }
+
+        setSuggestions(Array.from(merged.values()).slice(0, 8));
+        setSuggestionOpen(true);
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setSuggestions(visibleSuggestionCatalog);
+        }
+      } finally {
+        if (mountedRef.current) setSuggestionLoading(false);
+      }
+    }, 180);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [input, mode, visibleSuggestionCatalog]);
+
   const refreshCollection = useCallback(
     async ({
       searchQuery,
@@ -1688,16 +1748,15 @@ useEffect(() => {
             </h2>
 
             <p>
-              Search the indexed public market,
-              see what is running, and let
-              Zooptrack update the dataset in
-              the background.
+              Search Zooptrack&apos;s indexed observations,
+              see what is running, and let the collector
+              verify the market in the background.
             </p>
           </div>
 
           <div className="zt-source-badge">
             <span className="zt-live-dot" />
-            Meta Ad Library · India-first
+            Indexed from Meta
           </div>
         </div>
 
@@ -1826,7 +1885,11 @@ useEffect(() => {
                     ) : null}
                   </div>
 
-                  {suggestions.length ? (
+                    {suggestionLoading ? (
+                      <div className="zt-suggestion-empty">
+                        Finding matching indexed suggestions…
+                      </div>
+                    ) : suggestions.length ? (
                     suggestions.map(
                       (
                         suggestion,

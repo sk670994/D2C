@@ -1,4 +1,7 @@
 :root {
+  --zt-font-ui: "Aptos", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --zt-font-display: "Aptos Display", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --zt-font-data: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
   --zt-bg: #f5f7fb;
   --zt-surface: #ffffff;
   --zt-surface-2: #f8fafc;
@@ -167,9 +170,18 @@
 /* ---------- Main workspace ---------- */
 
 .zt-adspy {
+  font-family: var(--zt-font-ui);
   width: min(1380px, calc(100% - 48px));
   margin: 0 auto;
   padding-bottom: 80px;
+}
+
+.adspy-page {
+  font-family: var(--zt-font-ui);
+}
+
+.adspy-page .zt-appbar {
+  font-family: var(--zt-font-ui);
 }
 
 .zt-adspy-hero {
@@ -186,7 +198,8 @@
   max-width: 760px;
   font-size: clamp(30px, 4vw, 48px);
   line-height: 1;
-  letter-spacing: -.055em;
+  font-family: var(--zt-font-display);
+  letter-spacing: -.04em;
 }
 
 .zt-adspy-hero p {
@@ -195,6 +208,49 @@
   color: #cbd5e1;
   font-size: 14px;
   line-height: 1.65;
+}
+
+.zt-stat strong,
+.zt-result-count,
+.zt-job-progress,
+.zt-overline,
+.zt-eyebrow,
+.zt-mode-help {
+  font-family: var(--zt-font-data);
+}
+
+[data-theme="dark"] .adspy-page .zt-appbar {
+  border-bottom-color: rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.92);
+}
+
+[data-theme="dark"] .adspy-page .zt-appnav a,
+[data-theme="dark"] .adspy-page .zt-app-email {
+  color: #a8b7cc;
+}
+
+[data-theme="dark"] .adspy-page .zt-appnav a:hover,
+[data-theme="dark"] .adspy-page .zt-appnav a.active {
+  color: #f8fafc;
+  background: rgba(148, 163, 184, 0.16);
+}
+
+[data-theme="dark"] .adspy-page .zt-search-panel,
+[data-theme="dark"] .adspy-page .zt-library,
+[data-theme="dark"] .adspy-page .zt-stat,
+[data-theme="dark"] .adspy-page .zt-insight-card,
+[data-theme="dark"] .adspy-page .zt-ad-card {
+  color: #e6edf6;
+  background: #172235;
+  border-color: rgba(148, 163, 184, 0.22);
+}
+
+[data-theme="dark"] .adspy-page .zt-search-field,
+[data-theme="dark"] .adspy-page input,
+[data-theme="dark"] .adspy-page select {
+  color: #f8fafc;
+  background: #111b2b;
+  border-color: rgba(148, 163, 184, 0.3);
 }
 
 .zt-source-badge {

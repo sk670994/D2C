@@ -1,6 +1,4 @@
 import Link from "next/link";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
 export default function HomePage() {
@@ -8,8 +6,8 @@ export default function HomePage() {
     <main className="main marketing-page">
       <header className="marketing-hero">
         <div>
-          <p className="eyebrow">Indian D2C decision engine</p>
-          <h1>Your ads. Your margins. Your market. One decision loop.</h1>
+          <p className="eyebrow">ZOOPTRACK / D2C OPERATING INTELLIGENCE</p>
+          <h1>Your ads. Your margins. Your market.<br />One decision loop.</h1>
           <p className="hero-copy">
             Connect your store economics and ad accounts. Zooptrack shows what is actually profitable after COD, returns, shipping and fees, what competitors are testing, and what you should do next.
           </p>
@@ -21,43 +19,41 @@ export default function HomePage() {
               <Button type="button" variant="secondary">Open Command Center</Button>
             </Link>
           </div>
-          <div className="hero-meta-row">
-            <span className="tag tag-good">True contribution, not vanity ROAS</span>
-            <span className="tag">Competitor creatives</span>
-            <span className="tag">ZWIRK tells you what to do</span>
+          <div className="hero-meta-row" aria-label="Product principles">
+            <span>01 / SEE THE BUSINESS</span>
+            <span>02 / SEE THE MARKET</span>
+            <span>03 / ACT WITH EVIDENCE</span>
           </div>
         </div>
-        <Card className="hero-card">
-          <CardHeader>
-            <div className="hero-card-header">
-              <div>
-                <CardTitle>Today&apos;s brief</CardTitle>
-                <CardDescription>Attention first. Charts second.</CardDescription>
-              </div>
-              <ThemeToggle />
-            </div>
-          </CardHeader>
-          <CardContent className="hero-card-content">
-            <div className="hero-kpi-stack">
-              <div className="hero-kpi">
-                <span>Profit</span>
-                <strong>₹63,240</strong>
-              </div>
-              <div className="hero-kpi">
-                <span>True contribution ROAS</span>
-                <strong>2.7x</strong>
-              </div>
-              <div className="hero-kpi">
-                <span>Attention</span>
-                <strong>CAC 33% above allowable</strong>
-              </div>
-            </div>
-            <Link href="/login">
-              <Button type="button">See the diagnosis</Button>
-            </Link>
-          </CardContent>
-        </Card>
+        <div className="hero-instrument">
+          <div className="instrument-topline"><span>FRI 04 SEP 2026</span><span>LIVE BRIEF / 09:42</span></div>
+          <div className="instrument-metric"><strong>₹63,240</strong><span>NET CONTRIBUTION</span></div>
+          <div className="instrument-grid">
+            <div><strong>2.7x</strong><span>TRUE ROAS</span></div>
+            <div><strong>+14%</strong><span>PROFITABLE REVENUE</span></div>
+            <div><strong className="metric-alert">+33%</strong><span>CAC / GUARDRAIL</span></div>
+          </div>
+          <div className="instrument-rule" />
+          <div className="instrument-attention"><span>ATTENTION 01</span><strong>CAC is drifting above allowable</strong><small>Meta prospecting / estimated leakage ₹18.4k weekly</small></div>
+        </div>
       </header>
+
+      <section className="decision-loop-section">
+        <div className="section-head">
+          <p className="eyebrow">THE DECISION LOOP</p>
+          <h2>Observe the signal. Find the leak. Make the next move.</h2>
+        </div>
+        <div className="decision-loop" aria-label="Market to action decision loop">
+          {[
+            ["01", "MARKET"],
+            ["02", "ADS"],
+            ["03", "ECONOMICS"],
+            ["04", "DIAGNOSIS"],
+            ["05", "ACTION"],
+          ].map(([index, label]) => <div key={label} className="loop-node"><span>{index}</span><strong>{label}</strong></div>)}
+          <i className="loop-signal" aria-hidden="true" />
+        </div>
+      </section>
 
       <section className="pathway-section">
         <div className="section-head">
@@ -180,20 +176,19 @@ export default function HomePage() {
       </section>
 
       <section className="cta-section">
-        <Card className="cta-card">
-          <CardHeader>
-            <CardTitle>Stop opening eleven dashboards to make one decision.</CardTitle>
-            <CardDescription>Open Command Center. See what needs attention. Ask ZWIRK. Test it.</CardDescription>
-          </CardHeader>
-          <CardContent className="cta-actions">
+          <div className="cta-card">
+            <p className="eyebrow">READY WHEN YOU ARE</p>
+            <h2>Stop opening eleven dashboards to make one decision.</h2>
+            <p className="muted-text">Open Command Center. See what needs attention. Ask ZWIRK. Test it.</p>
+            <div className="cta-actions">
             <Link href="/login">
               <Button type="button">Start free workspace</Button>
             </Link>
             <Link href="/dashboard">
               <Button type="button" variant="secondary">View Command Center</Button>
             </Link>
-          </CardContent>
-        </Card>
+            </div>
+          </div>
       </section>
     </main>
   );

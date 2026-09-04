@@ -556,25 +556,24 @@ export async function searchGlobalAdsAccurate(
    * The RPC performs the expensive global work in PostgreSQL:
    * country eligibility, global counts, longevity and intelligence.
    */
-  const {
-    data:
-      metricsData,
-    error:
-      metricsError,
-  } =
-    await client.rpc(
-      "adspy_search_metrics",
-      {
-        p_query:
-          query,
-        p_country:
-          country,
-        p_platform:
-          input.platform,
-        p_mode:
-          input.mode,
-      },
-    );
+  const [metricsResult, pageIdsResult] = await Promise.all([
+    client.rpc("adspy_search_metrics", {
+      p_query: query,
+      p_country: country,
+      p_platform: input.platform,
+      p_mode: input.mode,
+    }),
+    client.rpc("adspy_search_page_ids", {
+      p_query: query,
+      p_country: country,
+      p_platform: input.platform,
+      p_mode: input.mode,
+      p_page: input.page,
+      p_limit: input.limit,
+    }),
+  ]);
+
+  const { data: metricsData, error: metricsError } = metricsResult;
 
   if (
     metricsError
@@ -618,29 +617,7 @@ export async function searchGlobalAdsAccurate(
    *
    * The RPC keeps country filtering and pagination server-side.
    */
-  const {
-    data:
-      pageIdRows,
-    error:
-      pageIdError,
-  } =
-    await client.rpc(
-      "adspy_search_page_ids",
-      {
-        p_query:
-          query,
-        p_country:
-          country,
-        p_platform:
-          input.platform,
-        p_mode:
-          input.mode,
-        p_page:
-          input.page,
-        p_limit:
-          input.limit,
-      },
-    );
+  const { data: pageIdRows, error: pageIdError } = pageIdsResult;
 
   if (
     pageIdError

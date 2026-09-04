@@ -19,7 +19,7 @@ const faqs = [
 
 export default function FaqPage() {
   return (
-    <main className="main policy-page">
+    <main className="main policy-page faq-page">
       <header className="policy-hero">
         <p className="eyebrow">Support</p>
         <h1>FAQ</h1>

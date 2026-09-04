@@ -38,7 +38,7 @@ const sections = [
 
 export default function TermsPage() {
   return (
-    <main className="main policy-page">
+    <main className="main policy-page terms-page">
       <header className="policy-hero">
         <p className="eyebrow">Legal</p>
         <h1>Terms and Conditions</h1>

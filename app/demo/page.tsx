@@ -63,7 +63,7 @@ export default function DemoPage() {
   }
 
   return (
-    <main className="main zwirk-page">
+    <main className="main zwirk-page demo-page">
       <header className="zwirk-hero">
         <div>
           <p className="eyebrow">Demo Mode</p>

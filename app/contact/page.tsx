@@ -1,6 +1,6 @@
 export default function ContactPage() {
   return (
-    <main className="main policy-page">
+    <main className="main policy-page contact-page">
       <header className="policy-hero">
         <p className="eyebrow">Support</p>
         <h1>Contact Us</h1>

@@ -15,7 +15,7 @@ const sections = [
 
 export default function CookiesPage() {
   return (
-    <main className="main policy-page">
+    <main className="main policy-page cookies-page">
       <header className="policy-hero">
         <p className="eyebrow">Legal</p>
         <h1>Cookie Policies</h1>

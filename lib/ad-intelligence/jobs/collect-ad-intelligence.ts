@@ -332,14 +332,12 @@ export const collectAdIntelligence =
        * For a brand that is not already indexed, the refresh
        * route starts a quick collection.
        *
-       * IMPORTANT:
-       *
-       * If the quick provider returns ZERO ads, we now stop
-       * here instead of automatically starting an expensive
-       * deep collection.
-       *
-       * This prevents a new/unknown brand from sitting on
-       * "Updating..." for a long time.
+      * IMPORTANT:
+      *
+      * A zero-result quick crawl is not evidence that Meta has
+      * no matching ads. Rendering, lazy loading, and extraction
+      * can all produce a false negative, so the deep pass is the
+      * required verification step.
        */
       if (
         collectionDepth ===
@@ -355,52 +353,16 @@ export const collectAdIntelligence =
           quickResult.ads,
         );
 
-        /*
-         * QUICK SEARCH FOUND NOTHING
-         *
-         * Do not start the deep crawl automatically.
-         *
-         * The user should receive a completed "no ads found"
-         * result instead of waiting for the expensive deep
-         * provider crawl.
-         */
-        if (
-          quickResult.ads.length ===
-          0
-        ) {
+        if (quickResult.ads.length === 0) {
           console.info(
-            "[AdIntelligenceJob] Quick collection returned zero ads; skipping deep collection.",
+            "[AdIntelligenceJob] Quick collection returned zero ads; running deep verification.",
             {
-              query:
-                data.query,
-              country:
-                data.country,
-              platform:
-                data.platform,
-              mode:
-                data.mode,
-              jobId:
-                data.jobId,
+              query: data.query,
+              country: data.country,
+              mode: data.mode,
+              jobId: data.jobId,
             },
           );
-
-          await completeCollection();
-
-          await markTrackingComplete();
-
-          return {
-            jobId:
-              data.jobId,
-
-            discoveredAds:
-              state.discoveredAds,
-
-            normalizedAds:
-              state.normalizedAds,
-
-            persistedAds:
-              state.persistedAds,
-          };
         }
       }
 
