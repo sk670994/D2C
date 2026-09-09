@@ -2093,10 +2093,16 @@ textarea {
   box-shadow: none;
 }
 
-.marketing-page .ui-button-secondary {
+.marketing-hero .ui-button-secondary {
   background: transparent;
   color: #f6f0df;
   border-color: #536374;
+}
+
+.pricing-card .ui-button-secondary {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--text-muted);
 }
 
 .hero-actions {
