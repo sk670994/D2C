@@ -43,7 +43,7 @@ export function DashboardCommandRail({
       </div>
       <div className="section-list">
         <Link href="/adspy" className="section-chip">
-          <span>Market</span>
+          <span>AdSpy</span>
           <small className="rail-status rail-neutral">AdSpy</small>
         </Link>
         <Link href="/zwirk" className="section-chip">

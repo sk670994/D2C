@@ -26,7 +26,7 @@ export async function GET() {
         {
           ok: false,
           db: "unreachable",
-          error: error.message,
+          error: "Database unavailable",
         },
         { status: 503 },
       );
@@ -38,15 +38,12 @@ export async function GET() {
       latencyMs:
         Date.now() - startedAt,
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       {
         ok: false,
         db: "unreachable",
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unknown error",
+        error: "Database unavailable",
       },
       { status: 503 },
     );

@@ -260,6 +260,7 @@ function median(
 async function loadRows(
   input: {
     query: string;
+    country: string;
     platform: AdPlatform;
     mode: SearchMode;
   },
@@ -271,6 +272,26 @@ async function loadRows(
     escapeLike(
       input.query,
     );
+
+  const { data: marketRows, error: marketError } = await client
+    .from("ad_intelligence_markets")
+    .select("creative_id")
+    .eq("country", input.country)
+    .limit(MAX_ROWS);
+
+  if (marketError) {
+    throw new Error(
+      `Competitive analytics market query failed: ${marketError.message}`,
+    );
+  }
+
+  const creativeIds = Array.from(
+    new Set((marketRows ?? []).map((row) => row.creative_id).filter(Boolean)),
+  );
+
+  if (!creativeIds.length) {
+    return [];
+  }
 
   let base = client
     .from(
@@ -286,6 +307,8 @@ async function loadRows(
       "platform",
       input.platform,
     );
+
+  base = base.in("id", creativeIds);
 
   if (
     input.mode ===
@@ -366,6 +389,7 @@ rows.push(...batch);
 export async function getCompetitiveAnalytics(
   input: {
     query: string;
+    country: string;
     platform: AdPlatform;
     mode: SearchMode;
   },

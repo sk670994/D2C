@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
+import {
+  createOAuthState,
+  oauthStateCookieOptions,
+  verifyOAuthState,
+} from "@/lib/oauth-state";
 
 const META_APP_ID = process.env.META_APP_ID!;
 const META_APP_SECRET = process.env.META_APP_SECRET!;
@@ -31,6 +36,18 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "No authorization code provided" }, { status: 400 });
   }
 
+  const supabase = await createServerAuthClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const validState = verifyOAuthState(
+    state ?? undefined,
+    "meta",
+    user?.id ?? "",
+  );
+
+  if (!user || !validState || request.cookies.get("oauth_meta_state")?.value !== state) {
+    return NextResponse.json({ error: "Invalid or expired OAuth state" }, { status: 400 });
+  }
+
   try {
     const redirectUri = getRedirectUri(request);
 
@@ -47,12 +64,6 @@ export async function GET(request: NextRequest) {
     const tokenData: MetaTokenResponse = await tokenResponse.json();
 
     // Get user ID from state (assuming it's passed as user_id)
-    const userId = state;
-
-    if (!userId) {
-      return NextResponse.json({ error: "No user ID in state" }, { status: 400 });
-    }
-
     // Get ad accounts for this user
     const accountsResponse = await fetch(
       `https://graph.facebook.com/${META_GRAPH_VERSION}/me/adaccounts?fields=account_id,id,name&access_token=${tokenData.access_token}`
@@ -64,14 +75,12 @@ export async function GET(request: NextRequest) {
 
     const accountsData = await accountsResponse.json();
 
-    const supabase = await createServerAuthClient();
-
     // Store ad accounts in database
     for (const account of (accountsData.data || []) as MetaAccount[]) {
       await supabase
         .from("ad_accounts")
         .upsert({
-          user_id: userId,
+          user_id: user.id,
           platform: "meta",
           account_id: account.account_id,
           account_name: account.name,
@@ -84,7 +93,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Redirect to dashboard with success
-    return NextResponse.redirect(new URL("/dashboard?meta_connected=true", request.url));
+    const response = NextResponse.redirect(new URL("/dashboard?meta_connected=true", request.url));
+    response.cookies.delete("oauth_meta_state");
+    return response;
 
   } catch (error) {
     console.error("Meta OAuth error:", error);
@@ -104,9 +115,12 @@ export async function POST(request: NextRequest) {
 
     const scope = "ads_read";
     const redirectUri = getRedirectUri(request);
-    const oauthUrl = `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&state=${user.id}`;
+    const state = createOAuthState("meta", user.id);
+    const oauthUrl = `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&state=${encodeURIComponent(state)}`;
 
-    return NextResponse.json({ oauth_url: oauthUrl });
+    const response = NextResponse.json({ oauth_url: oauthUrl });
+    response.cookies.set("oauth_meta_state", state, oauthStateCookieOptions);
+    return response;
 
   } catch (error) {
     console.error("Meta connect error:", error);

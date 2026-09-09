@@ -47,7 +47,7 @@ as $$
   from public.ad_intelligence_collection_jobs j
   where j.id = p_job_id
   limit 1;
-$$;
+$$A; 
 
 revoke all on function public.adspy_get_collection_job(uuid)
 from public;

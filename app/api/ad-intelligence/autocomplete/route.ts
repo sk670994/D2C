@@ -4,6 +4,7 @@ import {
   createClient as createServerAuthClient,
 } from "@/lib/supabase/server";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -71,6 +72,14 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const rate = checkRateLimit(`autocomplete:${user.id}`, 30, 60_000);
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { success: false, suggestions: [], error: "Too many autocomplete requests." },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
+      );
+    }
+
     const q = (request.nextUrl.searchParams.get("q") ?? "").trim();
     const mode =
       request.nextUrl.searchParams.get("mode") === "keyword"
@@ -88,82 +97,29 @@ export async function GET(request: NextRequest) {
 
     const client = createGlobalServiceClient();
 
-    const [brandsResult, aliasesResult, creatorsResult, creativesResult] =
-      await Promise.all([
-        client
-          .from("ad_intelligence_brands")
-          .select("id,canonical_name")
-          .ilike("canonical_name", `%${escaped}%`)
-          .limit(40),
-        client
-          .from("ad_intelligence_brand_aliases")
-          .select("brand_id,alias")
-          .ilike("alias", `%${escaped}%`)
-          .limit(40),
-        mode === "keyword"
-          ? client
-              .from("ad_intelligence_creators")
-              .select("id,canonical_name")
-              .ilike("canonical_name", `%${escaped}%`)
-              .limit(30)
-          : Promise.resolve({ data: [], error: null }),
-        client
-          .from("ad_intelligence_creatives")
-          .select(
-            "id,advertiser_id,advertiser_name,creator_name,headline,product_name",
-          )
-          .eq("platform", "meta")
-          .or(
-            mode === "advertiser"
-              ? `advertiser_name.ilike.%${escaped}%`
-              : [
-                  `advertiser_name.ilike.%${escaped}%`,
-                  `creator_name.ilike.%${escaped}%`,
-                  `headline.ilike.%${escaped}%`,
-                  `product_name.ilike.%${escaped}%`,
-                ].join(","),
-          )
-          .limit(100),
-      ]);
+    const creativesResult = await client
+      .from("ad_intelligence_creatives")
+      .select(
+        "id,advertiser_id,advertiser_name,creator_name,headline,product_name",
+      )
+      .eq("platform", "meta")
+      .or(
+        mode === "advertiser"
+          ? `advertiser_name.ilike.%${escaped}%`
+          : [
+              `advertiser_name.ilike.%${escaped}%`,
+              `creator_name.ilike.%${escaped}%`,
+              `headline.ilike.%${escaped}%`,
+              `product_name.ilike.%${escaped}%`,
+            ].join(","),
+      )
+      .limit(40);
 
-    for (const result of [
-      brandsResult,
-      aliasesResult,
-      creatorsResult,
-      creativesResult,
-    ]) {
-      if (result.error) {
-        throw new Error(result.error.message);
-      }
+    if (creativesResult.error) {
+      throw new Error(creativesResult.error.message);
     }
 
     const suggestions: Suggestion[] = [];
-
-    for (const row of brandsResult.data ?? []) {
-      suggestions.push({
-        id: String(row.id),
-        label: String(row.canonical_name ?? "").trim(),
-        type: "advertiser",
-      });
-    }
-
-    for (const row of aliasesResult.data ?? []) {
-      suggestions.push({
-        id: String(row.brand_id ?? row.alias),
-        label: String(row.alias ?? "").trim(),
-        type: "advertiser",
-      });
-    }
-
-    if (mode === "keyword") {
-      for (const row of creatorsResult.data ?? []) {
-        suggestions.push({
-          id: String(row.id),
-          label: String(row.canonical_name ?? "").trim(),
-          type: "creator",
-        });
-      }
-    }
 
     for (const row of creativesResult.data ?? []) {
       const advertiser = String(row.advertiser_name ?? "").trim();
@@ -176,6 +132,15 @@ export async function GET(request: NextRequest) {
       }
 
       if (mode === "keyword") {
+        const creator = String(row.creator_name ?? "").trim();
+        if (creator) {
+          suggestions.push({
+            id: `${row.id}:creator`,
+            label: creator,
+            type: "creator",
+          });
+        }
+
         for (const [field, value] of [
           ["headline", row.headline],
           ["product", row.product_name],

@@ -14,8 +14,10 @@ import {
 
 import type { AdPlatform } from "@/lib/ad-intelligence/types";
 import type { CollectionDepth } from "@/lib/ad-intelligence/provider";
+import type { CollectionJob } from "@/lib/ad-intelligence/global/types";
 
 import { inngest } from "@/inngest/client";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,7 +62,7 @@ function isActiveStatus(
   );
 }
 
-function mapJob(job: any) {
+function mapJob(job: CollectionJob) {
   return {
     id: job.id,
     status: job.status,
@@ -107,6 +109,14 @@ export async function POST(
             "Unauthorized",
         },
         { status: 401 },
+      );
+    }
+
+    const rate = checkRateLimit(`refresh:${user.id}`, 6, 60_000);
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { success: false, error: "Too many refresh requests." },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
       );
     }
 
@@ -172,6 +182,7 @@ export async function POST(
         country,
         platform,
         mode,
+        userId: user.id,
       });
 
     /*

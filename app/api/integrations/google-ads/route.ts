@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
+import {
+  createOAuthState,
+  oauthStateCookieOptions,
+  verifyOAuthState,
+} from "@/lib/oauth-state";
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
@@ -24,6 +29,18 @@ export async function GET(request: NextRequest) {
 
   if (!code) {
     return NextResponse.json({ error: "No authorization code provided" }, { status: 400 });
+  }
+
+  const supabase = await createServerAuthClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const validState = verifyOAuthState(
+    state ?? undefined,
+    "google",
+    user?.id ?? "",
+  );
+
+  if (!user || !validState || request.cookies.get("oauth_google_state")?.value !== state) {
+    return NextResponse.json({ error: "Invalid or expired OAuth state" }, { status: 400 });
   }
 
   try {
@@ -51,12 +68,6 @@ export async function GET(request: NextRequest) {
     const tokenData: GoogleTokenResponse = await tokenResponse.json();
 
     // Get user ID from state
-    const userId = state;
-
-    if (!userId) {
-      return NextResponse.json({ error: "No user ID in state" }, { status: 400 });
-    }
-
     // Get accessible customer IDs (this is a simplified version)
     // In production, you'd use the Google Ads API to list accessible customers
     const customersResponse = await fetch(
@@ -76,15 +87,13 @@ export async function GET(request: NextRequest) {
     const customersData = await customersResponse.json();
     const customerIds = customersData.resourceNames || [];
 
-    const supabase = await createServerAuthClient();
-
     // Store Google Ads accounts in database
     for (const customerId of customerIds) {
       const accountId = customerId.split("/")[1];
       await supabase
         .from("ad_accounts")
         .upsert({
-          user_id: userId,
+          user_id: user.id,
           platform: "google",
           account_id: accountId,
           account_name: accountId,
@@ -95,7 +104,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Redirect to dashboard with success
-    return NextResponse.redirect(new URL("/dashboard?google_connected=true", request.url));
+    const response = NextResponse.redirect(new URL("/dashboard?google_connected=true", request.url));
+    response.cookies.delete("oauth_google_state");
+    return response;
 
   } catch (error) {
     console.error("Google OAuth error:", error);
@@ -115,9 +126,12 @@ export async function POST(request: NextRequest) {
 
     const scope = "https://www.googleapis.com/auth/adwords";
     const redirectUri = getRedirectUri(request);
-    const oauthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&response_type=code&access_type=offline&prompt=consent&state=${user.id}`;
+    const state = createOAuthState("google", user.id);
+    const oauthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&response_type=code&access_type=offline&prompt=consent&state=${encodeURIComponent(state)}`;
 
-    return NextResponse.json({ oauth_url: oauthUrl });
+    const response = NextResponse.json({ oauth_url: oauthUrl });
+    response.cookies.set("oauth_google_state", state, oauthStateCookieOptions);
+    return response;
 
   } catch (error) {
     console.error("Google connect error:", error);

@@ -9,7 +9,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint --dir app --dir components --dir lib --dir scripts",
+    "lint": "eslint .",
     "validate:formulas": "npx tsx scripts/validate-formulas.ts"
   },
   "dependencies": {
@@ -34,9 +34,12 @@
     "@types/react-dom": "19.2.2",
     "baseline-browser-mapping": "^2.10.0",
     "cross-env": "7.0.3",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.3.4",
     "postcss": "^8.5.26",
     "tailwindcss": "^4.3.3",
     "ts-node": "10.9.1",
-    "typescript": "5.8.3"
+    "typescript": "5.8.3",
+    "vitest": "^5.0.0"
   }
 }

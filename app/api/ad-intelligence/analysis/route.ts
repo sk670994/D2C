@@ -50,6 +50,11 @@ export async function GET(
         ""
       ).trim();
 
+    const country =
+      (params.get("country") ?? "IN")
+        .trim()
+        .toUpperCase();
+
     const platform =
       params.get("platform") ===
         "google"
@@ -75,6 +80,7 @@ export async function GET(
     const analysis =
       await getCompetitiveAnalytics({
         query,
+        country: /^[A-Z]{2}$/.test(country) ? country : "IN",
         platform:
           platform as AdPlatform,
         mode,

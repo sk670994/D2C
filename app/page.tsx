@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { BrandLogo } from "@/components/app/BrandLogo";
 
 export default function HomePage() {
   return (
     <main className="main marketing-page">
       <header className="marketing-hero">
         <div>
+          <BrandLogo href="/" />
           <p className="eyebrow">ZOOPTRACK / D2C OPERATING INTELLIGENCE</p>
           <h1>Your ads. Your margins. Your market.<br />One decision loop.</h1>
           <p className="hero-copy">

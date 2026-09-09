@@ -203,7 +203,6 @@ export function AdSpyAnalysis({
       query.trim();
 
     if (q.length < 2) {
-      setAnalysis(null);
       return;
     }
 
@@ -284,7 +283,10 @@ export function AdSpyAnalysis({
     platform,
   ]);
 
+  const hasSearchQuery = query.trim().length >= 2;
+
   if (
+    !hasSearchQuery ||
     !analysis &&
     !loading
   ) {
@@ -322,7 +324,7 @@ export function AdSpyAnalysis({
             </h2>
 
             <p className="mt-1 max-w-2xl text-sm text-slate-500">
-              Derived from the full indexed creative set for{" "}
+              Derived from the matching ad set for{" "}
               <strong className="text-slate-700">
                 {query}
               </strong>
@@ -337,7 +339,7 @@ export function AdSpyAnalysis({
 
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Metric
-            label="Indexed"
+            label="Results"
             value={analysis.totalAds}
             detail={`${analysis.activeAds} currently active`}
             icon={<Activity size={16} />}

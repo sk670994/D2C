@@ -268,6 +268,27 @@
   background: rgba(255,255,255,.05);
 }
 
+.zt-brand-glyph {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  color: #0759ad;
+  font-size: 27px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.zt-brand-glyph svg {
+  position: absolute;
+  right: -5px;
+  bottom: -4px;
+  color: #0759ad;
+  transform: rotate(-12deg);
+}
+
 .zt-live-dot {
   width: 7px;
   height: 7px;

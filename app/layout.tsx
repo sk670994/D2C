@@ -1,6 +1,5 @@
 import "./globals.css";
 import type { Metadata } from "next";
-import { ZwirkDock } from "@/components/zwirk/ZwirkDock";
 
 export const metadata: Metadata = {
   title: "Zooptrack — Know what makes money, what the market is doing, and what to do next",
@@ -12,7 +11,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" data-theme="light" suppressHydrationWarning>
       <body>
         {children}
-        <ZwirkDock />
         <footer className="site-footer-global">
           <div className="site-footer-inner">
             <div className="footer-brand">

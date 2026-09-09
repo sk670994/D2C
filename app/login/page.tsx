@@ -2,6 +2,7 @@ import { EmailAuthForm } from "@/components/auth/EmailAuthForm";
 import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { BrandLogo } from "@/components/app/BrandLogo";
 
 export default async function LoginPage({
   searchParams
@@ -15,7 +16,7 @@ export default async function LoginPage({
     <main className="main auth-page">
       <div className="auth-shell">
         <div className="auth-hero">
-          <p className="eyebrow">Zooptrack</p>
+          <BrandLogo href="/" />
           <h1 className="auth-title">See the diagnosis, then decide.</h1>
           <p className="auth-lead">True contribution after COD and returns, competitor creatives, and ZWIRK on what to do next.</p>
           <ul className="auth-points">

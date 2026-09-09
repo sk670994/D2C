@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
 
-    let accessToken = account.access_token;
+    const accessToken = account.access_token;
 
     // Check if token is expired and refresh if needed
     if (account.token_expiry && new Date(account.token_expiry) < new Date()) {
@@ -73,13 +73,18 @@ export async function POST(request: NextRequest) {
     const metaAccountId = normalizeMetaAccountId(accountId);
 
     // Get ad-level insights so customers can see actual ads and spend.
+    const insightsParams = new URLSearchParams({
+      level: "ad",
+      fields: "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,date_start,date_stop,impressions,clicks,spend,ctr,cpc,purchase_roas",
+      date_preset: datePreset,
+    });
     const insightsResponse = await fetch(
-      `https://graph.facebook.com/${META_GRAPH_VERSION}/${metaAccountId}/insights?level=ad&fields=ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,date_start,date_stop,impressions,clicks,spend,ctr,cpc,purchase_roas&date_preset=${datePreset}&access_token=${accessToken}`
+      `https://graph.facebook.com/${META_GRAPH_VERSION}/${metaAccountId}/insights?${insightsParams.toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
     );
 
     if (!insightsResponse.ok) {
-      const errorBody = await insightsResponse.text();
-      throw new Error(`Failed to fetch Meta ad insights: ${errorBody}`);
+      throw new Error("Failed to fetch Meta ad insights");
     }
 
     const insightsData = await insightsResponse.json();

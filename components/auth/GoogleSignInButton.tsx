@@ -12,21 +12,20 @@ export function GoogleSignInButton({
   async function onClick() {
     try {
       const supabase = createClient();
-      const defaultAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
-      const appUrl =
-        defaultAppUrl ||
-        (process.env.NODE_ENV === "production"
-          ? "https://www.zooptrack.co.in"
-          : window.location.origin);
+      const appUrl = window.location.origin;
 
-      await supabase.auth.signInWithOAuth({
+      const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
           redirectTo: `${appUrl}/auth/callback?next=${encodeURIComponent(nextPath)}`
         }
       });
+
+      if (error) {
+        throw error;
+      }
     } catch {
-      window.alert("Supabase is not configured. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local");
+      window.alert("Google sign-in could not be started. Check that Google is enabled in Supabase Auth and try again.");
     }
   }
 

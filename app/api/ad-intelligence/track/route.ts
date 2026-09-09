@@ -27,6 +27,8 @@ import {
 import type {
   CollectionDepth,
 } from "@/lib/ad-intelligence/provider";
+import type { CollectionJob } from "@/lib/ad-intelligence/global/types";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 const PLATFORMS: AdPlatform[] = [
   "meta",
@@ -107,7 +109,7 @@ async function getUser() {
 }
 
 function mapJob(
-  job: any,
+  job: CollectionJob,
 ) {
   return {
     id: job.id,
@@ -133,7 +135,7 @@ function mapJob(
 
 function chooseCollectionDepth(
   platform: AdPlatform,
-  job: any,
+  job: CollectionJob,
 ): CollectionDepth {
   /*
    * Track is an explicit user action. For a brand with no
@@ -155,7 +157,7 @@ function chooseCollectionDepth(
 }
 
 async function dispatchIfQueued(
-  job: any,
+  job: CollectionJob,
   collectionDepth: CollectionDepth,
 ) {
   if (
@@ -408,6 +410,14 @@ export async function POST(
       );
     }
 
+    const rate = checkRateLimit(`track:${user.id}`, 10, 60_000);
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { success: false, error: "Too many tracking requests." },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
+      );
+    }
+
     const body =
       await request.json();
 
@@ -470,6 +480,7 @@ export async function POST(
         platform,
         mode:
           "advertiser",
+        userId: user.id,
       });
 
     const collectionDepth =
@@ -544,6 +555,14 @@ export async function DELETE(
             "Unauthorized",
         },
         { status: 401 },
+      );
+    }
+
+    const rate = checkRateLimit(`track:${user.id}`, 10, 60_000);
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { success: false, error: "Too many tracking requests." },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
       );
     }
 

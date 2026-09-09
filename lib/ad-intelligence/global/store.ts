@@ -7,6 +7,7 @@ import type { CollectionJob, CollectionJobStatus, GlobalAdRecord, GlobalLanguage
 const COLLECTION_JOB_SELECT =
   [
     "id",
+    "user_id",
     "collection_key",
     "query",
     "country",
@@ -36,6 +37,7 @@ export function buildCollectionKey(input: { query: string; country: string; plat
 function mapJob(row: any): CollectionJob {
   return {
     id: row.id,
+    userId: row.user_id ?? null,
     collectionKey: row.collection_key,
     query: row.query,
     country: row.country,
@@ -55,8 +57,10 @@ function mapJob(row: any): CollectionJob {
   };
 }
 
-export async function getCollectionJob(jobId: string): Promise<CollectionJob | null> {
-  const { data, error } = await createGlobalServiceClient().from("ad_intelligence_collection_jobs").select(COLLECTION_JOB_SELECT).eq("id", jobId).maybeSingle();
+export async function getCollectionJob(jobId: string, userId?: string): Promise<CollectionJob | null> {
+  let query = createGlobalServiceClient().from("ad_intelligence_collection_jobs").select(COLLECTION_JOB_SELECT).eq("id", jobId);
+  if (userId) query = query.eq("user_id", userId);
+  const { data, error } = await query.maybeSingle();
   if (error) throw new Error(`Failed to read collection job: ${error.message}`);
   return data ? mapJob(data) : null;
 }
@@ -66,6 +70,7 @@ export async function getOrCreateCollectionJob(input: {
   country: string;
   platform: AdPlatform;
   mode: "advertiser" | "keyword";
+  userId?: string | null;
 }): Promise<CollectionJob> {
   const client = createGlobalServiceClient();
   const query = input.query.trim();
@@ -75,6 +80,7 @@ export async function getOrCreateCollectionJob(input: {
 
   const { error: insertError } = await client.from("ad_intelligence_collection_jobs").insert({
     collection_key: collectionKey,
+    user_id: input.userId ?? null,
     query,
     country,
     platform: input.platform,
@@ -88,7 +94,9 @@ export async function getOrCreateCollectionJob(input: {
     throw new Error(`Failed to create collection job: ${insertError.message}`);
   }
 
-  const { data, error } = await client.from("ad_intelligence_collection_jobs").select(COLLECTION_JOB_SELECT).eq("collection_key", collectionKey).single();
+  let lookup = client.from("ad_intelligence_collection_jobs").select(COLLECTION_JOB_SELECT).eq("collection_key", collectionKey);
+  lookup = input.userId ? lookup.eq("user_id", input.userId) : lookup.is("user_id", null);
+  const { data, error } = await lookup.single();
   if (error || !data) throw new Error(`Failed to load collection job: ${error?.message ?? "missing row"}`);
   return mapJob(data);
 }

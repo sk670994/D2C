@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import {
   useCallback,
   useEffect,
@@ -29,7 +31,7 @@ import {
   Video,
   X,
 } from "lucide-react";
-import { ProductAnalyzePanel } from "@/components/product-analysis/ProductAnalyzePanel";
+import { AdSpyAnalysis } from "./AdSpyAnalysis";
 
 type Platform = "meta" | "google" | "linkedin";
 type SearchMode = "advertiser" | "keyword";
@@ -589,19 +591,6 @@ export function AdSpySection({
   }, []);
 
   useEffect(() => {
-    setInput(query);
-  }, [query]);
-
-  useEffect(() => {
-    const normalized = country
-      .trim()
-      .toUpperCase();
-    if (normalized) {
-      setCountryInput(normalized);
-    }
-  }, [country]);
-
-  useEffect(() => {
     const handlePointerDown = (
       event: MouseEvent,
     ) => {
@@ -680,17 +669,10 @@ export function AdSpySection({
     return ranked;
   }, [input, initialSuggestionCatalog, mode]);
 
-  useEffect(() => {
-    setSuggestions(visibleSuggestionCatalog);
-    setSuggestionLoading(false);
-
-    if (input.trim().length < 2) {
-      setSuggestionOpen(false);
-      return;
-    }
-
-    setSuggestionOpen(true);
-  }, [input, visibleSuggestionCatalog]);
+  const displayedSuggestions =
+    suggestions.length > 0
+      ? suggestions
+      : visibleSuggestionCatalog;
 
   useEffect(() => {
     const searchQuery = input.trim();
@@ -1744,19 +1726,18 @@ useEffect(() => {
             </span>
 
             <h2>
-              Research competitors without losing the signal.
+              Search the market and see what competitors are running.
             </h2>
 
             <p>
-              Search Zooptrack&apos;s indexed observations,
-              see what is running, and let the collector
-              verify the market in the background.
+              Explore active ads, compare creative patterns,
+              and keep track of the brands shaping the market.
             </p>
           </div>
 
           <div className="zt-source-badge">
             <span className="zt-live-dot" />
-            Indexed from Meta
+            Meta source
           </div>
         </div>
 
@@ -1808,6 +1789,7 @@ useEffect(() => {
                       event.target.value;
 
                     setInput(next);
+                    setSuggestions([]);
 
                     onQueryChange?.(next);
 
@@ -1817,7 +1799,7 @@ useEffect(() => {
                   }}
                   onFocus={() => {
                     if (
-                      suggestions.length >
+                      displayedSuggestions.length >
                       0
                     ) {
                       setSuggestionOpen(
@@ -1845,9 +1827,12 @@ useEffect(() => {
                   }}
                   placeholder="Search a brand, advertiser or keyword"
                   aria-label="Search a brand, advertiser or keyword"
+                  role="combobox"
                   aria-expanded={
                     suggestionOpen
                   }
+                  aria-controls="adspy-search-suggestions"
+                  aria-haspopup="listbox"
                   aria-autocomplete="list"
                 />
 
@@ -1870,6 +1855,7 @@ useEffect(() => {
                 <div
                   className="zt-suggestions"
                   role="listbox"
+                  id="adspy-search-suggestions"
                   aria-label="Search suggestions"
                 >
                   <div className="zt-suggestion-head">
@@ -1887,10 +1873,10 @@ useEffect(() => {
 
                     {suggestionLoading ? (
                       <div className="zt-suggestion-empty">
-                        Finding matching indexed suggestions…
+                        Finding matching suggestions…
                       </div>
-                    ) : suggestions.length ? (
-                    suggestions.map(
+                    ) : displayedSuggestions.length ? (
+                    displayedSuggestions.map(
                       (
                         suggestion,
                       ) => (
@@ -1899,6 +1885,7 @@ useEffect(() => {
                           type="button"
                           className="zt-suggestion"
                           role="option"
+                          aria-selected="false"
                           onMouseDown={(
                             event,
                           ) =>
@@ -1954,11 +1941,11 @@ useEffect(() => {
                     )
                   ) : suggestionLoading ? (
                     <div className="zt-suggestion-empty">
-                      Finding matching indexed suggestions…
+                      Finding matching suggestions…
                     </div>
                   ) : (
                     <div className="zt-suggestion-empty">
-                      No matching indexed suggestions.
+                      No matching suggestions.
                     </div>
                   )}
                 </div>
@@ -2120,8 +2107,7 @@ useEffect(() => {
                 </strong>
 
                 <span>
-                  Existing results remain available while
-                  Zooptrack refreshes the source data.
+                  Existing ads stay available while we refresh the latest results.
                 </span>
               </div>
 
@@ -2161,9 +2147,9 @@ useEffect(() => {
 <div className="zt-stats-grid">
   <Stat
     icon={<Activity size={16} />}
-    label="Indexed"
+    label="Results"
     value={summary.totalAds}
-    hint="Entire filtered dataset"
+    hint="Matched ads"
   />
 
   <Stat
@@ -2274,7 +2260,7 @@ useEffect(() => {
         : "—"}
     </strong>
     <small>
-      Of indexed creatives
+      Of matched ads
     </small>
   </div>
 
@@ -2290,7 +2276,7 @@ useEffect(() => {
         : "—"}
     </strong>
     <small>
-      Of indexed creatives
+      Of matched ads
     </small>
   </div>
 </div>
@@ -2308,7 +2294,7 @@ useEffect(() => {
             </div>
 
             <span className="zt-result-count">
-              {pagination.total} indexed
+              {pagination.total} results
               {lastUpdatedAt
                 ? ` · Updated ${dateLabel(
                     lastUpdatedAt,
@@ -2347,13 +2333,11 @@ useEffect(() => {
               />
 
               <strong>
-                Searching indexed creatives
+                Searching ads
               </strong>
 
               <span>
-                Results are loaded from Zooptrack's
-                indexed market; source refresh happens
-                separately in the background.
+                Pulling the latest matching ads and updating the feed in the background.
               </span>
             </div>
           ) : filteredAds.length ? (
@@ -2380,13 +2364,13 @@ useEffect(() => {
 
               <strong>
                 {activeJob
-                  ? "No indexed results yet"
-                  : "No indexed creatives match this view."}
+                  ? "No results yet"
+                  : "No ads match this view."}
               </strong>
 
               <span>
                 {activeJob
-                  ? "Zooptrack is collecting the public source in the background. Existing results are not blocked."
+                  ? "We are refreshing the latest ad inventory in the background. Existing results remain available."
                   : "Try another mode, search term or filter."}
               </span>
             </div>
@@ -2455,6 +2439,12 @@ useEffect(() => {
           ) : null}
         </section>
       </section>
+
+      <AdSpyAnalysis
+        query={input}
+        country={countryInput}
+        platform={platform}
+      />
 
       {selectedAd ? (
         <div

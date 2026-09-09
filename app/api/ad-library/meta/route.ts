@@ -39,6 +39,17 @@ type MetaSearchCacheEntry = {
 const searchCache = new Map<string, MetaSearchCacheEntry>();
 const SUCCESS_CACHE_MS = 5 * 60 * 1000;
 const ERROR_CACHE_MS = 60 * 1000;
+const MAX_CACHE_ENTRIES = 200;
+const META_REQUEST_TIMEOUT_MS = 15_000;
+
+function setCacheEntry(key: string, entry: MetaSearchCacheEntry) {
+  if (searchCache.size >= MAX_CACHE_ENTRIES) {
+    const oldestKey = searchCache.keys().next().value;
+    if (oldestKey) searchCache.delete(oldestKey);
+  }
+
+  searchCache.set(key, entry);
+}
 
 function getMetaLibraryToken() {
   if (process.env.META_AD_LIBRARY_ACCESS_TOKEN) return process.env.META_AD_LIBRARY_ACCESS_TOKEN;
@@ -77,7 +88,6 @@ export async function GET(request: NextRequest) {
     ad_reached_countries: JSON.stringify([country]),
     fields: META_AD_LIBRARY_FIELDS,
     limit: String(limit),
-    access_token: accessToken
   });
   const cacheKey = `${query.toLowerCase()}|${country}|${limit}`;
   const cached = searchCache.get(cacheKey);
@@ -87,9 +97,27 @@ export async function GET(request: NextRequest) {
   searchCache.delete(cacheKey);
 
   try {
-    const response = await fetch(`https://graph.facebook.com/${META_GRAPH_VERSION}/ads_archive?${params.toString()}`, {
-      headers: { Accept: "application/json" }
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      META_REQUEST_TIMEOUT_MS,
+    );
+
+    let response: Response;
+    try {
+      response = await fetch(
+        `https://graph.facebook.com/${META_GRAPH_VERSION}/ads_archive?${params.toString()}`,
+        {
+          signal: controller.signal,
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+        },
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
 
     const data = await response.json();
 
@@ -105,7 +133,7 @@ export async function GET(request: NextRequest) {
           ? "Generate a new Meta Ad Library access token and update META_AD_LIBRARY_ACCESS_TOKEN."
           : "Check Meta app permissions and try again."
       };
-      searchCache.set(cacheKey, {
+      setCacheEntry(cacheKey, {
         expiresAt: Date.now() + ERROR_CACHE_MS,
         response: errorResponse,
         status: providerError?.code === 190 ? 401 : response.status
@@ -134,7 +162,7 @@ export async function GET(request: NextRequest) {
       ads,
       paging: data.paging || null
     };
-    searchCache.set(cacheKey, {
+    setCacheEntry(cacheKey, {
       expiresAt: Date.now() + SUCCESS_CACHE_MS,
       response: successResponse,
       status: 200
@@ -143,8 +171,13 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error("Meta Ad Library request failed:", error);
     return NextResponse.json(
-      { error: "Unable to reach Meta Ad Library. Check the token and Meta app access." },
-      { status: 502 }
+      {
+        error:
+          error instanceof DOMException && error.name === "AbortError"
+            ? "Meta Ad Library timed out. Please try again."
+            : "Unable to reach Meta Ad Library. Check the token and Meta app access.",
+      },
+      { status: 502 },
     );
   }
 }

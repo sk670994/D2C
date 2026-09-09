@@ -78,6 +78,7 @@ export type CollectionJobStatus =
 
 export type CollectionJob = {
   id: string;
+  userId: string | null;
   collectionKey: string;
   query: string;
   country: string;

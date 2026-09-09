@@ -76,17 +76,10 @@ export async function GET(
     const client =
       createGlobalServiceClient();
 
-    const {
-      data,
-      error,
-    } =
-      await client.rpc(
-        "adspy_get_collection_job",
-        {
-          p_job_id:
-            normalizedJobId,
-        },
-      );
+    const { data, error } = await client.rpc("adspy_get_collection_job", {
+      p_job_id: normalizedJobId,
+      p_user_id: user.id,
+    });
 
     if (error) {
       console.error(
