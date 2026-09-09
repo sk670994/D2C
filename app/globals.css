@@ -3562,6 +3562,13 @@ body:has(.zt-app-shell) .site-footer-global {
   line-height: 1;
 }
 
+.zt-brand-logo-image {
+  width: 176px;
+  height: 48px;
+  object-fit: cover;
+  object-position: center;
+}
+
 .zt-brand-glyph svg {
   position: absolute;
   right: -5px;
