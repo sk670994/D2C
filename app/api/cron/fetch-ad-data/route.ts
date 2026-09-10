@@ -75,6 +75,10 @@ export async function GET(request: NextRequest) {
             }
         }
 
+        if (!accessToken) {
+  throw new Error("Unable to obtain a valid access token");
+}
+
         // 📊 FETCH DATA
         let fetchResult;
 
