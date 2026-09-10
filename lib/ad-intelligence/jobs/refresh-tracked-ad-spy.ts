@@ -1,8 +1,6 @@
 import "server-only";
 
-import {
-  inngest,
-} from "@/inngest/client";
+import { send } from "@vercel/queue";
 
 import {
   buildCollectionKey,
@@ -12,184 +10,129 @@ import {
   listTrackedBrands,
 } from "@/lib/ad-intelligence/global/store";
 
-export const refreshTrackedAdSpy =
-  inngest.createFunction(
-    {
-      id:
-        "zooptrack-refresh-tracked-adspy",
+export async function refreshTrackedAdSpy(): Promise<{
+  trackedBrands: number;
+  dispatched: number;
+}> {
+  const brands =
+    await listTrackedBrands();
 
-      retries: 1,
+  const now = Date.now();
 
-      triggers: [
-        {
-          /*
-           * Wake hourly.
-           *
-           * Each tracked brand decides whether
-           * its own refresh is due.
-           */
-          cron:
-            "0 * * * *",
-        },
-      ],
-    },
+  let dispatched = 0;
 
-    async ({ step }) => {
-      const brands =
-        await step.run(
-          "load-tracked-brands",
-          async () =>
-            listTrackedBrands(),
-        );
+  for (const brand of brands) {
+    const refreshHours =
+      Math.max(
+        1,
+        Number(
+          brand.refreshHours ?? 24,
+        ),
+      );
 
-      const now =
-        Date.now();
+    const lastCollectedAt =
+      brand.lastCollectedAt ?? null;
 
-      let dispatched =
-        0;
+    const lastCollectedMs =
+      lastCollectedAt
+        ? new Date(
+            lastCollectedAt,
+          ).getTime()
+        : null;
 
-      for (
-        const brand of brands
-      ) {
-        const refreshHours =
-          Math.max(
-            1,
-            Number(
-              brand.refreshHours ??
-                24,
-            ),
-          );
+    const shouldRefresh =
+      lastCollectedMs === null ||
+      !Number.isFinite(
+        lastCollectedMs,
+      ) ||
+      now -
+          lastCollectedMs >=
+        refreshHours *
+          60 *
+          60 *
+          1000;
 
-        const lastCollectedAt =
-          brand.lastCollectedAt ??
-          null;
+    if (!shouldRefresh) {
+      continue;
+    }
 
-        const lastCollectedMs =
-          lastCollectedAt
-            ? new Date(
-                lastCollectedAt,
-              ).getTime()
-            : null;
+    const job =
+      await getOrCreateCollectionJob({
+        query: brand.query,
+        country: brand.country,
+        platform: brand.platform,
+        mode: "advertiser",
+      });
 
-        const shouldRefresh =
-          lastCollectedMs ===
-            null ||
-          !Number.isFinite(
-            lastCollectedMs,
-          ) ||
-          now -
-              lastCollectedMs >=
-            refreshHours *
-              60 *
-              60 *
-              1000;
+    const claimed =
+      await claimCollectionDispatch(
+        job.id,
+      );
 
-        if (
-          !shouldRefresh
-        ) {
-          continue;
-        }
+    if (!claimed) {
+      continue;
+    }
 
-        const job =
-          await step.run(
-            `ensure-job-${brand.id}`,
-            async () =>
-              getOrCreateCollectionJob(
-                {
-                  query:
-                    brand.query,
+    const latest =
+      await getCollectionJob(
+        job.id,
+      );
 
-                  country:
-                    brand.country,
+    if (!latest) {
+      throw new Error(
+        "Tracked collection job disappeared before dispatch.",
+      );
+    }
 
-                  platform:
-                    brand.platform,
+    const collectionKey =
+      buildCollectionKey({
+        query: latest.query,
+        country: latest.country,
+        platform: latest.platform,
+        mode: latest.mode,
+      });
 
-                  mode:
-                    "advertiser",
-                },
-              ),
-          );
+    /*
+     * Queue messages are intentionally idempotent inside a
+     * short dispatch window. This prevents duplicate queue
+     * submissions while still allowing legitimate later
+     * refreshes.
+     */
+    const dispatchBucket =
+      Math.floor(
+        Date.now() / 600_000,
+      );
 
-        const claimed =
-          await step.run(
-            `claim-${brand.id}`,
-            async () =>
-              claimCollectionDispatch(
-                job.id,
-              ),
-          );
+    await send(
+      "adspy-collection",
+      {
+        jobId: latest.id,
+        query: latest.query,
+        country: latest.country,
+        platform: latest.platform,
+        mode: latest.mode,
+        collectionKey,
+        collectionDepth:
+          latest.platform === "meta"
+            ? "quick"
+            : "deep",
+      },
+      {
+        idempotencyKey:
+          `${collectionKey}:dispatch:${dispatchBucket}`,
 
-        if (
-          !claimed
-        ) {
-          continue;
-        }
+        retentionSeconds:
+          24 * 60 * 60,
+      },
+    );
 
-        await step.run(
-          `dispatch-${brand.id}`,
-          async () => {
-            const latest =
-              await getCollectionJob(
-                job.id,
-              );
+    dispatched += 1;
+  }
 
-            if (
-              !latest
-            ) {
-              throw new Error(
-                "Tracked collection job disappeared before dispatch.",
-              );
-            }
+  return {
+    trackedBrands:
+      brands.length,
 
-            await inngest.send({
-              name:
-                "zooptrack/ad-intelligence.collection.requested",
-
-              data: {
-                jobId:
-                  latest.id,
-
-                query:
-                  latest.query,
-
-                country:
-                  latest.country,
-
-                platform:
-                  latest.platform,
-
-                mode:
-                  latest.mode,
-
-                collectionKey:
-                  buildCollectionKey({
-                    query:
-                      latest.query,
-
-                    country:
-                      latest.country,
-
-                    platform:
-                      latest.platform,
-
-                    mode:
-                      latest.mode,
-                  }),
-              },
-            });
-          },
-        );
-
-        dispatched +=
-          1;
-      }
-
-      return {
-        trackedBrands:
-          brands.length,
-
-        dispatched,
-      };
-    },
-  );
+    dispatched,
+  };
+}

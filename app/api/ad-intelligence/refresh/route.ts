@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 
 import {
   createClient as createServerAuthClient,
@@ -16,7 +16,7 @@ import type { AdPlatform } from "@/lib/ad-intelligence/types";
 import type { CollectionDepth } from "@/lib/ad-intelligence/provider";
 import type { CollectionJob } from "@/lib/ad-intelligence/global/types";
 
-import { inngest } from "@/inngest/client";
+import { send } from "@vercel/queue";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -214,10 +214,7 @@ export async function POST(
      * quick/deep implementation is Meta-specific.
      */
     const collectionDepth: CollectionDepth =
-      platform === "meta" &&
-      Number(
-        job.discoveredAds ?? 0,
-      ) === 0
+      platform === "meta"
         ? "quick"
         : "deep";
 
@@ -248,44 +245,38 @@ export async function POST(
           );
         }
 
-        await inngest.send({
-          name:
-            "zooptrack/ad-intelligence.collection.requested",
+       const collectionKey =
+  buildCollectionKey({
+    query: latest.query,
+    country: latest.country,
+    platform: latest.platform,
+    mode: latest.mode,
+  });
 
-          data: {
-            jobId:
-              latest.id,
+const dispatchBucket =
+  Math.floor(
+    Date.now() / 600_000,
+  );
 
-            query:
-              latest.query,
+await send(
+  "adspy-collection",
+  {
+    jobId: latest.id,
+    query: latest.query,
+    country: latest.country,
+    platform: latest.platform,
+    mode: latest.mode,
+    collectionKey,
+    collectionDepth,
+  },
+  {
+    idempotencyKey:
+      `${collectionKey}:dispatch:${dispatchBucket}`,
 
-            country:
-              latest.country,
-
-            platform:
-              latest.platform,
-
-            mode:
-              latest.mode,
-
-            collectionKey:
-              buildCollectionKey({
-                query:
-                  latest.query,
-
-                country:
-                  latest.country,
-
-                platform:
-                  latest.platform,
-
-                mode:
-                  latest.mode,
-              }),
-
-            collectionDepth,
-          },
-        });
+    retentionSeconds:
+      24 * 60 * 60,
+  },
+);
 
         job =
           latest;

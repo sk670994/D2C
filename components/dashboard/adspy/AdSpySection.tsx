@@ -675,64 +675,115 @@ export function AdSpySection({
       : visibleSuggestionCatalog;
 
   useEffect(() => {
-    const searchQuery = input.trim();
+  const searchQuery = input.trim();
 
-    if (searchQuery.length < 2) {
+  if (searchQuery.length < 2) {
+    return;
+  }
+
+  const controller = new AbortController();
+
+  const timer = window.setTimeout(async () => {
+    if (!mountedRef.current) {
       return;
     }
 
-    const controller = new AbortController();
-    const timer = window.setTimeout(async () => {
-      setSuggestionLoading(true);
+    setSuggestionLoading(true);
 
-      try {
-        const url = new URL(
-          "/api/ad-intelligence/autocomplete",
-          window.location.origin,
-        );
-        url.searchParams.set("q", searchQuery);
-        url.searchParams.set("mode", mode);
+    try {
+      const url = new URL(
+        "/api/ad-intelligence/autocomplete",
+        window.location.origin,
+      );
 
-        const response = await fetch(url, {
-          signal: controller.signal,
-          cache: "no-store",
-        });
-        const data = (await response.json()) as {
-          success?: boolean;
-          suggestions?: Suggestion[];
-        };
+      url.searchParams.set("q", searchQuery);
+      url.searchParams.set("mode", mode);
+      url.searchParams.set("platform", platform);
 
-        if (!response.ok || !data.success || !mountedRef.current) {
-          return;
-        }
+      const response = await fetch(url, {
+        signal: controller.signal,
+        cache: "no-store",
+      });
 
-        const serverSuggestions = data.suggestions ?? [];
-        const merged = new Map<string, Suggestion>();
+      const data = (await response.json()) as {
+        success?: boolean;
+        suggestions?: Suggestion[];
+      };
 
-        for (const suggestion of [
-          ...serverSuggestions,
-          ...visibleSuggestionCatalog,
-        ]) {
-          const key = `${suggestion.type}:${suggestion.label.toLocaleLowerCase()}`;
-          if (!merged.has(key)) merged.set(key, suggestion);
-        }
-
-        setSuggestions(Array.from(merged.values()).slice(0, 8));
-        setSuggestionOpen(true);
-      } catch (error) {
-        if (!(error instanceof DOMException && error.name === "AbortError")) {
-          setSuggestions(visibleSuggestionCatalog);
-        }
-      } finally {
-        if (mountedRef.current) setSuggestionLoading(false);
+      if (
+        !mountedRef.current ||
+        controller.signal.aborted
+      ) {
+        return;
       }
-    }, 180);
 
-    return () => {
-      controller.abort();
-      window.clearTimeout(timer);
-    };
-  }, [input, mode, visibleSuggestionCatalog]);
+      if (!response.ok || !data.success) {
+        return;
+      }
+
+      const serverSuggestions =
+        Array.isArray(data.suggestions)
+          ? data.suggestions.slice(0, 8)
+          : [];
+
+      const fallbackSuggestions =
+        visibleSuggestionCatalog.slice(0, 8);
+
+      const merged = new Map<string, Suggestion>();
+
+      for (const suggestion of [
+        ...serverSuggestions,
+        ...fallbackSuggestions,
+      ]) {
+        const key = `${suggestion.type}:${suggestion.label
+          .trim()
+          .toLocaleLowerCase()}`;
+
+        if (!merged.has(key)) {
+          merged.set(key, suggestion);
+        }
+      }
+
+      const nextSuggestions =
+        Array.from(merged.values()).slice(0, 8);
+
+      setSuggestions(nextSuggestions);
+      setSuggestionOpen(nextSuggestions.length > 0);
+    } catch (error) {
+      if (
+        error instanceof DOMException &&
+        error.name === "AbortError"
+      ) {
+        return;
+      }
+
+      if (mountedRef.current) {
+        const fallback =
+          visibleSuggestionCatalog.slice(0, 8);
+
+        setSuggestions(fallback);
+        setSuggestionOpen(fallback.length > 0);
+      }
+    } finally {
+      if (
+        mountedRef.current &&
+        !controller.signal.aborted
+      ) {
+        setSuggestionLoading(false);
+      }
+    }
+  }, 300);
+
+  return () => {
+    controller.abort();
+    window.clearTimeout(timer);
+  };
+}, [
+  input,
+  mode,
+  platform,
+  visibleSuggestionCatalog,
+]);
 
   const refreshCollection = useCallback(
     async ({
@@ -1378,7 +1429,7 @@ useEffect(() => {
       () => {
         void poll();
       },
-      1800,
+      750,
     );
 
   return () => {

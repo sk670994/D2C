@@ -20,14 +20,16 @@ import {
   trackBrand,
 } from "@/lib/ad-intelligence/global/store";
 
-import {
-  inngest,
-} from "@/inngest/client";
-
 import type {
   CollectionDepth,
 } from "@/lib/ad-intelligence/provider";
-import type { CollectionJob } from "@/lib/ad-intelligence/global/types";
+
+import type {
+  CollectionJob,
+} from "@/lib/ad-intelligence/global/types";
+
+import { send } from "@vercel/queue";
+
 import { checkRateLimit } from "@/lib/rate-limit";
 
 const PLATFORMS: AdPlatform[] = [
@@ -138,11 +140,13 @@ function chooseCollectionDepth(
   job: CollectionJob,
 ): CollectionDepth {
   /*
-   * Track is an explicit user action. For a brand with no
-   * discovered creatives yet, use quick discovery first so
-   * the initial tracked dataset becomes available sooner.
+   * Tracking is an explicit user action.
    *
-   * Existing tracked data gets a normal deep refresh.
+   * For a brand that has never been collected:
+   * use quick Meta discovery so the initial dataset becomes
+   * available as soon as possible.
+   *
+   * Existing tracked data gets a deep refresh.
    */
   if (
     platform === "meta" &&
@@ -156,13 +160,29 @@ function chooseCollectionDepth(
   return "deep";
 }
 
+function buildDispatchIdempotencyKey(
+  collectionKey: string,
+) {
+  /*
+   * Vercel Queues provides at-least-once delivery.
+   *
+   * Keep the idempotency window short enough that a legitimate
+   * later refresh is still allowed to enqueue another job.
+   */
+  const dispatchBucket =
+    Math.floor(
+      Date.now() / 600_000,
+    );
+
+  return `${collectionKey}:dispatch:${dispatchBucket}`;
+}
+
 async function dispatchIfQueued(
   job: CollectionJob,
   collectionDepth: CollectionDepth,
 ) {
   if (
-    job.status !==
-    "queued"
+    job.status !== "queued"
   ) {
     return {
       job,
@@ -198,44 +218,34 @@ async function dispatchIfQueued(
     );
   }
 
-  await inngest.send({
-    name:
-      "zooptrack/ad-intelligence.collection.requested",
+  const collectionKey =
+    buildCollectionKey({
+      query: latest.query,
+      country: latest.country,
+      platform: latest.platform,
+      mode: latest.mode,
+    });
 
-    data: {
-      jobId:
-        latest.id,
-
-      query:
-        latest.query,
-
-      country:
-        latest.country,
-
-      platform:
-        latest.platform,
-
-      mode:
-        latest.mode,
-
-      collectionKey:
-        buildCollectionKey({
-          query:
-            latest.query,
-
-          country:
-            latest.country,
-
-          platform:
-            latest.platform,
-
-          mode:
-            latest.mode,
-        }),
-
+  await send(
+    "adspy-collection",
+    {
+      jobId: latest.id,
+      query: latest.query,
+      country: latest.country,
+      platform: latest.platform,
+      mode: latest.mode,
+      collectionKey,
       collectionDepth,
     },
-  });
+    {
+      idempotencyKey:
+        buildDispatchIdempotencyKey(
+          collectionKey,
+        ),
+      retentionSeconds:
+        24 * 60 * 60,
+    },
+  );
 
   return {
     job: latest,
@@ -256,8 +266,7 @@ export async function GET(
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Unauthorized",
+          error: "Unauthorized",
         },
         { status: 401 },
       );
@@ -288,8 +297,7 @@ export async function GET(
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Missing query.",
+          error: "Missing query.",
         },
         { status: 400 },
       );
@@ -356,18 +364,13 @@ export async function GET(
 
     return NextResponse.json({
       success: true,
-
-      tracked:
-        Boolean(data),
-
+      tracked: Boolean(data),
       id:
         data?.id ??
         null,
-
       lastCollectedAt:
         data?.last_collected_at ??
         null,
-
       refreshHours:
         data?.refresh_hours ??
         24,
@@ -403,18 +406,35 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Unauthorized",
+          error: "Unauthorized",
         },
         { status: 401 },
       );
     }
 
-    const rate = checkRateLimit(`track:${user.id}`, 10, 60_000);
+    const rate =
+      checkRateLimit(
+        `track:${user.id}`,
+        10,
+        60_000,
+      );
+
     if (!rate.allowed) {
       return NextResponse.json(
-        { success: false, error: "Too many tracking requests." },
-        { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
+        {
+          success: false,
+          error:
+            "Too many tracking requests.",
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After":
+              String(
+                rate.retryAfterSeconds,
+              ),
+          },
+        },
       );
     }
 
@@ -440,8 +460,7 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Missing query.",
+          error: "Missing query.",
         },
         { status: 400 },
       );
@@ -463,13 +482,9 @@ export async function POST(
     }
 
     await trackBrand({
-      userId:
-        user.id,
-
+      userId: user.id,
       query,
-
       country,
-
       platform,
     });
 
@@ -478,8 +493,7 @@ export async function POST(
         query,
         country,
         platform,
-        mode:
-          "advertiser",
+        mode: "advertiser",
         userId: user.id,
       });
 
@@ -488,9 +502,6 @@ export async function POST(
         platform,
         job,
       );
-
-    let dispatched =
-      false;
 
     const dispatchResult =
       await dispatchIfQueued(
@@ -501,23 +512,14 @@ export async function POST(
     job =
       dispatchResult.job;
 
-    dispatched =
-      dispatchResult.dispatched;
-
     return NextResponse.json({
       success: true,
-
       tracked: true,
-
-      jobId:
-        job.id,
-
-      dispatched,
-
+      jobId: job.id,
+      dispatched:
+        dispatchResult.dispatched,
       collectionDepth,
-
-      job:
-        mapJob(job),
+      job: mapJob(job),
     });
   } catch (error) {
     console.error(
@@ -551,18 +553,35 @@ export async function DELETE(
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Unauthorized",
+          error: "Unauthorized",
         },
         { status: 401 },
       );
     }
 
-    const rate = checkRateLimit(`track:${user.id}`, 10, 60_000);
+    const rate =
+      checkRateLimit(
+        `track:${user.id}`,
+        10,
+        60_000,
+      );
+
     if (!rate.allowed) {
       return NextResponse.json(
-        { success: false, error: "Too many tracking requests." },
-        { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
+        {
+          success: false,
+          error:
+            "Too many tracking requests.",
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After":
+              String(
+                rate.retryAfterSeconds,
+              ),
+          },
+        },
       );
     }
 
@@ -591,8 +610,7 @@ export async function DELETE(
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Missing query.",
+          error: "Missing query.",
         },
         { status: 400 },
       );

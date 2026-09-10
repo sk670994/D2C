@@ -1,7 +1,5 @@
 import "server-only";
 
-import { inngest } from "@/inngest/client";
-
 import { adProviders } from "@/lib/ad-intelligence/providers";
 
 import type {
@@ -15,6 +13,7 @@ import type {
 } from "@/lib/ad-intelligence/provider";
 
 import {
+  getCollectionJob,
   markTrackedBrandCollected,
   updateCollectionJob,
 } from "@/lib/ad-intelligence/global/store";
@@ -23,7 +22,7 @@ import { processAdChunk } from "./process-ad-chunk";
 
 const CHUNK_SIZE = 50;
 
-type CollectionEvent = {
+export type CollectionEvent = {
   jobId: string;
   query: string;
   country: string;
@@ -39,375 +38,319 @@ type PersistState = {
   persistedAds: number;
 };
 
-export const collectAdIntelligence =
-  inngest.createFunction(
-    {
-      id: "zooptrack-collect-ad-intelligence",
+export async function collectAdIntelligence(
+  data: CollectionEvent,
+): Promise<{
+  jobId: string;
+  discoveredAds: number;
+  normalizedAds: number;
+  persistedAds: number;
+}> {
+  /*
+   * Vercel Queues provides at-least-once delivery.
+   *
+   * Always check the current job state before starting a new
+   * collection so a successfully completed job is not scraped
+   * again when the same message is redelivered.
+   */
+  const existingJob = await getCollectionJob(data.jobId);
 
-      retries: 2,
+  if (!existingJob) {
+    throw new Error(
+      `Collection job ${data.jobId} was not found.`,
+    );
+  }
 
-      triggers: {
-        event:
-          "zooptrack/ad-intelligence.collection.requested",
-      },
+  if (existingJob.status === "complete") {
+    return {
+      jobId: existingJob.id,
+      discoveredAds: Number(
+        existingJob.discoveredAds ?? 0,
+      ),
+      normalizedAds: Number(
+        existingJob.normalizedAds ?? 0,
+      ),
+      persistedAds: Number(
+        existingJob.persistedAds ?? 0,
+      ),
+    };
+  }
 
-      onFailure: async ({
-        event,
-        error,
-      }) => {
-        const data =
-          (
-            event.data as {
-              jobId?: string;
-            }
-          ) ?? null;
+  /*
+   * Normalize the requested collection depth.
+   *
+   * Any value other than explicit "quick" is treated as deep.
+   * This keeps the worker backward-compatible with existing
+   * queue messages that may not contain collectionDepth.
+   */
+  const collectionDepth: "quick" | "deep" =
+    data.collectionDepth === "quick"
+      ? "quick"
+      : "deep";
 
-        if (!data?.jobId) {
-          return;
-        }
+  const startedAt = new Date().toISOString();
 
-        try {
-          await updateCollectionJob(
-            data.jobId,
-            {
-              status: "failed",
-              stage: "failed",
-              errorMessage:
-                error?.message ??
-                "Collection failed.",
-              completedAt:
-                new Date().toISOString(),
-            },
-          );
-        } catch (updateError) {
-          console.error(
-            "[AdIntelligenceJob] Failed to mark job failed:",
-            updateError,
-          );
-        }
-      },
-    },
+  try {
+    /*
+     * Mark the job as actively processing.
+     */
+    await updateCollectionJob(data.jobId, {
+      status: "scraping",
+      stage: "scraping",
+      startedAt,
+      errorMessage: null,
+    });
 
-    async ({ event, step }) => {
-      const data =
-        event.data as CollectionEvent;
+    const state: PersistState = {
+      discoveredAds: 0,
+      normalizedAds: 0,
+      persistedAds: 0,
+    };
 
-      const startedAt =
-        new Date().toISOString();
-
-      const collectionDepth =
-        data.collectionDepth ===
-        "quick"
-          ? "quick"
-          : "deep";
-
-      await step.run(
-        "mark-scraping",
-        async () => {
-          await updateCollectionJob(
-            data.jobId,
-            {
-              status: "scraping",
-              stage: "scraping",
-              startedAt,
-              errorMessage: null,
-            },
-          );
-        },
-      );
-
-      const state: PersistState = {
-        discoveredAds: 0,
-        normalizedAds: 0,
-        persistedAds: 0,
-      };
-
-      /*
-       * Persist provider results in chunks and update the
-       * collection job after every chunk.
-       */
-      const persistProviderResult = async (
-        phase: "quick" | "deep",
-        ads: CompetitorAd[],
-      ) => {
-        state.discoveredAds +=
-          ads.length;
-
-        const totalChunks =
-          Math.max(
-            1,
-            Math.ceil(
-              ads.length /
-                CHUNK_SIZE,
-            ),
-          );
-
-        for (
-          let offset = 0;
-          offset < ads.length;
-          offset += CHUNK_SIZE
-        ) {
-          const chunkIndex =
-            Math.floor(
-              offset /
-                CHUNK_SIZE,
-            ) + 1;
-
-          const chunk =
-            ads.slice(
-              offset,
-              offset +
-                CHUNK_SIZE,
-            );
-
-          const result =
-            await step.run(
-              `persist-${phase}-chunk-${chunkIndex}`,
-              async () =>
-                processAdChunk({
-                  ads: chunk,
-                }),
-            );
-
-          state.normalizedAds +=
-            chunk.length;
-
-          state.persistedAds +=
-            Number(
-              result.insertedOrUpdated ??
-                0,
-            );
-
-          await step.run(
-            `progress-${phase}-chunk-${chunkIndex}`,
-            async () => {
-              const finalChunk =
-                chunkIndex ===
-                totalChunks;
-
-              await updateCollectionJob(
-                data.jobId,
-                {
-                  status:
-                    finalChunk &&
-                    phase === "deep"
-                      ? "finalizing"
-                      : "enriching",
-
-                  stage:
-                    finalChunk &&
-                    phase === "deep"
-                      ? "finalizing"
-                      : "enriching",
-
-                  discoveredAds:
-                    state.discoveredAds,
-
-                  normalizedAds:
-                    state.normalizedAds,
-
-                  persistedAds:
-                    state.persistedAds,
-                },
-              );
-            },
-          );
-        }
-      };
+    /*
+     * Persist provider results in bounded chunks.
+     *
+     * This prevents one large provider response from becoming
+     * one very large database operation and allows the collection
+     * job to expose incremental progress.
+     */
+    const persistProviderResult = async (
+      phase: "quick" | "deep",
+      ads: CompetitorAd[],
+    ): Promise<void> => {
+      state.discoveredAds += ads.length;
 
       /*
-       * Run one provider collection phase.
+       * No chunks are required when the provider returns zero ads.
        */
-      const collectPhase =
-        async (
-          phase:
-            | "quick"
-            | "deep",
-        ) => {
-          return step.run(
-            `collect-public-creatives-${phase}`,
-            async () => {
-              const provider =
-                adProviders[
-                  data.platform
-                ];
+      if (ads.length === 0) {
+        await updateCollectionJob(data.jobId, {
+          status: "enriching",
+          stage: "enriching",
+          discoveredAds: state.discoveredAds,
+          normalizedAds: state.normalizedAds,
+          persistedAds: state.persistedAds,
+        });
 
-              if (!provider) {
-                throw new Error(
-                  `No provider configured for ${data.platform}.`,
-                );
-              }
-
-              const result =
-                await provider.search({
-                  query:
-                    data.query,
-
-                  country:
-                    data.country,
-
-                  platform:
-                    data.platform,
-
-                  mode:
-                    data.mode,
-
-                  collectionDepth:
-                    phase,
-                });
-
-              return {
-                ads:
-                  result.ads ??
-                  [],
-              };
-            },
-          );
-        };
-
-      /*
-       * Mark the collection as complete.
-       *
-       * This is used both for normal completion and for
-       * the quick-search-zero-results case.
-       */
-      const completeCollection =
-        async () => {
-          await step.run(
-            "complete-collection",
-            async () => {
-              await updateCollectionJob(
-                data.jobId,
-                {
-                  status: "complete",
-                  stage: "complete",
-
-                  discoveredAds:
-                    state.discoveredAds,
-
-                  normalizedAds:
-                    state.normalizedAds,
-
-                  persistedAds:
-                    state.persistedAds,
-
-                  completedAt:
-                    new Date().toISOString(),
-
-                  errorMessage: null,
-                },
-              );
-            },
-          );
-        };
-
-      /*
-       * Update tracking metadata after a successful
-       * collection.
-       */
-      const markTrackingComplete =
-        async () => {
-          await step.run(
-            "mark-tracked-brand-collected",
-            async () => {
-              await markTrackedBrandCollected(
-                {
-                  query:
-                    data.query,
-
-                  country:
-                    data.country,
-
-                  platform:
-                    data.platform,
-                },
-              );
-            },
-          );
-        };
-
-      /*
-       * QUICK-FIRST MODE
-       *
-       * For a brand that is not already indexed, the refresh
-       * route starts a quick collection.
-       *
-      * IMPORTANT:
-      *
-      * A zero-result quick crawl is not evidence that Meta has
-      * no matching ads. Rendering, lazy loading, and extraction
-      * can all produce a false negative, so the deep pass is the
-      * required verification step.
-       */
-      if (
-        collectionDepth ===
-        "quick"
-      ) {
-        const quickResult =
-          await collectPhase(
-            "quick",
-          );
-
-        await persistProviderResult(
-          "quick",
-          quickResult.ads,
-        );
-
-        if (quickResult.ads.length === 0) {
-          console.info(
-            "[AdIntelligenceJob] Quick collection returned zero ads; running deep verification.",
-            {
-              query: data.query,
-              country: data.country,
-              mode: data.mode,
-              jobId: data.jobId,
-            },
-          );
-        }
+        return;
       }
 
-      /*
-       * DEEP MODE
-       *
-       * There are two ways to reach this block:
-       *
-       * 1. The job was explicitly started as "deep".
-       * 2. Quick collection found at least one ad.
-       *
-       * In the second case, quick results are already
-       * persisted and visible before the deep collection
-       * finishes.
-       */
-      const deepResult =
-        await collectPhase(
-          "deep",
-        );
-
-      await persistProviderResult(
-        "deep",
-        deepResult.ads,
+      const totalChunks = Math.ceil(
+        ads.length / CHUNK_SIZE,
       );
 
-      /*
-       * A collection that returns zero ads is still a
-       * successful collection.
-       */
-      await completeCollection();
+      for (
+        let offset = 0;
+        offset < ads.length;
+        offset += CHUNK_SIZE
+      ) {
+        const chunkIndex =
+          Math.floor(offset / CHUNK_SIZE) + 1;
 
-      await markTrackingComplete();
+        const chunk = ads.slice(
+          offset,
+          offset + CHUNK_SIZE,
+        );
+
+        const result = await processAdChunk({
+          ads: chunk,
+        });
+
+        state.normalizedAds += chunk.length;
+
+        state.persistedAds += Number(
+          result.insertedOrUpdated ?? 0,
+        );
+
+        const finalChunk =
+          chunkIndex === totalChunks;
+
+        const isFinalDeepChunk =
+          phase === "deep" && finalChunk;
+
+        await updateCollectionJob(
+          data.jobId,
+          {
+            status: isFinalDeepChunk
+              ? "finalizing"
+              : "enriching",
+
+            stage: isFinalDeepChunk
+              ? "finalizing"
+              : "enriching",
+
+            discoveredAds:
+              state.discoveredAds,
+
+            normalizedAds:
+              state.normalizedAds,
+
+            persistedAds:
+              state.persistedAds,
+          },
+        );
+      }
+    };
+
+    /*
+     * Execute the provider collection for exactly ONE phase.
+     *
+     * IMPORTANT:
+     *
+     * quick = quick provider search only
+     * deep  = deep provider search only
+     *
+     * We intentionally do NOT run:
+     *
+     * quick -> deep
+     *
+     * inside the same queue job.
+     *
+     * If a deep refresh is required, it should be dispatched as
+     * a separate deep queue event.
+     */
+    const collectPhase = async (
+      phase: "quick" | "deep",
+    ): Promise<{
+      ads: CompetitorAd[];
+    }> => {
+      const provider =
+        adProviders[data.platform];
+
+      if (!provider) {
+        throw new Error(
+          `No provider configured for ${data.platform}.`,
+        );
+      }
+
+      const result =
+        await provider.search({
+          query: data.query,
+          country: data.country,
+          platform: data.platform,
+          mode: data.mode,
+          collectionDepth: phase,
+        });
 
       return {
-        jobId:
-          data.jobId,
-
-        discoveredAds:
-          state.discoveredAds,
-
-        normalizedAds:
-          state.normalizedAds,
-
-        persistedAds:
-          state.persistedAds,
+        ads: result.ads ?? [],
       };
-    },
-  );
+    };
+
+    /*
+     * ---------------------------------------------------------
+     * SINGLE COLLECTION PHASE
+     * ---------------------------------------------------------
+     *
+     * The queue message determines whether this invocation
+     * performs quick or deep collection.
+     */
+    const result =
+      await collectPhase(collectionDepth);
+
+    await persistProviderResult(
+      collectionDepth,
+      result.ads,
+    );
+
+    /*
+     * Quick collection returning zero ads is not treated as a
+     * failure. The provider successfully completed its search;
+     * it simply found nothing during the quick pass.
+     *
+     * A separate deep job can be dispatched by the caller when
+     * deeper verification is required.
+     */
+    if (
+      collectionDepth === "quick" &&
+      result.ads.length === 0
+    ) {
+      console.info(
+        "[AdIntelligenceJob] Quick collection returned zero ads.",
+        {
+          query: data.query,
+          country: data.country,
+          platform: data.platform,
+          mode: data.mode,
+          jobId: data.jobId,
+        },
+      );
+    }
+
+    /*
+     * ---------------------------------------------------------
+     * SUCCESSFUL COMPLETION
+     * ---------------------------------------------------------
+     */
+    await updateCollectionJob(data.jobId, {
+      status: "complete",
+      stage: "complete",
+
+      discoveredAds:
+        state.discoveredAds,
+
+      normalizedAds:
+        state.normalizedAds,
+
+      persistedAds:
+        state.persistedAds,
+
+      completedAt:
+        new Date().toISOString(),
+
+      errorMessage: null,
+    });
+
+    /*
+     * Update tracked-brand metadata only after the collection
+     * phase has completed successfully.
+     */
+    await markTrackedBrandCollected({
+      query: data.query,
+      country: data.country,
+      platform: data.platform,
+    });
+
+    return {
+      jobId: data.jobId,
+
+      discoveredAds:
+        state.discoveredAds,
+
+      normalizedAds:
+        state.normalizedAds,
+
+      persistedAds:
+        state.persistedAds,
+    };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : "Collection failed.";
+
+    /*
+     * Best-effort failure state update.
+     *
+     * The original error is deliberately rethrown so the queue
+     * infrastructure can treat the delivery as failed and retry
+     * it according to its configured retry policy.
+     */
+    try {
+      await updateCollectionJob(data.jobId, {
+        status: "failed",
+        stage: "failed",
+        errorMessage,
+        completedAt:
+          new Date().toISOString(),
+      });
+    } catch (updateError) {
+      console.error(
+        "[AdIntelligenceJob] Failed to mark collection job failed:",
+        updateError,
+      );
+    }
+
+    throw error;
+  }
+}

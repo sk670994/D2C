@@ -63,12 +63,12 @@ const DEFAULT_MAX_SCROLLS = 90;
  *
  * DEEP collection keeps the existing crawl ceiling below.
  */
-const QUICK_INITIAL_WAIT_MS = 1000;
-const QUICK_SCROLL_WAIT_MS = 225;
-const QUICK_POST_SCROLL_WAIT_MS = 300;
-const QUICK_MAX_SCROLLS = 40;
-const QUICK_TARGET_LIBRARY_IDS = 80;
-const QUICK_STABLE_ROUNDS = 3;
+const QUICK_INITIAL_WAIT_MS = 650;
+const QUICK_SCROLL_WAIT_MS = 120;
+const QUICK_POST_SCROLL_WAIT_MS = 150;
+const QUICK_MAX_SCROLLS = 4;
+const QUICK_TARGET_LIBRARY_IDS = 24;
+const QUICK_STABLE_ROUNDS = 1;
 
 /*
  * Maximum target for one provider collection.
@@ -1594,6 +1594,17 @@ async function scrapeMetaOnce(
         },
       );
 
+      /*
+       * Quick search is for the user's first-page experience.
+       * Stop as soon as we have a useful initial batch.
+       */
+      if (
+        isQuickCollection &&
+        currentCount >= 12
+      ) {
+        break;
+      }
+
       if (
         currentCount >=
         targetLibraryIds
@@ -1632,55 +1643,59 @@ async function scrapeMetaOnce(
     }
 
     /*
-     * One final extraction after the last scroll.
+     * A final extraction is useful for deep collection, but it is
+     * intentionally skipped for the quick first-page path.
+     * That keeps the user-triggered request as fast as possible.
      */
-    await page.waitForTimeout(
-      postScrollWaitMs,
-    );
-
-    const finalCards =
-      await extractVisibleCards(
-        page,
+    if (!isQuickCollection) {
+      await page.waitForTimeout(
+        postScrollWaitMs,
       );
 
-    for (
-      const card of
-        finalCards
-    ) {
-      const ad =
-        normalizeCard(
-          card,
-          query,
-          country,
+      const finalCards =
+        await extractVisibleCards(
+          page,
         );
 
-      if (
-        !isRelevant(
-          ad,
-          query,
-        )
+      for (
+        const card of
+          finalCards
       ) {
-        continue;
-      }
+        const ad =
+          normalizeCard(
+            card,
+            query,
+            country,
+          );
 
-      const existing =
-        collected.get(
-          ad.id,
-        );
-
-      if (
-        !existing ||
-        getAdQualityScore(
-          ad,
-        ) >
-          getAdQualityScore(
-            existing,
+        if (
+          !isRelevant(
+            ad,
+            query,
           )
-      ) {
-        collected.set(
-          ad.id,
-          ad,
-        );
+        ) {
+          continue;
+        }
+
+        const existing =
+          collected.get(
+            ad.id,
+          );
+
+        if (
+          !existing ||
+          getAdQualityScore(
+            ad,
+          ) >
+            getAdQualityScore(
+              existing,
+            )
+        ) {
+          collected.set(
+            ad.id,
+            ad,
+          );
+        }
       }
     }
 
