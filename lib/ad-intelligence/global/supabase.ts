@@ -46,12 +46,11 @@ export function createGlobalServiceClient(): SupabaseClient {
     );
 
   if (
-    !secretKey.startsWith(
-      "sb_secret_",
-    )
+    !secretKey.startsWith("sb_secret_") &&
+    !secretKey.startsWith("eyJ")
   ) {
     throw new Error(
-      "SUPABASE_SERVICE_ROLE_KEY must be an sb_secret_ key.",
+      "SUPABASE_SERVICE_ROLE_KEY must be a Supabase secret key or legacy service-role JWT.",
     );
   }
 
@@ -90,11 +89,8 @@ export function createGlobalServiceClient(): SupabaseClient {
         );
       }
 
-      /*
-       * Supabase secret keys are API keys,
-       * not JWTs. Never allow this client to
-       * send the secret as Authorization: Bearer.
-       */
+      // Keep this private key out of Authorization headers; it is sent only
+      // as the server-side Supabase API key.
       headers.delete(
         "authorization",
       );
