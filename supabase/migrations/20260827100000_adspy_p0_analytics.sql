@@ -1,4 +1,4 @@
--- AdSpy P0 analytics contract
+﻿-- AdSpy P0 analytics contract
 -- Purpose:
 -- 1) Make country filtering authoritative through ad_intelligence_markets.
 -- 2) Calculate global metrics in PostgreSQL instead of from the visible page.
@@ -156,7 +156,7 @@ hook_source AS (
     trim(
       substring(
         COALESCE(NULLIF(primary_text, ''), headline, '')
-        FROM '^[^.!?。！？]+'
+        FROM '^[^.!?ã€‚ï¼ï¼Ÿ]+'
       )
     ) AS label
   FROM with_running_days
@@ -238,3 +238,4 @@ GRANT EXECUTE ON FUNCTION public.adspy_search_metrics(
   TEXT,
   TEXT
 ) TO service_role;
+
