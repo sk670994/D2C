@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
+import { getMetaGraphVersion } from "@/lib/meta/config";
 
-const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v18.0";
 const META_AD_LIBRARY_FIELDS = [
   "ad_archive_id",
   "ad_id",
@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
     let response: Response;
     try {
       response = await fetch(
-        `https://graph.facebook.com/${META_GRAPH_VERSION}/ads_archive?${params.toString()}`,
+        `https://graph.facebook.com/${getMetaGraphVersion()}/ads_archive?${params.toString()}`,
         {
           signal: controller.signal,
           headers: {

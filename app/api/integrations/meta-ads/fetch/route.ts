@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { fetchWithTimeout } from "@/lib/http/fetch-with-timeout";
-import { decryptToken } from "@/lib/security/token-crypto";
+import { getMetaAccountToken } from "@/lib/meta/token-lifecycle";
+import { getMetaGraphVersion } from "@/lib/meta/config";
 
 interface MetaInsights {
   ad_id: string;
@@ -19,8 +20,6 @@ interface MetaInsights {
   cpc: string;
   purchase_roas?: unknown;
 }
-
-const META_GRAPH_VERSION = "v18.0";
 
 function normalizeMetaAccountId(accountId: string) {
   return accountId.startsWith("act_") ? accountId : `act_${accountId}`;
@@ -64,13 +63,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
 
-    const accessToken = decryptToken(account.access_token);
-
-    // Check if token is expired and refresh if needed
-    if (account.token_expiry && new Date(account.token_expiry) < new Date()) {
-      // Token refresh logic would go here
-      // For now, assume token is valid
-    }
+    const accessToken = await getMetaAccountToken({ account, accountId, userId: user.id, supabase });
 
     const metaAccountId = normalizeMetaAccountId(accountId);
 
@@ -81,7 +74,7 @@ export async function POST(request: NextRequest) {
       date_preset: datePreset,
     });
     const insightsResponse = await fetchWithTimeout(
-      `https://graph.facebook.com/${META_GRAPH_VERSION}/${metaAccountId}/insights?${insightsParams.toString()}`,
+      `https://graph.facebook.com/${getMetaGraphVersion()}/${metaAccountId}/insights?${insightsParams.toString()}`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
 

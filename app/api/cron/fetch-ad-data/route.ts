@@ -1,16 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient as createServerAuthClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
+import { decryptToken, encryptToken } from "@/lib/security/token-crypto";
+import { getMetaAccountToken } from "@/lib/meta/token-lifecycle";
+import { getMetaGraphVersion } from "@/lib/meta/config";
 
 // Vercel Cron job to fetch ad data from all connected accounts
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
+  const cronSecret = process.env.CRON_SECRET?.trim();
 
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
-    const supabase = await createServerAuthClient();
+    const supabase = createServiceClient();
 
     // Fetch all connected ad accounts
     const { data: accounts, error: accountsError } = await supabase
@@ -35,11 +39,13 @@ export async function GET(request: NextRequest) {
 
     for (const account of accounts) {
       try {
-        let accessToken = account.access_token;
+        let accessToken = decryptToken(account.access_token);
+        if (!accessToken) throw new Error("Account has no access token");
 
         // 🔁 TOKEN REFRESH LOGIC
-        if (account.token_expiry && new Date(account.token_expiry) < new Date()) {
-          if (account.refresh_token) {
+        if (account.platform === "meta") {
+          accessToken = await getMetaAccountToken({ account, accountId: account.account_id, userId: account.user_id, supabase });
+        } else if (account.token_expiry && new Date(account.token_expiry) < new Date() && account.refresh_token) {
             if (account.platform === "google") {
               const refreshResponse = await fetch("https://oauth2.googleapis.com/token", {
                 method: "POST",
@@ -47,7 +53,7 @@ export async function GET(request: NextRequest) {
                 body: new URLSearchParams({
                   client_id: process.env.GOOGLE_CLIENT_ID!,
                   client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-                  refresh_token: account.refresh_token,
+                  refresh_token: decryptToken(account.refresh_token) || "",
                   grant_type: "refresh_token",
                 }),
               });
@@ -59,7 +65,7 @@ export async function GET(request: NextRequest) {
                 await supabase
                   .from("ad_accounts")
                   .update({
-                    access_token: accessToken,
+                    access_token: encryptToken(accessToken),
                     token_expiry: new Date(Date.now() + data.expires_in * 1000).toISOString(),
                   })
                   .eq("user_id", account.user_id)
@@ -67,30 +73,6 @@ export async function GET(request: NextRequest) {
                   .eq("account_id", account.account_id);
               }
             }
-
-            if (account.platform === "meta") {
-              const refreshResponse = await fetch(
-                `https://graph.facebook.com/v18.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${process.env.META_APP_ID}&client_secret=${process.env.META_APP_SECRET}&fb_exchange_token=${account.refresh_token}`
-              );
-
-              if (refreshResponse.ok) {
-                const data = await refreshResponse.json();
-                accessToken = data.access_token;
-
-                await supabase
-                  .from("ad_accounts")
-                  .update({
-                    access_token: accessToken,
-                    token_expiry: data.expires_in
-                      ? new Date(Date.now() + data.expires_in * 1000).toISOString()
-                      : null,
-                  })
-                  .eq("user_id", account.user_id)
-                  .eq("platform", account.platform)
-                  .eq("account_id", account.account_id);
-              }
-            }
-          }
         }
 
         // 📊 FETCH DATA
@@ -153,8 +135,14 @@ async function fetchMetaData(
   supabase: any
 ) {
   const metaAccountId = accountId.startsWith("act_") ? accountId : `act_${accountId}`;
+  const params = new URLSearchParams({
+    level: "ad",
+    fields: "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,date_start,impressions,clicks,spend,ctr,cpc,purchase_roas",
+    date_preset: "last_7d",
+  });
   const response = await fetch(
-    `https://graph.facebook.com/v18.0/${metaAccountId}/insights?level=ad&fields=ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,date_start,impressions,clicks,spend,ctr,cpc,purchase_roas&date_preset=last_7d&access_token=${accessToken}`
+    `https://graph.facebook.com/${getMetaGraphVersion()}/${metaAccountId}/insights?${params.toString()}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
   );
 
   if (!response.ok) throw new Error("Meta fetch failed");

@@ -8,17 +8,13 @@ export function DashboardInsightsSection({
   report,
   loading,
   error,
-  appliedFixes,
   onGenerate,
-  onApplyFix,
   onDismissFix
 }: {
   report: CalculatedReport;
   loading: boolean;
   error: string | null;
-  appliedFixes: number[];
   onGenerate: () => void;
-  onApplyFix: (index: number) => void;
   onDismissFix: (index: number) => void;
 }) {
   const { insights } = report;
@@ -54,9 +50,6 @@ export function DashboardInsightsSection({
             <article key={`${fix}-${index}`} className="fix-card">
               <p>{fix}</p>
               <div className="fix-actions">
-                <Button type="button" onClick={() => onApplyFix(index)} disabled={appliedFixes.includes(index)}>
-                  {appliedFixes.includes(index) ? "Applied" : "Apply Draft"}
-                </Button>
                 <Button type="button" variant="secondary" onClick={() => onDismissFix(index)}>Dismiss</Button>
               </div>
             </article>

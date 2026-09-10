@@ -242,7 +242,6 @@ export default function DashboardPage() {
   const [scenarios, setScenarios] = useState<ScenarioSnapshot[]>([]);
   const [selectedScenarioId, setSelectedScenarioId] = useState<number | null>(null);
   const [userId, setUserId] = useState<string>("");
-  const [appliedFixes, setAppliedFixes] = useState<number[]>([]);
   const [monthKey, setMonthKey] = useState<string>(new Date().toISOString().slice(0, 7));
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [recordsError, setRecordsError] = useState<string>("");
@@ -613,8 +612,8 @@ const merged = {
   insights: report.insights
     ? {
         ...report.insights,
-        // Keep the existing source/latency and mark that these
-        // insights were generated from the previous calculation.
+        // The recommendation was generated for a different set of inputs.
+        basedOnPreviousCalculation: true,
       }
     : pendingInsights()
 };
@@ -709,7 +708,6 @@ setReport(merged);
   setScenarios([]);
   setSelectedScenarioId(null);
   setDirty(false);
-  setAppliedFixes([]);
 
   sessionStorage.setItem(
     "reportInput",
@@ -719,7 +717,6 @@ setReport(merged);
   sessionStorage.setItem("report", JSON.stringify({ ...next, insights: pendingInsights() }));
   void persistWorkspaceToDatabase(DEFAULT_REPORT_INPUT, { ...next, insights: pendingInsights() }, [], null, monthKey);
   setInsightsError(null);
-  setAppliedFixes([]);
   pushToast("Sample data loaded. Click Get AI Insights when ready.", "good");
 }
 
@@ -756,30 +753,6 @@ setReport(merged);
     pushToast(`${scenario.name} loaded`, "neutral");
   }
 
-  function applyPriorityFix(index: number) {
-    if (appliedFixes.includes(index)) return;
-    const fix = report.insights.priorityFixes[index];
-    if (!fix) return;
-
-    const nextInput = structuredClone(reportInput);
-    const lower = fix.toLowerCase();
-
-    if (lower.includes("roas")) {
-      nextInput.adMetricsInput.revenue = Math.round(nextInput.adMetricsInput.revenue * 1.1);
-    } else if (lower.includes("contribution")) {
-      nextInput.unitEconomicsInput.cogsParts = nextInput.unitEconomicsInput.cogsParts.map((v) => Math.max(0, Math.round(v * 0.95)));
-    } else if (lower.includes("cac")) {
-      nextInput.adMetricsInput.totalAdSpend = Math.round(nextInput.adMetricsInput.totalAdSpend * 0.9);
-    } else {
-      nextInput.unitEconomicsInput.discount = Math.max(0, Math.round(nextInput.unitEconomicsInput.discount * 0.95));
-    }
-
-    setReportInput(nextInput);
-    setDirty(true);
-    setAppliedFixes((prev) => [...prev, index]);
-    pushToast("Applied AI fix draft to inputs", "good");
-  }
-
   function dismissPriorityFix(index: number) {
     const nextFixes = report.insights.priorityFixes.filter((_, i) => i !== index);
     const merged = {
@@ -791,7 +764,6 @@ setReport(merged);
     };
     setReport(merged);
     sessionStorage.setItem("report", JSON.stringify(merged));
-    setAppliedFixes([]);
     pushToast("Priority fix dismissed", "neutral");
   }
 
@@ -813,7 +785,6 @@ setReport(merged);
       setReport(merged);
       sessionStorage.setItem("report", JSON.stringify(merged));
       void persistWorkspaceToDatabase(reportInput, merged, scenarios, selectedScenarioId, monthKey);
-      setAppliedFixes([]);
       pushToast("AI insights generated", "good");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unable to generate insights";
@@ -1988,9 +1959,7 @@ setReport(merged);
           report={report}
           loading={insightsLoading}
           error={insightsError}
-          appliedFixes={appliedFixes}
           onGenerate={generateInsights}
-          onApplyFix={applyPriorityFix}
           onDismissFix={dismissPriorityFix}
         />
       </main>

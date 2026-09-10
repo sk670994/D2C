@@ -1,5 +1,7 @@
-export async function GET() {
-  const url = `https://www.facebook.com/v18.0/dialog/oauth?client_id=${process.env.META_APP_ID}&redirect_uri=${process.env.META_REDIRECT_URI}&scope=ads_read`;
+import { NextRequest, NextResponse } from "next/server";
 
-  return Response.redirect(url);
+// Legacy unauthenticated endpoint. OAuth now starts through the protected
+// /api/integrations/meta-ads POST handler.
+export async function GET(request: NextRequest) {
+  return NextResponse.redirect(new URL("/dashboard?meta_error=use_integrations", request.url));
 }

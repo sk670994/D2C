@@ -6,10 +6,10 @@ import {
   verifyOAuthState,
 } from "@/lib/oauth-state";
 import { encryptToken } from "@/lib/security/token-crypto";
+import { getMetaGraphVersion } from "@/lib/meta/config";
 
 const META_APP_ID = process.env.META_APP_ID!;
 const META_APP_SECRET = process.env.META_APP_SECRET!;
-const META_GRAPH_VERSION = "v18.0";
 
 interface MetaTokenResponse {
   access_token: string;
@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
 
     // Exchange code for access token
     const tokenResponse = await fetch(
-      `https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${META_APP_SECRET}&code=${code}`,
+      `https://graph.facebook.com/${getMetaGraphVersion()}/oauth/access_token?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${META_APP_SECRET}&code=${code}`,
       { method: "GET" }
     );
 
@@ -63,11 +63,22 @@ export async function GET(request: NextRequest) {
     }
 
     const tokenData: MetaTokenResponse = await tokenResponse.json();
+    const longLivedTokenResponse = await fetch(
+      `https://graph.facebook.com/${getMetaGraphVersion()}/oauth/access_token?${new URLSearchParams({
+        grant_type: "fb_exchange_token",
+        client_id: META_APP_ID,
+        client_secret: META_APP_SECRET,
+        fb_exchange_token: tokenData.access_token,
+      }).toString()}`,
+    );
+    const longLivedToken: MetaTokenResponse = longLivedTokenResponse.ok
+      ? await longLivedTokenResponse.json()
+      : tokenData;
 
     // Get user ID from state (assuming it's passed as user_id)
     // Get ad accounts for this user
     const accountsResponse = await fetch(
-      `https://graph.facebook.com/${META_GRAPH_VERSION}/me/adaccounts?fields=account_id,id,name&access_token=${tokenData.access_token}`
+      `https://graph.facebook.com/${getMetaGraphVersion()}/me/adaccounts?fields=account_id,id,name&access_token=${encodeURIComponent(longLivedToken.access_token)}`
     );
 
     if (!accountsResponse.ok) {
@@ -85,10 +96,10 @@ export async function GET(request: NextRequest) {
           platform: "meta",
           account_id: account.account_id,
           account_name: account.name,
-          access_token: encryptToken(tokenData.access_token),
-          refresh_token: encryptToken(tokenData.access_token),
-          token_expiry: tokenData.expires_in
-            ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
+          access_token: encryptToken(longLivedToken.access_token),
+          refresh_token: encryptToken(longLivedToken.access_token),
+          token_expiry: longLivedToken.expires_in
+            ? new Date(Date.now() + longLivedToken.expires_in * 1000).toISOString()
             : null,
         }, { onConflict: "user_id,platform,account_id" });
     }
@@ -117,7 +128,7 @@ export async function POST(request: NextRequest) {
     const scope = "ads_read";
     const redirectUri = getRedirectUri(request);
     const state = createOAuthState("meta", user.id);
-    const oauthUrl = `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&state=${encodeURIComponent(state)}`;
+    const oauthUrl = `https://www.facebook.com/${getMetaGraphVersion()}/dialog/oauth?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&state=${encodeURIComponent(state)}`;
 
     const response = NextResponse.json({ oauth_url: oauthUrl });
     response.cookies.set("oauth_meta_state", state, oauthStateCookieOptions);

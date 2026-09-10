@@ -1,10 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { CalculatedReport } from "@/lib/types/domain";
 import { buildDailyBrief } from "@/lib/decision/brief";
-import { createExperiment, loadExperiments, saveExperiments, type Experiment } from "@/lib/experiments/store";
 import { askZwirk } from "@/lib/zwirk/ask";
 import { Button } from "@/components/ui/button";
 
@@ -22,44 +21,41 @@ export function CommandCenter({
   const brief = useMemo(() => buildDailyBrief(report, userName), [report, userName]);
   const [openWhy, setOpenWhy] = useState<string | null>(brief.attention[0]?.id ?? null);
   const [showMath, setShowMath] = useState(false);
-  const [experiments, setExperiments] = useState<Experiment[]>(() => loadExperiments());
+  const [experiments, setExperiments] = useState<Array<{ id: string; hypothesis: string; status: string }>>([]);
+
+  useEffect(() => {
+    let active = true;
+    void fetch("/api/experiments")
+      .then(async (response) => {
+        if (!response.ok) return;
+        const data = await response.json() as { experiments?: Array<{ id: string; hypothesis: string; status: string }> };
+        if (active) setExperiments(data.experiments ?? []);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   async function addExperiment(from: string) {
-    const next = createExperiment({
-      hypothesis: from,
-      control: "Current live creative / spend mix",
-      variant: "Recommended change from Command Center",
-      primaryMetric: "Contribution per delivered order",
-      status: "draft"
-    });
-
     try {
       const response = await fetch("/api/experiments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          hypothesis: next.hypothesis,
-          control: next.control,
-          variant: next.variant,
-          primary_metric: next.primaryMetric,
-          status: next.status,
+          hypothesis: from,
+          control: "Current live creative / spend mix",
+          variant: "Recommended change from Command Center",
+          primary_metric: "Contribution per delivered order",
+          status: "draft",
         }),
       });
 
       if (response.ok) {
-        const data = await response.json() as { experiment?: Experiment };
+        const data = await response.json() as { experiment?: { id: string; hypothesis: string; status: string } };
         if (data.experiment) {
           setExperiments((current) => [data.experiment!, ...current]);
-          return;
         }
       }
-    } catch {
-      // Keep the local fallback available if the API is temporarily unavailable.
-    }
-
-    const list = [next, ...experiments];
-    setExperiments(list);
-    saveExperiments(list);
+    } catch { /* The database is the sole source of truth. */ }
   }
 
   return (
