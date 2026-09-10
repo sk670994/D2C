@@ -56,6 +56,17 @@ export type CalculatedReport = {
     contributionMargin: number;
     contributionMarginPct: number;
     maxAllowableCac: number;
+    contributionLayers: {
+      cm1: number;
+      cm2: number;
+      cm3: number;
+      cashContribution: number;
+    };
+    impactScenarios: {
+      cacMinus: { perOrder: number; monthly: number };
+      returnsRateMinusOnePoint: { perOrder: number; monthly: number };
+      aovPlus: { perOrder: number; monthly: number };
+    };
   };
   adMetrics: {
     totalAdSpend: number;

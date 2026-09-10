@@ -5,6 +5,7 @@ import {
   oauthStateCookieOptions,
   verifyOAuthState,
 } from "@/lib/oauth-state";
+import { encryptToken } from "@/lib/security/token-crypto";
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
@@ -97,8 +98,8 @@ export async function GET(request: NextRequest) {
           platform: "google",
           account_id: accountId,
           account_name: accountId,
-          access_token: tokenData.access_token,
-          refresh_token: tokenData.refresh_token,
+          access_token: encryptToken(tokenData.access_token),
+          refresh_token: encryptToken(tokenData.refresh_token),
           token_expiry: new Date(Date.now() + tokenData.expires_in * 1000).toISOString(),
         }, { onConflict: "user_id,platform,account_id" });
     }

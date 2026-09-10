@@ -24,7 +24,7 @@ export function CommandCenter({
   const [showMath, setShowMath] = useState(false);
   const [experiments, setExperiments] = useState<Experiment[]>(() => loadExperiments());
 
-  function addExperiment(from: string) {
+  async function addExperiment(from: string) {
     const next = createExperiment({
       hypothesis: from,
       control: "Current live creative / spend mix",
@@ -32,6 +32,31 @@ export function CommandCenter({
       primaryMetric: "Contribution per delivered order",
       status: "draft"
     });
+
+    try {
+      const response = await fetch("/api/experiments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          hypothesis: next.hypothesis,
+          control: next.control,
+          variant: next.variant,
+          primary_metric: next.primaryMetric,
+          status: next.status,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json() as { experiment?: Experiment };
+        if (data.experiment) {
+          setExperiments((current) => [data.experiment!, ...current]);
+          return;
+        }
+      }
+    } catch {
+      // Keep the local fallback available if the API is temporarily unavailable.
+    }
+
     const list = [next, ...experiments];
     setExperiments(list);
     saveExperiments(list);
@@ -90,7 +115,7 @@ export function CommandCenter({
                     <Button type="button" onClick={() => askZwirk(`Explain this and tell me exactly what to do: ${item.title}. ${item.body}`)}>
                       Ask ZWIRK
                     </Button>
-                    <Button type="button" variant="secondary" onClick={() => addExperiment(item.action)}>
+                    <Button type="button" variant="secondary" onClick={() => void addExperiment(item.action)}>
                       Create experiment
                     </Button>
                     {item.id === "cac" || item.id === "leak" ? (

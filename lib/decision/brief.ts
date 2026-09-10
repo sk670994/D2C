@@ -1,6 +1,7 @@
 import type { CalculatedReport } from "@/lib/types/domain";
 import { generateDecisions, generateMoneyAlerts, type ActionItem, type OpportunityScan } from "@/lib/llm/decision-engine";
 import { greetingFor, pct, rupees, times, todayLabel } from "@/lib/format/money";
+import { recommendationFromAction, type StructuredRecommendation } from "@/lib/decision/recommendation";
 
 export type StatementKind = "FACT" | "DERIVED" | "OBSERVED" | "ASSUMPTION" | "RECOMMENDATION";
 
@@ -31,6 +32,7 @@ export type DailyBrief = {
   kpis: Array<{ label: string; value: string; hint: string; tone: "good" | "warn" | "neutral" }>;
   attention: AttentionItem[];
   recommendations: ActionItem[];
+  structuredRecommendations: StructuredRecommendation[];
   zwirkTake: string;
   transparency: {
     title: string;
@@ -148,6 +150,9 @@ export function buildDailyBrief(report: CalculatedReport, userName = ""): DailyB
       : "The model is mixed. Fix the weak gate, then grow.";
 
   const recommendations = [...scan.todayActions, ...scan.thisWeekActions].slice(0, 3);
+  const structuredRecommendations = recommendations.map((action) =>
+    recommendationFromAction(action),
+  );
 
   const zwirkTake = [
     `Health ${scan.score}/100 · ${scan.opportunityRank.label.replace(/[^\w\s/+.-]/g, "").trim()}.`,
@@ -192,6 +197,7 @@ export function buildDailyBrief(report: CalculatedReport, userName = ""): DailyB
     ],
     attention,
     recommendations,
+    structuredRecommendations,
     zwirkTake,
     transparency: {
       title: "Where the money went",

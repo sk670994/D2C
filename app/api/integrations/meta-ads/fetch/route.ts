@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
+import { fetchWithTimeout } from "@/lib/http/fetch-with-timeout";
+import { decryptToken } from "@/lib/security/token-crypto";
 
 interface MetaInsights {
   ad_id: string;
@@ -62,7 +64,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
 
-    const accessToken = account.access_token;
+    const accessToken = decryptToken(account.access_token);
 
     // Check if token is expired and refresh if needed
     if (account.token_expiry && new Date(account.token_expiry) < new Date()) {
@@ -78,13 +80,16 @@ export async function POST(request: NextRequest) {
       fields: "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,date_start,date_stop,impressions,clicks,spend,ctr,cpc,purchase_roas",
       date_preset: datePreset,
     });
-    const insightsResponse = await fetch(
+    const insightsResponse = await fetchWithTimeout(
       `https://graph.facebook.com/${META_GRAPH_VERSION}/${metaAccountId}/insights?${insightsParams.toString()}`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
 
     if (!insightsResponse.ok) {
-      throw new Error("Failed to fetch Meta ad insights");
+      return NextResponse.json(
+        { error: "Meta Ads provider rejected the request. Reconnect the account and try again." },
+        { status: insightsResponse.status === 401 ? 401 : 502 },
+      );
     }
 
     const insightsData = await insightsResponse.json();

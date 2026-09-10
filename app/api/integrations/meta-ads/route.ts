@@ -5,6 +5,7 @@ import {
   oauthStateCookieOptions,
   verifyOAuthState,
 } from "@/lib/oauth-state";
+import { encryptToken } from "@/lib/security/token-crypto";
 
 const META_APP_ID = process.env.META_APP_ID!;
 const META_APP_SECRET = process.env.META_APP_SECRET!;
@@ -84,8 +85,8 @@ export async function GET(request: NextRequest) {
           platform: "meta",
           account_id: account.account_id,
           account_name: account.name,
-          access_token: tokenData.access_token,
-          refresh_token: tokenData.access_token,
+          access_token: encryptToken(tokenData.access_token),
+          refresh_token: encryptToken(tokenData.access_token),
           token_expiry: tokenData.expires_in
             ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
             : null,

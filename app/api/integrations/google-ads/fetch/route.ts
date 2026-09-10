@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
+import { fetchWithTimeout } from "@/lib/http/fetch-with-timeout";
+import { decryptToken, encryptToken } from "@/lib/security/token-crypto";
 
 interface GoogleMetrics {
   adGroup?: {
@@ -66,12 +68,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
 
-    let accessToken = account.access_token;
+    let accessToken = decryptToken(account.access_token);
+    const refreshToken = decryptToken(account.refresh_token);
 
     // Check if token is expired and refresh if needed
     if (account.token_expiry && new Date(account.token_expiry) < new Date()) {
-      if (account.refresh_token) {
-        const refreshResponse = await fetch("https://oauth2.googleapis.com/token", {
+      if (refreshToken) {
+        const refreshResponse = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -79,7 +82,7 @@ export async function POST(request: NextRequest) {
           body: new URLSearchParams({
             client_id: process.env.GOOGLE_CLIENT_ID!,
             client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-            refresh_token: account.refresh_token,
+            refresh_token: refreshToken,
             grant_type: "refresh_token",
           }),
         });
@@ -92,13 +95,23 @@ export async function POST(request: NextRequest) {
           await supabase
             .from("ad_accounts")
             .update({
-              access_token: accessToken,
+              access_token: encryptToken(accessToken),
               token_expiry: new Date(Date.now() + refreshData.expires_in * 1000).toISOString(),
             })
             .eq("user_id", user.id)
             .eq("platform", "google")
             .eq("account_id", accountId);
+        } else {
+          return NextResponse.json(
+            { error: "Google Ads authorization expired. Reconnect the account and try again." },
+            { status: 401 },
+          );
         }
+      } else {
+        return NextResponse.json(
+          { error: "Google Ads authorization expired. Reconnect the account and try again." },
+          { status: 401 },
+        );
       }
     }
 
@@ -127,7 +140,7 @@ export async function POST(request: NextRequest) {
       AND segments.date DURING ${dateRange}
     `;
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${customerId}/googleAds:search`,
       {
         method: "POST",
@@ -144,7 +157,10 @@ export async function POST(request: NextRequest) {
     );
 
     if (!response.ok) {
-      throw new Error("Failed to fetch Google Ads data");
+      return NextResponse.json(
+        { error: "Google Ads provider rejected the request. Reconnect the account and try again." },
+        { status: response.status === 401 ? 401 : 502 },
+      );
     }
 
     const data = await response.json();

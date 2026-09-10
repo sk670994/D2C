@@ -46,7 +46,6 @@ export function calculateReport(input: ParsedReport): CalculatedReport {
   const readiness = isReadyToScale ? "READY TO SCALE" : "FIX FUNDAMENTALS FIRST";
 
   const retainedRevenuePerOrder = netRevenueExGst * (1 - u.returnsRate);
-  const retainedOrders = a.orders * (1 - u.returnsRate);
 
   const netRevenueMonth = retainedRevenuePerOrder * a.orders;
   const returnLossMonth = returnRevenueLoss * a.orders;
@@ -58,6 +57,13 @@ export function calculateReport(input: ParsedReport): CalculatedReport {
   const netProfitMonth = contributionMonth - marketingMonth;
   const netProfitMarginPct = netRevenueMonth > 0 ? netProfitMonth / netRevenueMonth : 0;
 
+  const monthlyOrders = Math.max(0, a.orders);
+  const returnsRateMinusOnePoint = Math.max(
+    0,
+    netRevenueExGst * 0.01 + u.returnShipping * 0.01,
+  );
+  const aovPlusPerOrder = 100 / (1 + u.gstRate);
+
   return {
     unitEconomics: {
       netRevenueExGst,
@@ -66,7 +72,27 @@ export function calculateReport(input: ParsedReport): CalculatedReport {
       grossMargin,
       contributionMargin,
       contributionMarginPct,
-      maxAllowableCac
+      maxAllowableCac,
+      contributionLayers: {
+        cm1: grossMargin,
+        cm2: contributionMargin,
+        cm3: contributionMargin - blendedCac,
+        cashContribution: contributionMargin - blendedCac,
+      },
+      impactScenarios: {
+        cacMinus: {
+          perOrder: 50,
+          monthly: 50 * monthlyOrders,
+        },
+        returnsRateMinusOnePoint: {
+          perOrder: returnsRateMinusOnePoint,
+          monthly: returnsRateMinusOnePoint * monthlyOrders,
+        },
+        aovPlus: {
+          perOrder: aovPlusPerOrder,
+          monthly: aovPlusPerOrder * monthlyOrders,
+        },
+      },
     },
     adMetrics: {
       totalAdSpend: a.totalAdSpend,
