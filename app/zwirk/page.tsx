@@ -13,6 +13,12 @@ import type {
 } from "@/lib/types/domain";
 
 import {
+  formatAdSpyForZwirk,
+  loadZwirkAdSpySnapshot,
+  type ZwirkAdSpySnapshot,
+} from "@/lib/ad-intelligence/zwirk";
+
+import {
   buildCompetitiveNarrative,
 } from "@/lib/competitive/signals";
 
@@ -47,114 +53,6 @@ type ZwirkContext = {
   summary: string;
 };
 
-type ZwirkAdSpyAd = {
-  id: string;
-  advertiserName?: string | null;
-  creatorName?: string | null;
-  partnershipType?:
-    | "direct"
-    | "creator"
-    | "unknown";
-  primaryText?: string | null;
-  headline?: string | null;
-  description?: string | null;
-  callToAction?: string | null;
-  firstSeen?: string | null;
-  lastSeen?: string | null;
-  isActive?: boolean;
-  publisherPlatforms?: string[];
-  productName?: string | null;
-  productPrice?: number | null;
-  currency?: string | null;
-  offer?: string | null;
-  creativeType?:
-    | "image"
-    | "video"
-    | "carousel"
-    | "unknown";
-  imageUrl?: string | null;
-  videoUrl?: string | null;
-  thumbnailUrl?: string | null;
-  landingPage?: string | null;
-  sourceUrl?: string | null;
-  runningDays?: number | null;
-  creativeScore?: number | null;
-  longevityScore?: number | null;
-  relevanceScore?: number | null;
-  engagementPotentialScore?:
-    | number
-    | null;
-};
-
-type ZwirkAdSpySnapshot = {
-  version: 1;
-  source: "AdSpy";
-  query: string;
-  country: string;
-  fetchedAt: string;
-
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
-
-  summary: {
-    analyzedAds: number;
-    totalAds: number;
-
-    activeAds: number;
-    inactiveAds: number;
-    activeShare: number;
-
-    videoAds: number;
-    imageAds: number;
-    carouselAds: number;
-    unknownCreativeAds: number;
-
-    videoShare: number;
-
-    creatorAds: number;
-    creatorShare: number;
-
-    averageLongevity: number;
-    averageCreativeScore: number;
-    averageRelevanceScore: number;
-    averageEngagementPotential: number;
-  };
-
-  creativeFamilies: Array<{
-    name: string;
-    variants: number;
-    imageCount: number;
-    videoCount: number;
-    carouselCount: number;
-    creatorCount: number;
-    averageLongevity: number;
-    averageCreative: number;
-    averageEngagement: number;
-    topOffer: string | null;
-  }>;
-
-  marketPatterns: {
-    topOffers: Array<{
-      offer: string;
-      count: number;
-    }>;
-    topCreators: string[];
-    hookPatterns: Array<{
-      label: string;
-      count: number;
-      share: number;
-    }>;
-  };
-
-  recommendedExperiments: string[];
-
-  ads: ZwirkAdSpyAd[];
-};
-
 type ProofOfWork = {
   context: string;
   brandVault: string;
@@ -167,246 +65,6 @@ type BrandVaultStatus =
   | "loading"
   | "complete"
   | "incomplete";
-
-const ZWIRK_ADSPY_STORAGE_KEY =
-  "zwirkAdSpySnapshot";
-
-function formatNumber(
-  value?: number | null
-): string {
-  if (
-    typeof value !==
-      "number" ||
-    !Number.isFinite(value)
-  ) {
-    return "n/a";
-  }
-
-  return value.toLocaleString(
-    "en-IN"
-  );
-}
-
-function formatAdSpyForZwirk(
-  snapshot: ZwirkAdSpySnapshot
-): string {
-  const lines: string[] = [];
-
-  lines.push(
-    "ADSPY OBSERVED COMPETITOR INTELLIGENCE",
-    `Query: ${snapshot.query}`,
-    `Country: ${snapshot.country}`,
-    `Fetched: ${snapshot.fetchedAt}`,
-    `Page: ${snapshot.pagination.page}/${snapshot.pagination.totalPages}`,
-    `Visible ads analyzed: ${snapshot.summary.analyzedAds}`,
-    `Total matching ads: ${snapshot.summary.totalAds}`,
-    ""
-  );
-
-  lines.push(
-    "SUMMARY:",
-    `Active ads: ${snapshot.summary.activeAds} (${snapshot.summary.activeShare}%)`,
-    `Inactive ads: ${snapshot.summary.inactiveAds}`,
-    `Video ads: ${snapshot.summary.videoAds} (${snapshot.summary.videoShare}%)`,
-    `Image ads: ${snapshot.summary.imageAds}`,
-    `Carousel ads: ${snapshot.summary.carouselAds}`,
-    `Unknown creative ads: ${snapshot.summary.unknownCreativeAds}`,
-    `Creator ads: ${snapshot.summary.creatorAds} (${snapshot.summary.creatorShare}%)`,
-    `Average longevity: ${snapshot.summary.averageLongevity} days`,
-    `Average creative score: ${snapshot.summary.averageCreativeScore}/100`,
-    `Average relevance: ${snapshot.summary.averageRelevanceScore}/100`,
-    `Average engagement potential: ${snapshot.summary.averageEngagementPotential}/100`,
-    ""
-  );
-
-  if (
-    snapshot.creativeFamilies
-      .length > 0
-  ) {
-    lines.push(
-      "CREATIVE FAMILIES:"
-    );
-
-    snapshot.creativeFamilies.forEach(
-      (family) => {
-        lines.push(
-          [
-            `- ${family.name}`,
-            `variants=${family.variants}`,
-            `images=${family.imageCount}`,
-            `videos=${family.videoCount}`,
-            `carousels=${family.carouselCount}`,
-            `creators=${family.creatorCount}`,
-            `avgLongevity=${family.averageLongevity}d`,
-            `avgCreative=${family.averageCreative}/100`,
-            `avgEngagementPotential=${family.averageEngagement}/100`,
-            `commonOffer=${family.topOffer ?? "n/a"}`,
-          ].join(" | ")
-        );
-      }
-    );
-
-    lines.push("");
-  }
-
-  if (
-    snapshot.marketPatterns
-      .topOffers.length > 0
-  ) {
-    lines.push(
-      "COMMON OFFERS:"
-    );
-
-    snapshot.marketPatterns.topOffers.forEach(
-      (item) => {
-        lines.push(
-          `- ${item.offer}: ${item.count} ads`
-        );
-      }
-    );
-
-    lines.push("");
-  }
-
-  if (
-    snapshot.marketPatterns
-      .topCreators.length > 0
-  ) {
-    lines.push(
-      "CREATOR SIGNALS:"
-    );
-
-    snapshot.marketPatterns.topCreators.forEach(
-      (creator) => {
-        lines.push(
-          `- ${creator}`
-        );
-      }
-    );
-
-    lines.push("");
-  }
-
-  if (
-    snapshot.marketPatterns
-      .hookPatterns.length > 0
-  ) {
-    lines.push(
-      "HOOK PATTERNS:"
-    );
-
-    snapshot.marketPatterns.hookPatterns.forEach(
-      (pattern) => {
-        lines.push(
-          `- ${pattern.label}: ${pattern.share}% (${pattern.count} ads)`
-        );
-      }
-    );
-
-    lines.push("");
-  }
-
-  if (
-    snapshot.recommendedExperiments
-      .length > 0
-  ) {
-    lines.push(
-      "ADSPY-BASED TEST IDEAS:"
-    );
-
-    snapshot.recommendedExperiments.forEach(
-      (experiment) => {
-        lines.push(
-          `- ${experiment}`
-        );
-      }
-    );
-
-    lines.push("");
-  }
-
-  lines.push(
-    "VISIBLE AD DETAILS:"
-  );
-
-  snapshot.ads.forEach(
-    (ad, index) => {
-      lines.push(
-        `--- AD ${index + 1} ---`,
-        `ID: ${ad.id}`,
-        `Advertiser: ${ad.advertiserName ?? "n/a"}`,
-        `Creator: ${ad.creatorName ?? "n/a"}`,
-        `Partnership: ${ad.partnershipType ?? "n/a"}`,
-        `Product: ${ad.productName ?? "n/a"}`,
-        `Offer: ${ad.offer ?? "n/a"}`,
-        `Creative type: ${ad.creativeType ?? "n/a"}`,
-        `CTA: ${ad.callToAction ?? "n/a"}`,
-        `Active: ${
-          typeof ad.isActive ===
-          "boolean"
-            ? String(
-                ad.isActive
-              )
-            : "n/a"
-        }`,
-        `Running days: ${
-          ad.runningDays ??
-          "n/a"
-        }`,
-        `First seen: ${
-          ad.firstSeen ??
-          "n/a"
-        }`,
-        `Last seen: ${
-          ad.lastSeen ??
-          "n/a"
-        }`,
-        `Creative score: ${
-          ad.creativeScore ??
-          "n/a"
-        }/100`,
-        `Longevity score: ${
-          ad.longevityScore ??
-          "n/a"
-        }/100`,
-        `Relevance score: ${
-          ad.relevanceScore ??
-          "n/a"
-        }/100`,
-        `Engagement potential: ${
-          ad.engagementPotentialScore ??
-          "n/a"
-        }/100`,
-        `Platforms: ${
-          ad.publisherPlatforms?.join(
-            ", "
-          ) || "n/a"
-        }`,
-        `Headline: ${
-          ad.headline ??
-          "n/a"
-        }`,
-        `Primary text: ${
-          ad.primaryText ??
-          "n/a"
-        }`,
-        `Description: ${
-          ad.description ??
-          "n/a"
-        }`,
-        ""
-      );
-    }
-  );
-
-  lines.push(
-    "IMPORTANT: AdSpy scores are estimates or derived signals. They are not actual competitor clicks, CTR, impressions, spend, conversions, revenue, ROAS or profit."
-  );
-
-  return lines.join(
-    "\n"
-  );
-}
 
 export default function ZwirkPage() {
   const [messages, setMessages] =
@@ -557,9 +215,9 @@ export default function ZwirkPage() {
         ) &&
         parsed.length > 0
       ) {
-        setMessages(
-          parsed
-        );
+        queueMicrotask(() => {
+          setMessages(parsed);
+        });
       }
     } catch {
       // Ignore invalid saved chat.
@@ -603,37 +261,30 @@ export default function ZwirkPage() {
             report.unitEconomics
               .contributionMarginPct
           )}`,
-
           `Blended ROAS: ${fmt(
             report.adMetrics
               .blendedRoas
           )}x`,
-
           `Blended CAC: ${fmt(
             report.adMetrics
               .blendedCac
           )}`,
-
           `Max allowable CAC: ${fmt(
             report.unitEconomics
               .maxAllowableCac
           )}`,
-
           `Net profit margin: ${pct(
             report.monthlyPnl
               .netProfitMarginPct
           )}`,
-
           `Net revenue (month): ${fmt(
             report.monthlyPnl
               .netRevenueMonth
           )}`,
-
           `Net profit (month): ${fmt(
             report.monthlyPnl
               .netProfitMonth
           )}`,
-
           `Scale verdict: ${
             report.scalePlanner
               .readiness
@@ -646,71 +297,57 @@ export default function ZwirkPage() {
           );
 
         const summary =
-          competitorNarrative.length >
-          0
+          competitorNarrative.length > 0
             ? [
                 ...summaryLines,
                 "",
                 "Competitive radar:",
                 ...competitorNarrative,
               ].join("\n")
-            : summaryLines.join(
-                "\n"
-              );
+            : summaryLines.join("\n");
 
-        setContext({
-          label:
-            "Dashboard context loaded",
-          summary,
+        queueMicrotask(() => {
+          setContext({
+            label: "Dashboard context loaded",
+            summary,
+          });
+
+          setCompetitorSignals(
+            competitorNarrative
+          );
         });
-
-        setCompetitorSignals(
-          competitorNarrative
-        );
       } catch {
-        // Ignore malformed dashboard data.
+        queueMicrotask(() => {
+          setContext(null);
+          setCompetitorSignals([]);
+        });
       }
+    } else {
+      queueMicrotask(() => {
+        setContext(null);
+        setCompetitorSignals([]);
+      });
     }
 
-    try {
-      const rawAdSpy =
-        sessionStorage.getItem(
-          ZWIRK_ADSPY_STORAGE_KEY
-        );
+    // Use the single canonical AdSpy storage contract.
+    const snapshot =
+      loadZwirkAdSpySnapshot();
 
-      if (!rawAdSpy) {
-        return;
-      }
-
-      const parsed =
-        JSON.parse(
-          rawAdSpy
-        ) as ZwirkAdSpySnapshot;
-
-      if (
-        !parsed ||
-        parsed.version !== 1 ||
-        parsed.source !==
-          "AdSpy" ||
-        !Array.isArray(
-          parsed.ads
-        )
-      ) {
-        return;
-      }
-
-      setAdSpySnapshot(
-        parsed
-      );
-
-      setAdSpyContext(
-        formatAdSpyForZwirk(
-          parsed
-        )
-      );
-    } catch {
-      // Ignore malformed AdSpy state.
+    if (!snapshot) {
+      queueMicrotask(() => {
+        setAdSpySnapshot(null);
+        setAdSpyContext("");
+      });
+      return;
     }
+
+    const formattedAdSpy =
+      formatAdSpyForZwirk(snapshot);
+
+    queueMicrotask(() => {
+      setAdSpySnapshot(snapshot);
+      setAdSpyContext(formattedAdSpy);
+    });
   }, []);
 
   /*
@@ -1188,9 +825,7 @@ export default function ZwirkPage() {
                 AdSpy intelligence
                 loaded:{" "}
                 {
-                  adSpySnapshot
-                    .summary
-                    .totalAds
+                  adSpySnapshot.total
                 }{" "}
                 ads from{" "}
                 {
@@ -1241,42 +876,28 @@ export default function ZwirkPage() {
               <ul>
                 <li>
                   {
-                    adSpySnapshot
-                      .summary
-                      .totalAds
+                    adSpySnapshot.total
                   }{" "}
                   total matching
                   competitor ads
                 </li>
 
                 <li>
-                  {
-                    adSpySnapshot
-                      .summary
-                      .videoShare
-                  }
+                  {adSpySnapshot.total > 0 && adSpySnapshot.summary?.videoAds != null
+                    ? Math.round((adSpySnapshot.summary.videoAds / adSpySnapshot.total) * 100)
+                    : "n/a"}
                   % video share
                 </li>
 
                 <li>
-                  {
-                    adSpySnapshot
-                      .summary
-                      .creatorShare
-                  }
-                  % creator share
+                  n/a % creator share
                 </li>
 
                 <li>
                   Average
                   observed
                   longevity:{" "}
-                  {
-                    adSpySnapshot
-                      .summary
-                      .averageLongevity
-                  }{" "}
-                  days
+                  n/a days
                 </li>
               </ul>
             </div>

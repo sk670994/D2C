@@ -31,109 +31,237 @@ type SearchApiResponse = {
   keyword_results?: string[];
 };
 
-const SEARCH_API_ENDPOINT = "https://www.searchapi.org/api/v1/search";
-const REQUEST_TIMEOUT_MS = 4500;
+const ENDPOINT =
+  "https://www.searchapi.org/api/v1/search";
 
-function normalizeName(value: string): string {
-  return value
-    .toLocaleLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+const TIMEOUT_MS = 4500;
 
 function getApiKey(): string | null {
-  const value = process.env.SEARCHAPI_API_KEY?.trim();
-  return value || null;
+  const key =
+    process.env.SEARCHAPI_API_KEY?.trim();
+
+  return key || null;
+}
+
+function normalizeCountry(
+  value: string,
+): string {
+  const result =
+    value
+      .trim()
+      .toLowerCase();
+
+  return /^[a-z]{2}$/.test(result)
+    ? result
+    : "in";
 }
 
 export async function searchMetaPages(
   query: string,
   country = "IN",
-): Promise<MetaPageSearchResult[]> {
-  const apiKey = getApiKey();
-  const trimmedQuery = query.trim();
+): Promise<
+  MetaPageSearchResult[]
+> {
+  const apiKey =
+    getApiKey();
 
-  if (!apiKey || trimmedQuery.length < 2) {
+  const q =
+    query
+      .replace(/\s+/g, " ")
+      .trim();
+
+  if (
+    !apiKey ||
+    q.length < 2
+  ) {
     return [];
   }
 
-  const params = new URLSearchParams({
-    engine: "meta_ad_library_page_search",
-    q: trimmedQuery,
-    country: country.trim().toLowerCase() || "in",
-  });
+  const params =
+    new URLSearchParams({
+      engine:
+        "meta_ad_library_page_search",
+      q,
+      country:
+        normalizeCountry(
+          country,
+        ),
+      api_key:
+        apiKey,
+    });
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const controller =
+    new AbortController();
 
-  try {
-    const response = await fetch(
-      `${SEARCH_API_ENDPOINT}?${params.toString()}`,
-      {
-        method: "GET",
-        signal: controller.signal,
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        next: { revalidate: 300 },
-      },
+  const timeout =
+    setTimeout(
+      () =>
+        controller.abort(),
+      TIMEOUT_MS,
     );
 
+  try {
+    const response =
+      await fetch(
+        `${ENDPOINT}?${params.toString()}`,
+        {
+          method: "GET",
+          signal:
+            controller.signal,
+          cache:
+            "no-store",
+          headers: {
+            Accept:
+              "application/json",
+          },
+        },
+      );
+
     if (!response.ok) {
-      throw new Error(
-        `Meta page search provider returned ${response.status}`,
+      console.error(
+        "[MetaPageSearch] provider error",
+        response.status,
+      );
+
+      return [];
+    }
+
+    const data =
+      (await response.json()) as SearchApiResponse;
+
+    const seen =
+      new Set<string>();
+
+    return (
+      data.page_results ??
+      []
+    )
+      .map(
+        (page) => ({
+          pageId:
+            String(
+              page.page_id ??
+                "",
+            ).trim(),
+
+          name:
+            String(
+              page.name ??
+                "",
+            ).trim(),
+
+          category:
+            page.category ??
+            null,
+
+          imageUrl:
+            page.image_uri ??
+            null,
+
+          verification:
+            page.verification ??
+            null,
+
+          entityType:
+            page.entity_type ??
+            null,
+
+          igUsername:
+            page.ig_username ??
+            null,
+
+          pageAlias:
+            page.page_alias ??
+            null,
+
+          likes:
+            typeof page.likes ===
+              "number" &&
+            Number.isFinite(
+              page.likes,
+            )
+              ? page.likes
+              : null,
+
+          igFollowers:
+            typeof page.ig_followers ===
+              "number" &&
+            Number.isFinite(
+              page.ig_followers,
+            )
+              ? page.ig_followers
+              : null,
+        }),
+      )
+      .filter(
+        (page) => {
+          if (
+            !page.pageId ||
+            !page.name ||
+            seen.has(
+              page.pageId,
+            )
+          ) {
+            return false;
+          }
+
+          seen.add(
+            page.pageId,
+          );
+
+          return true;
+        },
+      );
+  } catch (error) {
+    if (
+      error instanceof
+        DOMException &&
+      error.name ===
+        "AbortError"
+    ) {
+      console.warn(
+        "[MetaPageSearch] timeout",
+      );
+    } else {
+      console.error(
+        "[MetaPageSearch] request failed",
+        error,
       );
     }
 
-    const data = (await response.json()) as SearchApiResponse;
-    const seen = new Set<string>();
-
-    return (data.page_results ?? [])
-      .map((page) => ({
-        pageId: String(page.page_id ?? "").trim(),
-        name: String(page.name ?? "").trim(),
-        category: page.category ?? null,
-        imageUrl: page.image_uri ?? null,
-        verification: page.verification ?? null,
-        entityType: page.entity_type ?? null,
-        igUsername: page.ig_username ?? null,
-        pageAlias: page.page_alias ?? null,
-        likes:
-          typeof page.likes === "number" && Number.isFinite(page.likes)
-            ? page.likes
-            : null,
-        igFollowers:
-          typeof page.ig_followers === "number" &&
-          Number.isFinite(page.ig_followers)
-            ? page.ig_followers
-            : null,
-      }))
-      .filter((page) => {
-        if (!page.pageId || !page.name || seen.has(page.pageId)) {
-          return false;
-        }
-
-        seen.add(page.pageId);
-        return true;
-      });
-  } catch (error) {
-    console.error("[Meta page search]", error);
     return [];
   } finally {
     clearTimeout(timeout);
   }
 }
 
-export function normalizeAdvertiserName(value: string): string {
-  return normalizeName(value);
+export function normalizeAdvertiserName(
+  value: string,
+): string {
+  return value
+    .toLocaleLowerCase()
+    .replace(
+      /[^a-z0-9]+/g,
+      " ",
+    )
+    .replace(
+      /\s+/g,
+      " ",
+    )
+    .trim();
 }
 
-export function inferDomain(page: MetaPageSearchResult): string | null {
-  const username = page.igUsername || page.pageAlias;
+export function inferDomain(
+  page: MetaPageSearchResult,
+): string | null {
+  const username =
+    page.igUsername;
 
-  if (!username) return null;
+  if (!username) {
+    return null;
+  }
 
-  return `https://instagram.com/${encodeURIComponent(username)}`;
+  return `https://instagram.com/${encodeURIComponent(
+    username,
+  )}`;
 }

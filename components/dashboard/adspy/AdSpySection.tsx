@@ -535,6 +535,11 @@ export function AdSpySection({
   const [autocompleteAdvertisers, setAutocompleteAdvertisers] =
     useState<AutocompleteAdvertiser[]>([]);
 
+  // Exact Meta Page ID selected from advertiser autocomplete.
+  // When present, searches must use this identity instead of fuzzy advertiser-name matching.
+  const [selectedAdvertiserPageId, setSelectedAdvertiserPageId] =
+    useState<string | null>(null);
+
   const [autocompleteLoading, setAutocompleteLoading] =
     useState(false);
 
@@ -875,12 +880,14 @@ const refreshIndexedResults = useCallback(
     searchCountry,
     searchPlatform,
     searchMode,
+    advertiserPageId,
     requestId,
   }: {
     searchQuery: string;
     searchCountry: string;
     searchPlatform: Platform;
     searchMode: SearchMode;
+    advertiserPageId?: string | null;
     requestId: number;
   }) => {
     try {
@@ -908,6 +915,13 @@ const refreshIndexedResults = useCallback(
         "mode",
         searchMode,
       );
+
+      if (advertiserPageId) {
+        url.searchParams.set(
+          "pageId",
+          advertiserPageId,
+        );
+      }
 
       url.searchParams.set(
         "page",
@@ -993,11 +1007,17 @@ const refreshIndexedResults = useCallback(
     async (
       page = 1,
       forcedQuery?: string,
+      forcedPageId?: string,
       options?: {
         skipBackgroundRefresh?: boolean;
         forcedMode?: SearchMode;
       },
     ) => {
+      const advertiserPageId =
+        forcedPageId ??
+        selectedAdvertiserPageId ??
+        null;
+
       const q = (
         forcedQuery ?? input
       ).trim();
@@ -1073,6 +1093,13 @@ const refreshIndexedResults = useCallback(
           "mode",
           searchModeUsed,
         );
+
+        if (advertiserPageId) {
+          url.searchParams.set(
+            "pageId",
+            advertiserPageId,
+          );
+        }
 
         url.searchParams.set(
           "page",
@@ -1211,6 +1238,7 @@ const refreshIndexedResults = useCallback(
       input,
       loadTrackedStatus,
       mode,
+      selectedAdvertiserPageId,
       onQueryChange,
       onResultCountChange,
       platform,
@@ -1459,6 +1487,7 @@ useEffect(() => {
     searchAbortRef.current?.abort();
     
     setInput("");
+    setSelectedAdvertiserPageId(null);
     onQueryChange?.("");
 
     setAutocompleteAdvertisers([]);
@@ -1496,6 +1525,7 @@ useEffect(() => {
     );
 
     setAutocompleteAdvertisers([]);
+    setSelectedAdvertiserPageId(null);
     setAutocompleteLoading(false);
     setSuggestionOpen(false);
     setTracked(false);
@@ -1514,6 +1544,7 @@ useEffect(() => {
     }
 
     setMode(nextMode);
+    setSelectedAdvertiserPageId(null);
     setAutocompleteAdvertisers([]);
     setAutocompleteLoading(false);
     setSuggestionOpen(false);
@@ -1772,6 +1803,7 @@ useEffect(() => {
                       event.target.value;
 
                     setInput(next);
+                    setSelectedAdvertiserPageId(null);
                     setAutocompleteAdvertisers([]);
 
                     if (next.trim().length < 2) {
@@ -1839,6 +1871,7 @@ useEffect(() => {
                 advertisers={autocompleteAdvertisers}
                 onSelectQuery={(selectedQuery) => {
                   setInput(selectedQuery);
+                  setSelectedAdvertiserPageId(null);
                   onQueryChange?.(
                     selectedQuery,
                   );
@@ -1852,15 +1885,15 @@ useEffect(() => {
                 }}
                 onSelectAdvertiser={(advertiser) => {
                   setInput(advertiser.label);
-                  onQueryChange?.(
-                    advertiser.label,
-                  );
+                  setSelectedAdvertiserPageId(advertiser.pageId);
+                  onQueryChange?.(advertiser.label);
                   setSuggestionOpen(false);
                   setAutocompleteAdvertisers([]);
 
                   void search(
                     1,
                     advertiser.label,
+                    advertiser.pageId,
                   );
                 }}
               />
@@ -2304,6 +2337,7 @@ useEffect(() => {
                     pagination.page -
                       1,
                     undefined,
+                    selectedAdvertiserPageId ?? undefined,
                     {
                       skipBackgroundRefresh:
                         true,
@@ -2337,6 +2371,7 @@ useEffect(() => {
                     pagination.page +
                       1,
                     undefined,
+                    selectedAdvertiserPageId ?? undefined,
                     {
                       skipBackgroundRefresh:
                         true,
