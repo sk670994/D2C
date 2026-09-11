@@ -60,12 +60,28 @@ type Ad = {
   runningDays?: number | null;
 };
 
-type Suggestion = {
-  id: string;
-  label: string;
-  type: "advertiser";
-  domain?: string | null;
-};
+type Suggestion =
+  | {
+      id: string;
+      pageId: string;
+      label: string;
+      type: "advertiser";
+      domain?: string | null;
+      profileUrl?: string | null;
+      profileImageUrl?: string | null;
+      category?: string | null;
+      verification?: string | null;
+    }
+  | {
+      id: string;
+      label: string;
+      type: "query";
+    };
+
+type AutocompleteAdvertiser = Extract<
+  Suggestion,
+  { type: "advertiser" }
+>;
 
 type Job = {
   id: string;
@@ -517,14 +533,7 @@ export function AdSpySection({
     useState(false);
 
   const [autocompleteAdvertisers, setAutocompleteAdvertisers] =
-    useState<
-      Array<{
-        id: string;
-        label: string;
-        domain?: string | null;
-        type: "advertiser";
-      }>
-    >([]);
+    useState<AutocompleteAdvertiser[]>([]);
 
   const [autocompleteLoading, setAutocompleteLoading] =
     useState(false);
@@ -658,6 +667,11 @@ export function AdSpySection({
           platform,
         );
 
+        url.searchParams.set(
+          "country",
+          countryInput.trim().toUpperCase() || "IN",
+        );
+
         const response = await fetch(url, {
           signal: controller.signal,
           cache: "no-store",
@@ -665,12 +679,7 @@ export function AdSpySection({
 
         const data = (await response.json()) as {
           success?: boolean;
-          advertisers?: Array<{
-            id: string;
-            label: string;
-            type: "advertiser";
-            domain?: string | null;
-          }>;
+          advertisers?: AutocompleteAdvertiser[];
         };
 
         if (
@@ -722,7 +731,7 @@ export function AdSpySection({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [input, mode, platform]);
+  }, [countryInput, input, mode, platform]);
 
   const refreshCollection = useCallback(
     async ({
@@ -1453,6 +1462,7 @@ useEffect(() => {
     onQueryChange?.("");
 
     setAutocompleteAdvertisers([]);
+    setAutocompleteLoading(false);
     setSuggestionOpen(false);
 
     setAds([]);
@@ -1486,6 +1496,7 @@ useEffect(() => {
     );
 
     setAutocompleteAdvertisers([]);
+    setAutocompleteLoading(false);
     setSuggestionOpen(false);
     setTracked(false);
     setTrackedLastCollectedAt(
@@ -1504,6 +1515,7 @@ useEffect(() => {
 
     setMode(nextMode);
     setAutocompleteAdvertisers([]);
+    setAutocompleteLoading(false);
     setSuggestionOpen(false);
     setTracked(false);
     setTrackedLastCollectedAt(
@@ -1831,6 +1843,7 @@ useEffect(() => {
                     selectedQuery,
                   );
                   setSuggestionOpen(false);
+                  setAutocompleteAdvertisers([]);
 
                   void search(
                     1,
@@ -1843,6 +1856,7 @@ useEffect(() => {
                     advertiser.label,
                   );
                   setSuggestionOpen(false);
+                  setAutocompleteAdvertisers([]);
 
                   void search(
                     1,

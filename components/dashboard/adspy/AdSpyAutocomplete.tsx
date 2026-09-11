@@ -8,15 +8,14 @@ import {
 
 export type AutocompleteAdvertiser = {
   id: string;
+  pageId: string;
   label: string;
-  domain?: string | null;
   type: "advertiser";
-};
-
-export type AutocompleteQuery = {
-  id: string;
-  label: string;
-  type: "query";
+  domain?: string | null;
+  profileUrl?: string | null;
+  profileImageUrl?: string | null;
+  category?: string | null;
+  verification?: string | null;
 };
 
 type Props = {
@@ -24,7 +23,9 @@ type Props = {
   open: boolean;
   loading: boolean;
   advertisers: AutocompleteAdvertiser[];
-  onSelectQuery: (query: string) => void;
+  onSelectQuery: (
+    query: string,
+  ) => void;
   onSelectAdvertiser: (
     advertiser: AutocompleteAdvertiser,
   ) => void;
@@ -38,11 +39,14 @@ export function AdSpyAutocomplete({
   onSelectQuery,
   onSelectAdvertiser,
 }: Props) {
-  if (!open || query.trim().length < 2) {
+  const trimmedQuery = query.trim();
+
+  if (
+    !open ||
+    trimmedQuery.length < 2
+  ) {
     return null;
   }
-
-  const trimmedQuery = query.trim();
 
   return (
     <div
@@ -52,13 +56,15 @@ export function AdSpyAutocomplete({
       aria-label="Search suggestions"
     >
       <div className="zt-suggestion-head">
-        <span>Suggestions</span>
+        <span>
+          Suggestions
+        </span>
 
         {loading ? (
           <Loader2
             size={14}
             className="zt-spin"
-            aria-label="Loading suggestions"
+            aria-label="Loading"
           />
         ) : null}
       </div>
@@ -72,7 +78,9 @@ export function AdSpyAutocomplete({
           event.preventDefault();
         }}
         onClick={() => {
-          onSelectQuery(trimmedQuery);
+          onSelectQuery(
+            trimmedQuery,
+          );
         }}
       >
         <span className="zt-suggestion-icon">
@@ -90,15 +98,15 @@ export function AdSpyAutocomplete({
         </span>
       </button>
 
-      {advertisers.length > 0 ? (
-        <>
-          <div className="zt-suggestion-section">
-            Advertisers
-          </div>
+      <div className="zt-suggestion-section">
+        Advertisers
+      </div>
 
-          {advertisers.map((advertiser) => (
+      {advertisers.length > 0 ? (
+        advertisers.map(
+          (advertiser) => (
             <button
-              key={`advertiser:${advertiser.id}:${advertiser.label}`}
+              key={`advertiser:${advertiser.pageId || advertiser.id}`}
               type="button"
               className="zt-suggestion"
               role="option"
@@ -113,7 +121,22 @@ export function AdSpyAutocomplete({
               }}
             >
               <span className="zt-suggestion-icon">
-                <UserRound size={15} />
+                {advertiser.profileImageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={
+                      advertiser.profileImageUrl
+                    }
+                    alt=""
+                    width={30}
+                    height={30}
+                    loading="lazy"
+                  />
+                ) : (
+                  <UserRound
+                    size={15}
+                  />
+                )}
               </span>
 
               <span className="zt-suggestion-content">
@@ -124,17 +147,30 @@ export function AdSpyAutocomplete({
                 <small>
                   {advertiser.domain
                     ? advertiser.domain
-                    : "Advertiser"}
+                        .replace(
+                          /^https?:\/\//,
+                          "",
+                        )
+                        .replace(
+                          /\/$/,
+                          "",
+                        )
+                    : advertiser.category ||
+                      "Advertiser"}
                 </small>
               </span>
             </button>
-          ))}
-        </>
+          ),
+        )
       ) : loading ? (
         <div className="zt-suggestion-status">
           Finding matching advertisers…
         </div>
-      ) : null}
+      ) : (
+        <div className="zt-suggestion-status">
+          No advertiser match yet
+        </div>
+      )}
     </div>
   );
 }
