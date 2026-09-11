@@ -145,6 +145,8 @@ const EMPTY_SUMMARY: Summary = {
   longestRunningDays: 0,
 };
 
+const EMPTY_SUGGESTION_CATALOG: Suggestion[] = [];
+
 const FILTERS = [
   ["all", "All"],
   ["active", "Active"],
@@ -503,7 +505,7 @@ export function AdSpySection({
   onCountryChange,
   onPlatformChange,
   onResultCountChange,
-  initialSuggestionCatalog = [],
+  initialSuggestionCatalog = EMPTY_SUGGESTION_CATALOG,
 }: AdSpySectionProps) {
   const [input, setInput] = useState(
     query,
@@ -675,115 +677,91 @@ export function AdSpySection({
       : visibleSuggestionCatalog;
 
   useEffect(() => {
-  const searchQuery = input.trim();
+    const searchQuery = input.trim();
 
-  if (searchQuery.length < 2) {
-    return;
-  }
-
-  const controller = new AbortController();
-
-  const timer = window.setTimeout(async () => {
-    if (!mountedRef.current) {
+    if (searchQuery.length < 2) {
       return;
     }
 
-    setSuggestionLoading(true);
+    const controller = new AbortController();
 
-    try {
-      const url = new URL(
-        "/api/ad-intelligence/autocomplete",
-        window.location.origin,
-      );
-
-      url.searchParams.set("q", searchQuery);
-      url.searchParams.set("mode", mode);
-      url.searchParams.set("platform", platform);
-
-      const response = await fetch(url, {
-        signal: controller.signal,
-        cache: "no-store",
-      });
-
-      const data = (await response.json()) as {
-        success?: boolean;
-        suggestions?: Suggestion[];
-      };
-
-      if (
-        !mountedRef.current ||
-        controller.signal.aborted
-      ) {
+    const timer = window.setTimeout(async () => {
+      if (!mountedRef.current) {
         return;
       }
 
-      if (!response.ok || !data.success) {
-        return;
-      }
+      setSuggestionLoading(true);
 
-      const serverSuggestions =
-        Array.isArray(data.suggestions)
+      try {
+        const url = new URL(
+          "/api/ad-intelligence/autocomplete",
+          window.location.origin,
+        );
+
+        url.searchParams.set("q", searchQuery);
+        url.searchParams.set("mode", mode);
+        url.searchParams.set("platform", platform);
+
+        const response = await fetch(url, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
+
+        const data = (await response.json()) as {
+          success?: boolean;
+          suggestions?: Suggestion[];
+        };
+
+        if (
+          controller.signal.aborted ||
+          !mountedRef.current
+        ) {
+          return;
+        }
+
+        if (!response.ok || !data.success) {
+          setSuggestions([]);
+          setSuggestionOpen(false);
+          return;
+        }
+
+        const nextSuggestions = Array.isArray(
+          data.suggestions,
+        )
           ? data.suggestions.slice(0, 8)
           : [];
 
-      const fallbackSuggestions =
-        visibleSuggestionCatalog.slice(0, 8);
+        setSuggestions(nextSuggestions);
+        setSuggestionOpen(nextSuggestions.length > 0);
+      } catch (error) {
+        if (
+          error instanceof DOMException &&
+          error.name === "AbortError"
+        ) {
+          return;
+        }
 
-      const merged = new Map<string, Suggestion>();
+        if (!mountedRef.current) {
+          return;
+        }
 
-      for (const suggestion of [
-        ...serverSuggestions,
-        ...fallbackSuggestions,
-      ]) {
-        const key = `${suggestion.type}:${suggestion.label
-          .trim()
-          .toLocaleLowerCase()}`;
-
-        if (!merged.has(key)) {
-          merged.set(key, suggestion);
+        setSuggestions([]);
+        setSuggestionOpen(false);
+      } finally {
+        if (
+          mountedRef.current &&
+          !controller.signal.aborted
+        ) {
+          setSuggestionLoading(false);
         }
       }
+    }, 500);
 
-      const nextSuggestions =
-        Array.from(merged.values()).slice(0, 8);
-
-      setSuggestions(nextSuggestions);
-      setSuggestionOpen(nextSuggestions.length > 0);
-    } catch (error) {
-      if (
-        error instanceof DOMException &&
-        error.name === "AbortError"
-      ) {
-        return;
-      }
-
-      if (mountedRef.current) {
-        const fallback =
-          visibleSuggestionCatalog.slice(0, 8);
-
-        setSuggestions(fallback);
-        setSuggestionOpen(fallback.length > 0);
-      }
-    } finally {
-      if (
-        mountedRef.current &&
-        !controller.signal.aborted
-      ) {
-        setSuggestionLoading(false);
-      }
-    }
-  }, 300);
-
-  return () => {
-    controller.abort();
-    window.clearTimeout(timer);
-  };
-}, [
-  input,
-  mode,
-  platform,
-  visibleSuggestionCatalog,
-]);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [input, mode, platform]);
 
   const refreshCollection = useCallback(
     async ({
@@ -1225,7 +1203,7 @@ const refreshIndexedResults = useCallback(
               normalizedCountry,
             searchPlatform:
               platform,
-            searchMode: mode,
+            searchMode: searchModeUsed,
           });
         }
       } catch (requestError) {

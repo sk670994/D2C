@@ -19,19 +19,14 @@ export async function GET(
   request: NextRequest,
 ) {
   try {
-    const auth =
-      await createServerAuthClient();
+    const auth = await createServerAuthClient();
 
     const {
       data: { user },
       error: authError,
-    } =
-      await auth.auth.getUser();
+    } = await auth.auth.getUser();
 
-    if (
-      authError ||
-      !user
-    ) {
+    if (authError || !user) {
       return NextResponse.json(
         {
           success: false,
@@ -41,32 +36,27 @@ export async function GET(
       );
     }
 
-    const params =
-      request.nextUrl.searchParams;
+    const params = request.nextUrl.searchParams;
 
-    const query =
-      (
-        params.get("q") ??
-        ""
-      ).trim();
+    const query = (
+      params.get("q") ?? ""
+    ).trim();
 
-    const country =
-      (params.get("country") ?? "IN")
-        .trim()
-        .toUpperCase();
+    const country = (
+      params.get("country") ?? "IN"
+    )
+      .trim()
+      .toUpperCase();
 
-    const platform =
-      params.get("platform") ===
-        "google"
+    const platform: AdPlatform =
+      params.get("platform") === "google"
         ? "google"
-        : params.get("platform") ===
-            "linkedin"
+        : params.get("platform") === "linkedin"
           ? "linkedin"
           : "meta";
 
     const mode =
-      params.get("mode") ===
-        "keyword"
+      params.get("mode") === "keyword"
         ? "keyword"
         : "advertiser";
 
@@ -77,18 +67,19 @@ export async function GET(
       });
     }
 
-    const analysis =
-      await getCompetitiveAnalytics({
-        query,
-        country: /^[A-Z]{2}$/.test(country) ? country : "IN",
-        platform:
-          platform as AdPlatform,
-        mode,
-      });
+    const analysis = await getCompetitiveAnalytics({
+      query,
+      country: /^[A-Z]{2}$/.test(country)
+        ? country
+        : "IN",
+      platform,
+      mode,
+    });
 
     return NextResponse.json({
       success: true,
       query,
+      country,
       platform,
       mode,
       analysis,
