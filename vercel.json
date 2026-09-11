@@ -11,7 +11,7 @@
   ],
   "functions": {
     "app/api/queues/adspy-collection/route.ts": {
-      "maxDuration": 800,
+      "maxDuration": 300,
       "experimentalTriggers": [
         {
           "type": "queue/v2beta",
