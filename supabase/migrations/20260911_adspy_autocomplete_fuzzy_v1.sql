@@ -1,9 +1,3 @@
--- Zooptrack AdSpy
--- Meta-style fuzzy advertiser autocomplete.
---
--- Requires pg_trgm. It is already installed in production,
--- but CREATE EXTENSION IF NOT EXISTS keeps this migration safe.
-
 create extension if not exists pg_trgm;
 
 create or replace function public.adspy_autocomplete_advertisers(
@@ -32,7 +26,10 @@ as $$
           'g'
         )
       ) as normalized_q,
-      least(greatest(coalesce(p_limit, 8), 1), 12) as result_limit
+      least(
+        greatest(coalesce(p_limit, 8), 1),
+        12
+      ) as result_limit
   ),
 
   brand_matches as (
@@ -42,7 +39,10 @@ as $$
       nullif(trim(b.domain), '') as domain,
 
       greatest(
-        similarity(lower(coalesce(b.canonical_name, '')), i.q),
+        similarity(
+          lower(coalesce(b.canonical_name, '')),
+          i.q
+        ),
         similarity(
           lower(coalesce(b.normalized_name, '')),
           i.normalized_q
@@ -52,10 +52,13 @@ as $$
       case
         when lower(trim(coalesce(b.canonical_name, ''))) = i.q
           then 10000
+
         when lower(trim(coalesce(b.canonical_name, ''))) like i.q || '%'
           then 7000
+
         when lower(trim(coalesce(b.canonical_name, ''))) like '%' || i.q || '%'
           then 4000
+
         else 0
       end as lexical_score
 
@@ -66,8 +69,14 @@ as $$
       length(i.q) >= 2
       and (
         lower(coalesce(b.canonical_name, '')) like '%' || i.q || '%'
+
         or lower(coalesce(b.normalized_name, '')) like '%' || i.normalized_q || '%'
-        or similarity(lower(coalesce(b.canonical_name, '')), i.q) >= 0.20
+
+        or similarity(
+          lower(coalesce(b.canonical_name, '')),
+          i.q
+        ) >= 0.20
+
         or similarity(
           lower(coalesce(b.normalized_name, '')),
           i.normalized_q
@@ -79,7 +88,13 @@ as $$
     select
       coalesce(
         c.advertiser_id::text,
-        md5(lower(trim(coalesce(c.advertiser_name, ''))))
+        md5(
+          lower(
+            trim(
+              coalesce(c.advertiser_name, '')
+            )
+          )
+        )
       ) as id,
 
       trim(c.advertiser_name) as label,
@@ -87,17 +102,36 @@ as $$
       null::text as domain,
 
       similarity(
-        lower(trim(coalesce(c.advertiser_name, ''))),
+        lower(
+          trim(
+            coalesce(c.advertiser_name, '')
+          )
+        ),
         i.q
       ) as trigram_score,
 
       case
-        when lower(trim(coalesce(c.advertiser_name, ''))) = i.q
+        when lower(
+          trim(
+            coalesce(c.advertiser_name, '')
+          )
+        ) = i.q
           then 10000
-        when lower(trim(coalesce(c.advertiser_name, ''))) like i.q || '%'
+
+        when lower(
+          trim(
+            coalesce(c.advertiser_name, '')
+          )
+        ) like i.q || '%'
           then 7000
-        when lower(trim(coalesce(c.advertiser_name, ''))) like '%' || i.q || '%'
+
+        when lower(
+          trim(
+            coalesce(c.advertiser_name, '')
+          )
+        ) like '%' || i.q || '%'
           then 4000
+
         else 0
       end as lexical_score
 
@@ -105,13 +139,31 @@ as $$
     cross join input i
 
     where
-      c.platform = coalesce(nullif(lower(trim(p_platform)), ''), 'meta')
+      c.platform =
+        coalesce(
+          nullif(
+            lower(trim(p_platform)),
+            ''
+          ),
+          'meta'
+        )
+
       and length(i.q) >= 2
-      and nullif(trim(c.advertiser_name), '') is not null
+
+      and nullif(
+        trim(c.advertiser_name),
+        ''
+      ) is not null
+
       and (
-        lower(trim(c.advertiser_name)) like '%' || i.q || '%'
+        lower(
+          trim(c.advertiser_name)
+        ) like '%' || i.q || '%'
+
         or similarity(
-          lower(trim(c.advertiser_name)),
+          lower(
+            trim(c.advertiser_name)
+          ),
           i.q
         ) >= 0.20
       )
@@ -122,7 +174,8 @@ as $$
       id,
       label,
       domain,
-      lexical_score + (trigram_score * 1000.0) as score
+      lexical_score
+        + (trigram_score * 1000.0) as score
     from brand_matches
 
     union all
@@ -131,7 +184,8 @@ as $$
       id,
       label,
       domain,
-      lexical_score + (trigram_score * 1000.0) as score
+      lexical_score
+        + (trigram_score * 1000.0) as score
     from creative_matches
   ),
 
@@ -141,8 +195,11 @@ as $$
       max(label) as label,
       max(domain) as domain,
       max(score) as score
+
     from combined
+
     where label is not null
+
     group by lower(trim(label))
   )
 
@@ -151,19 +208,39 @@ as $$
     label,
     domain,
     score
+
   from deduped
-  order by score desc, label asc
-  limit (select result_limit from input);
+
+  order by
+    score desc,
+    label asc
+
+  limit (
+    select result_limit
+    from input
+  );
 $$;
 
 revoke all
-on function public.adspy_autocomplete_advertisers(text, text, integer)
+on function public.adspy_autocomplete_advertisers(
+  text,
+  text,
+  integer
+)
 from public;
 
 grant execute
-on function public.adspy_autocomplete_advertisers(text, text, integer)
+on function public.adspy_autocomplete_advertisers(
+  text,
+  text,
+  integer
+)
 to authenticated;
 
 grant execute
-on function public.adspy_autocomplete_advertisers(text, text, integer)
+on function public.adspy_autocomplete_advertisers(
+  text,
+  text,
+  integer
+)
 to service_role;

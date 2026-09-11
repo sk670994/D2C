@@ -1345,4 +1345,54 @@
   .zt-drawer {
     width: 100%;
   }
+
+  .zt-suggestion-section {
+  padding: 10px 14px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #667085;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.zt-suggestion-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.zt-suggestion-content strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zt-suggestion-content small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zt-suggestion-query {
+  margin-bottom: 4px;
+}
+
+.zt-suggestion-status {
+  padding: 16px 14px;
+  text-align: center;
+  font-size: 12px;
+  color: #98a2b3;
+}
+
+.zt-suggestion:hover {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.zt-suggestion:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.35);
+  outline-offset: -2px;
+}
 }
