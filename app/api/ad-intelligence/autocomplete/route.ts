@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+ import { NextRequest, NextResponse } from "next/server";
 
 import {
   createClient as createServerAuthClient,
@@ -12,13 +12,32 @@ export const dynamic = "force-dynamic";
 const MAX_RESULTS = 8;
 
 type Platform = "meta" | "google" | "linkedin";
-type SearchMode = "advertiser" | "keyword";
 
-type Suggestion = {
+type AdvertiserSuggestion = {
   id: string;
   label: string;
-  type: "advertiser" | "creator" | "keyword";
+  type: "advertiser";
   domain?: string | null;
+};
+
+type QuerySuggestion = {
+  id: string;
+  label: string;
+  type: "query";
+};
+
+export type Suggestion = AdvertiserSuggestion | QuerySuggestion;
+
+type AutocompleteResponse = {
+  success: boolean;
+  query: {
+    id: string;
+    label: string;
+    type: "query";
+  };
+  advertisers: AdvertiserSuggestion[];
+  suggestions: Suggestion[];
+  error?: string;
 };
 
 function normalizePlatform(value: string | null): Platform {
@@ -29,75 +48,28 @@ function normalizePlatform(value: string | null): Platform {
   return "meta";
 }
 
-function normalizeMode(value: string | null): SearchMode {
-  return value === "keyword" ? "keyword" : "advertiser";
+function normalizeQuery(value: string | null): string {
+  return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
-function escapeLike(value: string): string {
-  return value
-    .replace(/\\/g, " ")
-    .replace(/[%_]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
-function rankSuggestions(
-  items: Suggestion[],
+
+function makeSuccessResponse(
   query: string,
-): Suggestion[] {
-  const q = query.toLocaleLowerCase().trim();
-  const seen = new Set<string>();
+  advertisers: AdvertiserSuggestion[],
+): AutocompleteResponse {
+  const querySuggestion: QuerySuggestion = {
+    id: `query:${query.toLocaleLowerCase()}`,
+    label: query,
+    type: "query",
+  };
 
-  return items
-    .filter((item) => item.label.trim().length > 0)
-    .filter((item) => {
-      const key = `${item.type}:${item.label
-        .trim()
-        .toLocaleLowerCase()}`;
-
-      if (seen.has(key)) {
-        return false;
-      }
-
-      seen.add(key);
-      return true;
-    })
-    .map((item) => {
-      const label = item.label.trim().toLocaleLowerCase();
-      let score = 0;
-
-      if (label === q) score += 10_000;
-      if (label.startsWith(q)) score += 5_000;
-
-      const wordStartsWithQuery = label
-        .split(/\s+/)
-        .some((word) => word.startsWith(q));
-
-      if (wordStartsWithQuery) score += 2_500;
-      if (label.includes(q)) score += 1_000;
-
-      if (item.type === "advertiser") {
-        score += 100;
-      }
-
-      return {
-        item,
-        score,
-      };
-    })
-    .sort((a, b) => {
-      if (b.score !== a.score) {
-        return b.score - a.score;
-      }
-
-      return a.item.label.localeCompare(
-        b.item.label,
-        undefined,
-        { sensitivity: "base" },
-      );
-    })
-    .slice(0, MAX_RESULTS)
-    .map(({ item }) => item);
+  return {
+    success: true,
+    query: querySuggestion,
+    advertisers,
+    suggestions: [querySuggestion, ...advertisers],
+  };
 }
 
 export async function GET(request: NextRequest) {
@@ -113,6 +85,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
+          query: {
+            id: "",
+            label: "",
+            type: "query",
+          },
+          advertisers: [],
           suggestions: [],
           error: "Unauthorized",
         },
@@ -122,7 +100,7 @@ export async function GET(request: NextRequest) {
 
     const rate = checkRateLimit(
       `autocomplete:${user.id}`,
-      30,
+      60,
       60_000,
     );
 
@@ -130,6 +108,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
+          query: {
+            id: "",
+            label: "",
+            type: "query",
+          },
+          advertisers: [],
           suggestions: [],
           error: "Too many autocomplete requests.",
         },
@@ -146,168 +130,88 @@ export async function GET(request: NextRequest) {
 
     const params = request.nextUrl.searchParams;
 
-    const query = (
-      params.get("q") ?? ""
-    ).trim();
+    const query = normalizeQuery(
+      params.get("q"),
+    );
 
     const platform = normalizePlatform(
       params.get("platform"),
     );
 
-    const mode = normalizeMode(
-      params.get("mode"),
-    );
-
     if (query.length < 2) {
       return NextResponse.json({
         success: true,
-        suggestions: [],
-      });
-    }
-
-    const escaped = escapeLike(query);
-
-    if (!escaped) {
-      return NextResponse.json({
-        success: true,
+        query: {
+          id: "",
+          label: query,
+          type: "query",
+        },
+        advertisers: [],
         suggestions: [],
       });
     }
 
     const client = createGlobalServiceClient();
 
-    const normalizedQuery = escaped
-      .toLocaleLowerCase()
-      .replace(/[^a-z0-9]+/g, " ")
-      .trim();
+    const {
+      data,
+      error,
+    } = await client.rpc(
+      "adspy_autocomplete_advertisers",
+      {
+        p_query: query,
+        p_platform: platform,
+        p_limit: MAX_RESULTS,
+      },
+    );
 
-    const [brandResult, creativeResult] =
-  await Promise.all([
-    client
-      .from("ad_intelligence_brands")
-      .select(
-        "id,canonical_name,normalized_name,domain",
-      )
-      .ilike(
-        "normalized_name",
-        `%${normalizedQuery}%`,
-      )
-      .limit(12),
-
-    client
-      .from("ad_intelligence_creatives")
-      .select(
-        "id,advertiser_id,advertiser_name,creator_name,headline,product_name",
-      )
-      .eq("platform", platform)
-      .or(
-        mode === "advertiser"
-          ? `advertiser_name.ilike.%${escaped}%`
-          : [
-              `advertiser_name.ilike.%${escaped}%`,
-              `creator_name.ilike.%${escaped}%`,
-              `headline.ilike.%${escaped}%`,
-              `product_name.ilike.%${escaped}%`,
-            ].join(","),
-      )
-      .limit(50),
-  ]);
-
-    if (brandResult.error) {
+    if (error) {
       throw new Error(
-        `Brand autocomplete failed: ${brandResult.error.message}`,
+        `Autocomplete query failed: ${error.message}`,
       );
     }
 
-    if (creativeResult.error) {
-      throw new Error(
-        `Creative autocomplete failed: ${creativeResult.error.message}`,
-      );
-    }
+    const advertisers: AdvertiserSuggestion[] = [];
+    const seen = new Set<string>();
 
-    const suggestions: Suggestion[] = [];
-
-    for (const brand of brandResult.data ?? []) {
+    for (const row of data ?? []) {
       const label = String(
-        brand.canonical_name ?? "",
+        row.label ?? "",
       ).trim();
 
       if (!label) {
         continue;
       }
 
-      suggestions.push({
-        id: String(brand.id),
-        label,
-        type: "advertiser",
-        domain: brand.domain ?? null,
-      });
-    }
+      const key = label.toLocaleLowerCase();
 
-    for (const row of creativeResult.data ?? []) {
-      const advertiser = String(
-        row.advertiser_name ?? "",
-      ).trim();
-
-      if (advertiser) {
-        suggestions.push({
-          id: String(
-            row.advertiser_id ??
-              `${row.id}:advertiser`,
-          ),
-          label: advertiser,
-          type: "advertiser",
-        });
-      }
-
-      if (mode !== "keyword") {
+      if (seen.has(key)) {
         continue;
       }
 
-      const creator = String(
-        row.creator_name ?? "",
-      ).trim();
+      seen.add(key);
 
-      if (creator) {
-        suggestions.push({
-          id: `${row.id}:creator`,
-          label: creator,
-          type: "creator",
-        });
-      }
+      advertisers.push({
+        id: String(row.id),
+        label,
+        type: "advertiser",
+        domain:
+          row.domain != null
+            ? String(row.domain)
+            : null,
+      });
 
-      const headline = String(
-        row.headline ?? "",
-      ).trim();
-
-      if (headline) {
-        suggestions.push({
-          id: `${row.id}:headline`,
-          label: headline,
-          type: "keyword",
-        });
-      }
-
-      const productName = String(
-        row.product_name ?? "",
-      ).trim();
-
-      if (productName) {
-        suggestions.push({
-          id: `${row.id}:product`,
-          label: productName,
-          type: "keyword",
-        });
+      if (advertisers.length >= MAX_RESULTS) {
+        break;
       }
     }
 
-    return NextResponse.json({
-      success: true,
-      suggestions: rankSuggestions(
-        suggestions,
+    return NextResponse.json(
+      makeSuccessResponse(
         query,
+        advertisers,
       ),
-    });
+    );
   } catch (error) {
     console.error(
       "[AdSpy autocomplete]",
@@ -317,6 +221,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         success: false,
+        query: {
+          id: "",
+          label: "",
+          type: "query",
+        },
+        advertisers: [],
         suggestions: [],
         error:
           error instanceof Error

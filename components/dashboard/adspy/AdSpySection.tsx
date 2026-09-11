@@ -26,13 +26,12 @@ import {
   RefreshCw,
   Search,
   Sparkles,
-  Tag,
   UserRound,
   Video,
   X,
 } from "lucide-react";
 import { AdSpyAnalysis } from "./AdSpyAnalysis";
-
+import { AdSpyAutocomplete } from "./AdSpyAutocomplete";
 type Platform = "meta" | "google" | "linkedin";
 type SearchMode = "advertiser" | "keyword";
 
@@ -64,7 +63,8 @@ type Ad = {
 type Suggestion = {
   id: string;
   label: string;
-  type: "advertiser" | "creator" | "keyword";
+  type: "advertiser";
+  domain?: string | null;
 };
 
 type Job = {
@@ -144,8 +144,6 @@ const EMPTY_SUMMARY: Summary = {
   averageRunningDays: 0,
   longestRunningDays: 0,
 };
-
-const EMPTY_SUGGESTION_CATALOG: Suggestion[] = [];
 
 const FILTERS = [
   ["all", "All"],
@@ -291,7 +289,6 @@ function CreativeCard({
   const active = ad.isActive !== false;
   const type = ad.creativeType || "image";
   const [playing, setPlaying] = useState(false);
-
   return (
     <article className="zt-ad-card">
       <div className="zt-ad-media">
@@ -505,7 +502,6 @@ export function AdSpySection({
   onCountryChange,
   onPlatformChange,
   onResultCountChange,
-  initialSuggestionCatalog = EMPTY_SUGGESTION_CATALOG,
 }: AdSpySectionProps) {
   const [input, setInput] = useState(
     query,
@@ -517,13 +513,20 @@ export function AdSpySection({
   const [mode, setMode] =
     useState<SearchMode>("advertiser");
 
-  const [suggestions, setSuggestions] =
-    useState<Suggestion[]>([]);
-
   const [suggestionOpen, setSuggestionOpen] =
     useState(false);
 
-  const [suggestionLoading, setSuggestionLoading] =
+  const [autocompleteAdvertisers, setAutocompleteAdvertisers] =
+    useState<
+      Array<{
+        id: string;
+        label: string;
+        domain?: string | null;
+        type: "advertiser";
+      }>
+    >([]);
+
+  const [autocompleteLoading, setAutocompleteLoading] =
     useState(false);
 
   const [ads, setAds] = useState<Ad[]>([]);
@@ -618,64 +621,6 @@ export function AdSpySection({
     };
   }, []);
 
-  const visibleSuggestionCatalog = useMemo(() => {
-    const queryText = input.trim().toLocaleLowerCase();
-
-    if (queryText.length < 2) {
-      return [];
-    }
-
-    const ranked = initialSuggestionCatalog
-      .filter((suggestion) => {
-        if (mode === "advertiser") {
-          return suggestion.type === "advertiser";
-        }
-        return true;
-      })
-      .filter((suggestion) =>
-        suggestion.label
-          .toLocaleLowerCase()
-          .includes(queryText),
-      )
-      .map((suggestion) => {
-        const label = suggestion.label
-          .trim()
-          .toLocaleLowerCase();
-        let score = 0;
-
-        if (label === queryText) score += 1000;
-        if (label.startsWith(queryText)) score += 500;
-
-        const wordMatch = label
-          .split(/\s+/)
-          .some((word) => word.startsWith(queryText));
-        if (wordMatch) score += 250;
-
-        score += 100;
-
-        return { suggestion, score };
-      })
-      .sort((a, b) => {
-        if (b.score !== a.score) {
-          return b.score - a.score;
-        }
-        return a.suggestion.label.localeCompare(
-          b.suggestion.label,
-          undefined,
-          { sensitivity: "base" },
-        );
-      })
-      .slice(0, 8)
-      .map(({ suggestion }) => suggestion);
-
-    return ranked;
-  }, [input, initialSuggestionCatalog, mode]);
-
-  const displayedSuggestions =
-    suggestions.length > 0
-      ? suggestions
-      : visibleSuggestionCatalog;
-
   useEffect(() => {
     const searchQuery = input.trim();
 
@@ -690,7 +635,7 @@ export function AdSpySection({
         return;
       }
 
-      setSuggestionLoading(true);
+      setAutocompleteLoading(true);
 
       try {
         const url = new URL(
@@ -698,9 +643,20 @@ export function AdSpySection({
           window.location.origin,
         );
 
-        url.searchParams.set("q", searchQuery);
-        url.searchParams.set("mode", mode);
-        url.searchParams.set("platform", platform);
+        url.searchParams.set(
+          "q",
+          searchQuery,
+        );
+
+        url.searchParams.set(
+          "mode",
+          mode,
+        );
+
+        url.searchParams.set(
+          "platform",
+          platform,
+        );
 
         const response = await fetch(url, {
           signal: controller.signal,
@@ -709,7 +665,12 @@ export function AdSpySection({
 
         const data = (await response.json()) as {
           success?: boolean;
-          suggestions?: Suggestion[];
+          advertisers?: Array<{
+            id: string;
+            label: string;
+            type: "advertiser";
+            domain?: string | null;
+          }>;
         };
 
         if (
@@ -720,19 +681,15 @@ export function AdSpySection({
         }
 
         if (!response.ok || !data.success) {
-          setSuggestions([]);
-          setSuggestionOpen(false);
+          setAutocompleteAdvertisers([]);
           return;
         }
 
-        const nextSuggestions = Array.isArray(
-          data.suggestions,
-        )
-          ? data.suggestions.slice(0, 8)
-          : [];
-
-        setSuggestions(nextSuggestions);
-        setSuggestionOpen(nextSuggestions.length > 0);
+        setAutocompleteAdvertisers(
+          Array.isArray(data.advertisers)
+            ? data.advertisers.slice(0, 8)
+            : [],
+        );
       } catch (error) {
         if (
           error instanceof DOMException &&
@@ -745,17 +702,21 @@ export function AdSpySection({
           return;
         }
 
-        setSuggestions([]);
-        setSuggestionOpen(false);
+        console.error(
+          "[AdSpy autocomplete client]",
+          error,
+        );
+
+        setAutocompleteAdvertisers([]);
       } finally {
         if (
           mountedRef.current &&
           !controller.signal.aborted
         ) {
-          setSuggestionLoading(false);
+          setAutocompleteLoading(false);
         }
       }
-    }, 500);
+    }, 350);
 
     return () => {
       controller.abort();
@@ -1485,32 +1446,13 @@ useEffect(() => {
   const topCreator =
     intelligence?.topCreators?.[0];
 
-  const applySuggestion = (
-    suggestion: Suggestion,
-  ) => {
-    setInput(
-      suggestion.label,
-    );
-
-    onQueryChange?.(
-      suggestion.label,
-    );
-
-    setSuggestionOpen(false);
-
-    void search(
-      1,
-      suggestion.label,
-    );
-  };
-
   const clearSearch = () => {
     searchAbortRef.current?.abort();
     
     setInput("");
     onQueryChange?.("");
 
-    setSuggestions([]);
+    setAutocompleteAdvertisers([]);
     setSuggestionOpen(false);
 
     setAds([]);
@@ -1543,7 +1485,7 @@ useEffect(() => {
       nextPlatform,
     );
 
-    setSuggestions([]);
+    setAutocompleteAdvertisers([]);
     setSuggestionOpen(false);
     setTracked(false);
     setTrackedLastCollectedAt(
@@ -1561,7 +1503,7 @@ useEffect(() => {
     }
 
     setMode(nextMode);
-    setSuggestions([]);
+    setAutocompleteAdvertisers([]);
     setSuggestionOpen(false);
     setTracked(false);
     setTrackedLastCollectedAt(
@@ -1818,7 +1760,11 @@ useEffect(() => {
                       event.target.value;
 
                     setInput(next);
-                    setSuggestions([]);
+                    setAutocompleteAdvertisers([]);
+
+                    if (next.trim().length < 2) {
+                      setAutocompleteLoading(false);
+                    }
 
                     onQueryChange?.(next);
 
@@ -1827,14 +1773,9 @@ useEffect(() => {
                     );
                   }}
                   onFocus={() => {
-                    if (
-                      displayedSuggestions.length >
-                      0
-                    ) {
-                      setSuggestionOpen(
-                        true,
-                      );
-                    }
+                    setSuggestionOpen(
+                      input.trim().length >= 2,
+                    );
                   }}
                   onKeyDown={(event) => {
                     if (
@@ -1879,106 +1820,36 @@ useEffect(() => {
                 ) : null}
               </div>
 
-              {suggestionOpen &&
-              input.trim().length >= 2 ? (
-                <div
-                  className="zt-suggestions"
-                  role="listbox"
-                  id="adspy-search-suggestions"
-                  aria-label="Search suggestions"
-                >
-                  <div className="zt-suggestion-head">
-                    <span>
-                      Suggestions
-                    </span>
+              <AdSpyAutocomplete
+                query={input}
+                open={suggestionOpen}
+                loading={autocompleteLoading}
+                advertisers={autocompleteAdvertisers}
+                onSelectQuery={(selectedQuery) => {
+                  setInput(selectedQuery);
+                  onQueryChange?.(
+                    selectedQuery,
+                  );
+                  setSuggestionOpen(false);
 
-                    {suggestionLoading ? (
-                      <Loader2
-                        size={14}
-                        className="zt-spin"
-                      />
-                    ) : null}
-                  </div>
+                  void search(
+                    1,
+                    selectedQuery,
+                  );
+                }}
+                onSelectAdvertiser={(advertiser) => {
+                  setInput(advertiser.label);
+                  onQueryChange?.(
+                    advertiser.label,
+                  );
+                  setSuggestionOpen(false);
 
-                    {suggestionLoading ? (
-                      <div className="zt-suggestion-empty">
-                        Finding matching suggestions…
-                      </div>
-                    ) : displayedSuggestions.length ? (
-                    displayedSuggestions.map(
-                      (
-                        suggestion,
-                      ) => (
-                        <button
-                          key={`${suggestion.type}:${suggestion.id}`}
-                          type="button"
-                          className="zt-suggestion"
-                          role="option"
-                          aria-selected="false"
-                          onMouseDown={(
-                            event,
-                          ) =>
-                            event.preventDefault()
-                          }
-                          onClick={() =>
-                            applySuggestion(
-                              suggestion,
-                            )
-                          }
-                        >
-                          <span className="zt-suggestion-icon">
-                            {suggestion.type ===
-                            "advertiser" ? (
-                              <UserRound
-                                size={15}
-                              />
-                            ) : suggestion.type ===
-                              "creator" ? (
-                              <Sparkles
-                                size={15}
-                              />
-                            ) : (
-                              <Tag
-                                size={15}
-                              />
-                            )}
-                          </span>
-
-                          <span>
-                            <strong>
-                              {
-                                suggestion.label
-                              }
-                            </strong>
-
-                            <small>
-                              {suggestion.type ===
-                              "advertiser"
-                                ? "Advertiser"
-                                : suggestion.type ===
-                                  "creator"
-                                ? "Creator"
-                                : "Creative keyword"}
-                            </small>
-                          </span>
-
-                          <ArrowUpRight
-                            size={14}
-                          />
-                        </button>
-                      ),
-                    )
-                  ) : suggestionLoading ? (
-                    <div className="zt-suggestion-empty">
-                      Finding matching suggestions…
-                    </div>
-                  ) : (
-                    <div className="zt-suggestion-empty">
-                      No matching suggestions.
-                    </div>
-                  )}
-                </div>
-              ) : null}
+                  void search(
+                    1,
+                    advertiser.label,
+                  );
+                }}
+              />
             </div>
 
             <div className="zt-country-wrap">
