@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/refresh-tracked-adspy",
-      "schedule": "0 * * * *"
+      "schedule": "0 3 * * *"
     }
   ],
   "functions": {
