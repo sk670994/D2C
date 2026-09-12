@@ -738,23 +738,27 @@ export function AdSpySection({
     };
   }, [countryInput, input, mode, platform]);
 
-  const refreshCollection = useCallback(
+  const refreshCollection =
+  useCallback(
     async ({
       searchQuery,
       searchCountry,
       searchPlatform,
       searchMode,
+      advertiserPageId,
     }: {
       searchQuery: string;
       searchCountry: string;
       searchPlatform: Platform;
       searchMode: SearchMode;
+      advertiserPageId?: string | null;
     }) => {
       try {
-        const url = new URL(
-          "/api/ad-intelligence/refresh",
-          window.location.origin,
-        );
+        const url =
+          new URL(
+            "/api/ad-intelligence/refresh",
+            window.location.origin,
+          );
 
         url.searchParams.set(
           "q",
@@ -778,18 +782,38 @@ export function AdSpySection({
           searchMode,
         );
 
-        const response = await fetch(
-          url,
-          {
-            method: "POST",
-            cache: "no-store",
-          },
-        );
+        /*
+         * Preserve the exact advertiser Page ID selected
+         * from autocomplete.
+         */
+        if (
+          advertiserPageId &&
+          /^\d+$/.test(
+            advertiserPageId,
+          )
+        ) {
+          url.searchParams.set(
+            "pageId",
+            advertiserPageId,
+          );
+        }
+
+        const response =
+          await fetch(
+            url,
+            {
+              method: "POST",
+              cache: "no-store",
+            },
+          );
 
         const data =
           (await response.json()) as {
             success?: boolean;
             job?: Job | null;
+            advertiserPageId?:
+              | string
+              | null;
           };
 
         if (
@@ -800,11 +824,18 @@ export function AdSpySection({
           return;
         }
 
-        if (mountedRef.current) {
-          setJob(data.job);
+        if (
+          mountedRef.current
+        ) {
+          setJob(
+            data.job,
+          );
         }
       } catch {
-        // Search results remain usable if background refresh cannot start.
+        /*
+         * Search results remain usable if the background
+         * refresh cannot start.
+         */
       }
     },
     [],
@@ -874,135 +905,147 @@ export function AdSpySection({
     },
     [],
   );
-const refreshIndexedResults = useCallback(
-  async ({
-    searchQuery,
-    searchCountry,
-    searchPlatform,
-    searchMode,
-    advertiserPageId,
-    requestId,
-  }: {
-    searchQuery: string;
-    searchCountry: string;
-    searchPlatform: Platform;
-    searchMode: SearchMode;
-    advertiserPageId?: string | null;
-    requestId: number;
-  }) => {
-    try {
-      const url = new URL(
-        "/api/ad-intelligence/search",
-        window.location.origin,
-      );
+  const refreshIndexedResults =
+  useCallback(
+    async ({
+      searchQuery,
+      searchCountry,
+      searchPlatform,
+      searchMode,
+      advertiserPageId,
+      requestId,
+    }: {
+      searchQuery: string;
+      searchCountry: string;
+      searchPlatform: Platform;
+      searchMode: SearchMode;
+      advertiserPageId?: string | null;
+      requestId: number;
+    }) => {
+      try {
+        const url =
+          new URL(
+            "/api/ad-intelligence/search",
+            window.location.origin,
+          );
 
-      url.searchParams.set(
-        "q",
-        searchQuery,
-      );
-
-      url.searchParams.set(
-        "country",
-        searchCountry,
-      );
-
-      url.searchParams.set(
-        "platform",
-        searchPlatform,
-      );
-
-      url.searchParams.set(
-        "mode",
-        searchMode,
-      );
-
-      if (advertiserPageId) {
         url.searchParams.set(
-          "pageId",
-          advertiserPageId,
-        );
-      }
-
-      url.searchParams.set(
-        "page",
-        "1",
-      );
-
-      url.searchParams.set(
-        "limit",
-        "24",
-      );
-
-      const response =
-        await fetch(
-          url,
-          {
-            cache: "no-store",
-          },
+          "q",
+          searchQuery,
         );
 
-      const data =
-        (await response.json()) as SearchResponse;
+        url.searchParams.set(
+          "country",
+          searchCountry,
+        );
 
-      if (
-        !response.ok ||
-        !data.success
-      ) {
-        return;
+        url.searchParams.set(
+          "platform",
+          searchPlatform,
+        );
+
+        url.searchParams.set(
+          "mode",
+          searchMode,
+        );
+
+        if (
+          advertiserPageId
+        ) {
+          url.searchParams.set(
+            "pageId",
+            advertiserPageId,
+          );
+        }
+
+        url.searchParams.set(
+          "page",
+          "1",
+        );
+
+        url.searchParams.set(
+          "limit",
+          "24",
+        );
+
+        const response =
+          await fetch(
+            url,
+            {
+              cache:
+                "no-store",
+            },
+          );
+
+        const data =
+          (await response.json()) as SearchResponse;
+
+        if (
+          !response.ok ||
+          !data.success
+        ) {
+          return;
+        }
+
+        if (
+          !mountedRef.current ||
+          requestId !==
+            requestIdRef.current
+        ) {
+          return;
+        }
+
+        setAds(
+          Array.isArray(
+            data.ads,
+          )
+            ? data.ads
+            : [],
+        );
+
+        setSummary(
+          data.summary ??
+            EMPTY_SUMMARY,
+        );
+
+        setIntelligence(
+          data.intelligence ??
+            null,
+        );
+
+        setLastUpdatedAt(
+          data.lastUpdatedAt ??
+            null,
+        );
+
+        setPagination({
+          page:
+            data.page ??
+            1,
+
+          total:
+            data.total ??
+            0,
+
+          totalPages:
+            data.totalPages ??
+            0,
+        });
+
+        onResultCountChange?.(
+          data.total ??
+            0,
+        );
+      } catch {
+        /*
+         * Background polling is best effort.
+         */
       }
-
-      if (
-        !mountedRef.current ||
-        requestId !==
-          requestIdRef.current
-      ) {
-        return;
-      }
-
-      setAds(
-        Array.isArray(data.ads)
-          ? data.ads
-          : [],
-      );
-
-      setSummary(
-        data.summary ??
-          EMPTY_SUMMARY,
-      );
-
-      setIntelligence(
-        data.intelligence ??
-          null,
-      );
-
-      setLastUpdatedAt(
-        data.lastUpdatedAt ??
-          null,
-      );
-
-      setPagination({
-        page:
-          data.page ?? 1,
-        total:
-          data.total ?? 0,
-        totalPages:
-          data.totalPages ??
-          0,
-      });
-
-      onResultCountChange?.(
-        data.total ?? 0,
-      );
-    } catch {
-      /*
-       * Progressive refresh is deliberately best effort.
-       * Existing visible results must never disappear because
-       * one background poll failed.
-       */
-    }
-  },
-  [onResultCountChange],
-);
+    },
+    [
+      onResultCountChange,
+    ],
+  );
   const search = useCallback(
     async (
       page = 1,
@@ -1201,6 +1244,7 @@ const refreshIndexedResults = useCallback(
             searchPlatform:
               platform,
             searchMode: searchModeUsed,
+            advertiserPageId,
           });
         }
       } catch (requestError) {
@@ -1362,6 +1406,7 @@ useEffect(() => {
           searchCountry,
           searchPlatform,
           searchMode,
+          advertiserPageId: selectedAdvertiserPageId,
           requestId:
             requestIdRef.current,
         });
@@ -1382,6 +1427,7 @@ useEffect(() => {
           searchCountry,
           searchPlatform,
           searchMode,
+          advertiserPageId: selectedAdvertiserPageId,
           requestId:
             requestIdRef.current,
         });
@@ -1423,6 +1469,7 @@ useEffect(() => {
   mode,
   platform,
   refreshIndexedResults,
+  selectedAdvertiserPageId,
 ]);
 
   const filteredAds = useMemo(() => {
@@ -2612,4 +2659,4 @@ useEffect(() => {
       ) : null}
     </>
   );
-}
+}      

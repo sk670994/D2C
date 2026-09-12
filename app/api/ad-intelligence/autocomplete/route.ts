@@ -1,4 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
 
 import {
   createClient as createServerAuthClient,
@@ -25,8 +28,13 @@ type QuerySuggestion = {
 function normalizeQuery(
   value: string | null,
 ): string {
-  return (value ?? "")
-    .replace(/\s+/g, " ")
+  return (
+    value ?? ""
+  )
+    .replace(
+      /\s+/g,
+      " ",
+    )
     .trim();
 }
 
@@ -37,6 +45,30 @@ function querySuggestion(
     id: `query:${query.toLowerCase()}`,
     label: query,
     type: "query",
+  };
+}
+
+function advertiserSuggestion(
+  item: AdvertiserDiscoveryResult,
+) {
+  return {
+    id: item.id,
+    pageId: item.pageId,
+    label: item.label,
+    type:
+      "advertiser" as const,
+    domain: item.domain,
+    profileUrl:
+      item.profileUrl,
+    profileImageUrl:
+      item.profileImageUrl,
+    category:
+      item.category,
+    verification:
+      item.verification,
+    likes: item.likes,
+    igFollowers:
+      item.igFollowers,
   };
 }
 
@@ -53,13 +85,19 @@ export async function GET(
     } =
       await auth.auth.getUser();
 
-    if (error || !user) {
+    if (
+      error ||
+      !user
+    ) {
       return NextResponse.json(
         {
           success: false,
-          error: "Unauthorized",
+          error:
+            "Unauthorized",
         },
-        { status: 401 },
+        {
+          status: 401,
+        },
       );
     }
 
@@ -90,7 +128,8 @@ export async function GET(
     }
 
     const params =
-      request.nextUrl.searchParams;
+      request.nextUrl
+        .searchParams;
 
     const query =
       normalizeQuery(
@@ -98,8 +137,9 @@ export async function GET(
       );
 
     const platform =
-      params.get("platform") ===
-        "google"
+      params.get(
+        "platform",
+      ) === "google"
         ? "google"
         : params.get(
               "platform",
@@ -111,7 +151,8 @@ export async function GET(
       (
         params.get(
           "country",
-        ) ?? "IN"
+        ) ??
+        "IN"
       )
         .trim()
         .toUpperCase();
@@ -131,6 +172,14 @@ export async function GET(
       });
     }
 
+    /*
+     * IMPORTANT:
+     *
+     * This route reads the local advertiser index.
+     * It does NOT call SearchApi.
+     *
+     * The index is populated from collected Meta creatives.
+     */
     const advertisers =
       await discoverAdvertisers({
         query,
@@ -142,69 +191,25 @@ export async function GET(
     const exact =
       querySuggestion(query);
 
-    const response = {
-      success: true,
-      query: exact,
-      advertisers:
-        advertisers.map(
-          (
-            item: AdvertiserDiscoveryResult,
-          ) => ({
-            id: item.id,
-            pageId:
-              item.pageId,
-            label:
-              item.label,
-            type:
-              "advertiser" as const,
-            domain:
-              item.domain,
-            profileUrl:
-              item.profileUrl,
-            profileImageUrl:
-              item.profileImageUrl,
-            category:
-              item.category,
-            verification:
-              item.verification,
-            likes:
-              item.likes,
-            igFollowers:
-              item.igFollowers,
-          }),
-        ),
-      suggestions: [
-        exact,
-        ...advertisers.map(
-          (item) => ({
-            id: item.id,
-            pageId:
-              item.pageId,
-            label:
-              item.label,
-            type:
-              "advertiser" as const,
-            domain:
-              item.domain,
-            profileUrl:
-              item.profileUrl,
-            profileImageUrl:
-              item.profileImageUrl,
-            category:
-              item.category,
-            verification:
-              item.verification,
-            likes:
-              item.likes,
-            igFollowers:
-              item.igFollowers,
-          }),
-        ),
-      ],
-    };
+    const mapped =
+      advertisers.map(
+        advertiserSuggestion,
+      );
 
     return NextResponse.json(
-      response,
+      {
+        success: true,
+
+        query: exact,
+
+        advertisers:
+          mapped,
+
+        suggestions: [
+          exact,
+          ...mapped,
+        ],
+      },
       {
         headers: {
           "Cache-Control":
@@ -226,7 +231,9 @@ export async function GET(
             ? error.message
             : "Autocomplete unavailable.",
       },
-      { status: 503 },
+      {
+        status: 503,
+      },
     );
   }
 }

@@ -25,6 +25,16 @@ export type AdSearchInput = {
   limit?: number;
 
   collectionDepth?: CollectionDepth;
+
+  /**
+   * Exact Meta/Facebook Page ID selected from advertiser
+   * autocomplete.
+   *
+   * When supplied for Meta advertiser searches, the provider
+   * MUST search by this exact Page ID instead of relying on
+   * advertiser-name matching.
+   */
+  advertiserPageId?: string | null;
 };
 
 export type ProviderResult = {
@@ -35,7 +45,7 @@ export interface AdProvider {
   platform: AdPlatform;
 
   search(
-    input: AdSearchInput
+    input: AdSearchInput,
   ): Promise<ProviderResult>;
 }
 

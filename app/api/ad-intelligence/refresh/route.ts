@@ -1,4 +1,7 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
 
 import {
   createClient as createServerAuthClient,
@@ -13,14 +16,26 @@ import {
 } from "@/lib/ad-intelligence/global/store";
 
 import type { AdPlatform } from "@/lib/ad-intelligence/types";
-import type { CollectionDepth } from "@/lib/ad-intelligence/provider";
-import type { CollectionJob } from "@/lib/ad-intelligence/global/types";
+
+import type {
+  CollectionDepth,
+} from "@/lib/ad-intelligence/provider";
+
+import type {
+  CollectionJob,
+} from "@/lib/ad-intelligence/global/types";
 
 import { send } from "@vercel/queue";
-import { checkRateLimit } from "@/lib/rate-limit";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+import {
+  checkRateLimit,
+} from "@/lib/rate-limit";
+
+export const runtime =
+  "nodejs";
+
+export const dynamic =
+  "force-dynamic";
 
 const ACTIVE_STATUSES = [
   "queued",
@@ -46,7 +61,8 @@ function normalizePlatform(
 function normalizeMode(
   value: string | null,
 ): "advertiser" | "keyword" {
-  return value === "keyword"
+  return value ===
+    "keyword"
     ? "keyword"
     : "advertiser";
 }
@@ -57,28 +73,43 @@ function isActiveStatus(
   return Boolean(
     status &&
       ACTIVE_STATUSES.includes(
-        status as (typeof ACTIVE_STATUSES)[number],
+        status as
+          (typeof ACTIVE_STATUSES)[number],
       ),
   );
 }
 
-function mapJob(job: CollectionJob) {
+function mapJob(
+  job: CollectionJob,
+) {
   return {
-    id: job.id,
-    status: job.status,
-    stage: job.stage,
+    id:
+      job.id,
+
+    status:
+      job.status,
+
+    stage:
+      job.stage,
+
     discoveredAds:
       Number(
-        job.discoveredAds ?? 0,
+        job.discoveredAds ??
+          0,
       ),
+
     normalizedAds:
       Number(
-        job.normalizedAds ?? 0,
+        job.normalizedAds ??
+          0,
       ),
+
     persistedAds:
       Number(
-        job.persistedAds ?? 0,
+        job.persistedAds ??
+          0,
       ),
+
     errorMessage:
       job.errorMessage ??
       null,
@@ -93,8 +124,11 @@ export async function POST(
       await createServerAuthClient();
 
     const {
-      data: { user },
-      error: authError,
+      data: {
+        user,
+      },
+      error:
+        authError,
     } =
       await auth.auth.getUser();
 
@@ -108,20 +142,42 @@ export async function POST(
           error:
             "Unauthorized",
         },
-        { status: 401 },
+        {
+          status: 401,
+        },
       );
     }
 
-    const rate = checkRateLimit(`refresh:${user.id}`, 6, 60_000);
+    const rate =
+      checkRateLimit(
+        `refresh:${user.id}`,
+        6,
+        60_000,
+      );
+
     if (!rate.allowed) {
       return NextResponse.json(
-        { success: false, error: "Too many refresh requests." },
-        { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
+        {
+          success: false,
+          error:
+            "Too many refresh requests.",
+        },
+        {
+          status: 429,
+
+          headers: {
+            "Retry-After":
+              String(
+                rate.retryAfterSeconds,
+              ),
+          },
+        },
       );
     }
 
     const params =
-      request.nextUrl.searchParams;
+      request.nextUrl
+        .searchParams;
 
     const query =
       (
@@ -131,7 +187,9 @@ export async function POST(
 
     const country =
       (
-        params.get("country") ??
+        params.get(
+          "country",
+        ) ??
         "IN"
       )
         .trim()
@@ -139,13 +197,37 @@ export async function POST(
 
     const platform =
       normalizePlatform(
-        params.get("platform"),
+        params.get(
+          "platform",
+        ),
       );
 
     const mode =
       normalizeMode(
-        params.get("mode"),
+        params.get(
+          "mode",
+        ),
       );
+
+    /*
+     * Exact Meta advertiser Page ID.
+     *
+     * Only numeric Facebook Page IDs are accepted.
+     */
+    const advertiserPageIdRaw =
+      (
+        params.get(
+          "pageId",
+        ) ??
+        ""
+      ).trim();
+
+    const advertiserPageId =
+      /^\d+$/.test(
+        advertiserPageIdRaw,
+      )
+        ? advertiserPageIdRaw
+        : undefined;
 
     if (
       query.length < 2
@@ -156,7 +238,9 @@ export async function POST(
           error:
             "Enter at least 2 characters.",
         },
-        { status: 400 },
+        {
+          status: 400,
+        },
       );
     }
 
@@ -172,22 +256,38 @@ export async function POST(
           error:
             "Invalid country code. Use a 2-letter code such as IN.",
         },
-        { status: 400 },
+        {
+          status: 400,
+        },
       );
     }
 
+    /*
+     * Page ID is meaningful only for Meta advertiser searches.
+     *
+     * Ignore malformed/irrelevant values rather than sending
+     * arbitrary data into the queue.
+     */
+    const normalizedAdvertiserPageId =
+      platform === "meta" &&
+      mode === "advertiser"
+        ? advertiserPageId
+        : undefined;
+
     let job =
-      await getOrCreateCollectionJob({
-        query,
-        country,
-        platform,
-        mode,
-        userId: user.id,
-      });
+      await getOrCreateCollectionJob(
+        {
+          query,
+          country,
+          platform,
+          mode,
+          userId:
+            user.id,
+        },
+      );
 
     /*
-     * A completed/failed job may be eligible for another refresh.
-     * The store applies the refresh interval atomically.
+     * Completed/failed jobs may be refreshed.
      */
     if (
       job.status ===
@@ -205,24 +305,18 @@ export async function POST(
     }
 
     /*
-     * Quick-first policy:
-     *
-     * - No previously discovered creatives -> quick Meta discovery.
-     * - Existing discovered creatives -> deep refresh.
-     *
-     * Non-Meta providers still receive "deep" because the current
-     * quick/deep implementation is Meta-specific.
+     * Meta uses the quick-first collector.
+     * Other providers remain deep.
      */
-    const collectionDepth: CollectionDepth =
-      platform === "meta"
+    const collectionDepth:
+      CollectionDepth =
+      platform ===
+        "meta"
         ? "quick"
         : "deep";
 
     /*
      * Queue -> claim -> dispatch.
-     *
-     * claimCollectionDispatch prevents duplicate active dispatches
-     * when multiple tabs/users hit the endpoint together.
      */
     if (
       job.status ===
@@ -245,38 +339,96 @@ export async function POST(
           );
         }
 
-       const collectionKey =
-  buildCollectionKey({
-    query: latest.query,
-    country: latest.country,
-    platform: latest.platform,
-    mode: latest.mode,
-  });
+        const collectionKey =
+          buildCollectionKey(
+            {
+              query:
+                latest.query,
 
-const dispatchBucket =
-  Math.floor(
-    Date.now() / 600_000,
-  );
+              country:
+                latest.country,
 
-await send(
-  "adspy-collection",
-  {
-    jobId: latest.id,
-    query: latest.query,
-    country: latest.country,
-    platform: latest.platform,
-    mode: latest.mode,
-    collectionKey,
-    collectionDepth,
-  },
-  {
-    idempotencyKey:
-      `${collectionKey}:dispatch:${dispatchBucket}`,
+              platform:
+                latest.platform,
 
-    retentionSeconds:
-      24 * 60 * 60,
-  },
-);
+              mode:
+                latest.mode,
+            },
+          );
+
+        const dispatchBucket =
+          Math.floor(
+            Date.now() /
+              600_000,
+          );
+
+        /*
+         * IMPORTANT:
+         *
+         * advertiserPageId is now part of the queue payload.
+         *
+         * Previously the selected Page ID stopped at the browser.
+         */
+        await send(
+          "adspy-collection",
+          {
+            jobId:
+              latest.id,
+
+            query:
+              latest.query,
+
+            country:
+              latest.country,
+
+            platform:
+              latest.platform,
+
+            mode:
+              latest.mode,
+
+            collectionKey,
+
+            collectionDepth,
+
+            advertiserPageId:
+              normalizedAdvertiserPageId ??
+              null,
+          },
+          {
+            idempotencyKey:
+              `${collectionKey}:dispatch:${dispatchBucket}`,
+
+            retentionSeconds:
+              24 * 60 * 60,
+          },
+        );
+
+        console.info(
+          "[AdSpy refresh] Collection dispatched:",
+          {
+            jobId:
+              latest.id,
+
+            query:
+              latest.query,
+
+            country:
+              latest.country,
+
+            platform:
+              latest.platform,
+
+            mode:
+              latest.mode,
+
+            collectionDepth,
+
+            advertiserPageId:
+              normalizedAdvertiserPageId ??
+              null,
+          },
+        );
 
         job =
           latest;
@@ -289,23 +441,30 @@ await send(
       );
 
     const finalJob =
-      freshJob ?? job;
+      freshJob ??
+      job;
 
-    return NextResponse.json({
-      success: true,
+    return NextResponse.json(
+      {
+        success: true,
 
-      job:
-        mapJob(
-          finalJob,
-        ),
+        job:
+          mapJob(
+            finalJob,
+          ),
 
-      isRefreshing:
-        isActiveStatus(
-          finalJob.status,
-        ),
+        isRefreshing:
+          isActiveStatus(
+            finalJob.status,
+          ),
 
-      collectionDepth,
-    });
+        collectionDepth,
+
+        advertiserPageId:
+          normalizedAdvertiserPageId ??
+          null,
+      },
+    );
   } catch (error) {
     console.error(
       "[AdSpy refresh] Failed:",
@@ -315,12 +474,15 @@ await send(
     return NextResponse.json(
       {
         success: false,
+
         error:
           error instanceof Error
             ? error.message
             : "Background refresh could not be started.",
       },
-      { status: 500 },
+      {
+        status: 500,
+      },
     );
   }
 }

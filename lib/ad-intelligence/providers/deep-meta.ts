@@ -48,13 +48,20 @@ import {
 const DEFAULT_COUNTRY = "IN";
 
 const INITIAL_WAIT_MS = 1800;
+
 const SCROLL_WAIT_MS = 375;
+
 const POST_SCROLL_WAIT_MS = 500;
 
 const DEFAULT_MAX_SCROLLS = 90;
 
 /*
- * QUICK collection is intended for user-triggered searches.
+ * QUICK collection is intended for a user-triggered first search.
+ *
+ * It deliberately uses a small crawl budget so a previously unseen
+ * brand can produce a useful first result set quickly.
+ *
+ * DEEP collection keeps the existing crawl ceiling below.
  */
 const QUICK_INITIAL_WAIT_MS = 650;
 const QUICK_SCROLL_WAIT_MS = 120;
@@ -64,9 +71,13 @@ const QUICK_TARGET_LIBRARY_IDS = 24;
 const QUICK_STABLE_ROUNDS = 1;
 
 /*
- * Deep collection ceiling.
+ * Maximum target for one provider collection.
+ *
+ * This is a ceiling, not a guarantee that Meta will expose
+ * this many unique creatives for every query.
  */
 const TARGET_LIBRARY_IDS = 600;
+
 const STABLE_ROUNDS = 8;
 
 const MAX_ATTEMPTS = 3;
@@ -135,7 +146,9 @@ type RawCard = {
 
 let metaBrowser: Browser | null = null;
 
-let metaBrowserPromise: Promise<Browser> | null = null;
+let metaBrowserPromise:
+  | Promise<Browser>
+  | null = null;
 
 /* =========================================================
  * LOCAL EXECUTABLE
@@ -152,8 +165,11 @@ function getLocalExecutable(): string {
     "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
     "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
   ].filter(
-    (value): value is string =>
-      typeof value === "string" && value.trim().length > 0,
+    (
+      value,
+    ): value is string =>
+      typeof value === "string" &&
+      value.trim().length > 0,
   );
 
   for (const candidate of candidates) {
@@ -162,7 +178,8 @@ function getLocalExecutable(): string {
         continue;
       }
 
-      const resolved = path.resolve(candidate);
+      const resolved =
+        path.resolve(candidate);
 
       if (existsSync(resolved)) {
         return resolved;
@@ -187,77 +204,104 @@ function getLocalExecutable(): string {
 async function getMetaBrowser(): Promise<Browser> {
   if (metaBrowser) {
     try {
-      if (metaBrowser.isConnected()) {
+      if (
+        metaBrowser.isConnected()
+      ) {
         return metaBrowser;
       }
     } catch {
-      // Recreate browser below.
+      // Continue and recreate.
     }
 
     metaBrowser = null;
   }
 
   if (!metaBrowserPromise) {
-    metaBrowserPromise = (async () => {
-      const isLocal =
-        process.platform === "win32" ||
-        process.env.IS_LOCAL === "true";
+    metaBrowserPromise =
+      (async () => {
+        const isLocal =
+          process.platform ===
+            "win32" ||
+          process.env.IS_LOCAL ===
+            "true";
 
-      let executablePath: string;
-      let launchArgs: string[];
+        let executablePath: string;
 
-      if (isLocal) {
-        executablePath = getLocalExecutable();
+        let launchArgs: string[];
 
-        launchArgs = [
-          "--disable-blink-features=AutomationControlled",
-          "--disable-dev-shm-usage",
-          "--disable-gpu",
-          "--disable-features=IsolateOrigins,site-per-process",
-        ];
-      } else {
-        const packUrl = process.env.CHROMIUM_PACK_URL?.trim();
+        if (isLocal) {
+          executablePath =
+            getLocalExecutable();
 
-        if (!packUrl) {
-          throw new Error(
-            "CHROMIUM_PACK_URL is required in production.",
+          launchArgs = [
+            "--disable-blink-features=AutomationControlled",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+          ];
+        } else {
+          const packUrl =
+            process.env.CHROMIUM_PACK_URL?.trim();
+
+          if (!packUrl) {
+            throw new Error(
+              "CHROMIUM_PACK_URL is required in production.",
+            );
+          }
+
+          if (
+            !/^https?:\/\//i.test(
+              packUrl,
+            )
+          ) {
+            throw new Error(
+              "CHROMIUM_PACK_URL must be an HTTP/HTTPS URL.",
+            );
+          }
+
+          executablePath =
+            await chromium.executablePath(
+              packUrl,
+            );
+
+          launchArgs = [
+            ...chromium.args,
+            "--disable-dev-shm-usage",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+          ];
+        }
+
+        const nextBrowser =
+          await playwrightChromium.launch(
+            {
+              executablePath,
+              args: launchArgs,
+              headless: true,
+            },
           );
-        }
 
-        if (!/^https?:\/\//i.test(packUrl)) {
-          throw new Error(
-            "CHROMIUM_PACK_URL must be an HTTP/HTTPS URL.",
-          );
-        }
+        nextBrowser.on(
+          "disconnected",
+          () => {
+            if (
+              metaBrowser ===
+              nextBrowser
+            ) {
+              metaBrowser = null;
+            }
+          },
+        );
 
-        executablePath = await chromium.executablePath(packUrl);
+        metaBrowser =
+          nextBrowser;
 
-        launchArgs = [
-          ...chromium.args,
-          "--disable-dev-shm-usage",
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-        ];
-      }
-
-      const nextBrowser = await playwrightChromium.launch({
-        executablePath,
-        args: launchArgs,
-        headless: !isLocal,
-      });
-
-      nextBrowser.on("disconnected", () => {
-        if (metaBrowser === nextBrowser) {
-          metaBrowser = null;
-        }
-      });
-
-      metaBrowser = nextBrowser;
-
-      return nextBrowser;
-    })().finally(() => {
-      metaBrowserPromise = null;
-    });
+        return nextBrowser;
+      })().finally(
+        () => {
+          metaBrowserPromise =
+            null;
+        },
+      );
   }
 
   return metaBrowserPromise;
@@ -270,13 +314,32 @@ async function getMetaBrowser(): Promise<Browser> {
 function buildLibraryUrl(
   query: string,
   country: string,
+  advertiserPageId?: string | null,
 ): string {
-  const params = new URLSearchParams({
-    active_status: "all",
-    ad_type: "all",
-    country,
-    q: query,
-  });
+  const params = new URLSearchParams();
+
+  params.set("active_status", "active");
+  params.set("ad_type", "all");
+  params.set("country", country);
+  params.set("is_targeted_country", "false");
+  params.set("media_type", "all");
+
+  if (
+    advertiserPageId &&
+    /^\d+$/.test(advertiserPageId)
+  ) {
+    params.set("search_type", "page");
+    params.set(
+      "view_all_page_id",
+      advertiserPageId,
+    );
+  } else {
+    params.set(
+      "search_type",
+      "keyword_unordered",
+    );
+    params.set("q", query);
+  }
 
   return `https://www.facebook.com/ads/library/?${params.toString()}`;
 }
@@ -293,7 +356,9 @@ function normalizeUrl(
   }
 
   try {
-    return new URL(value).toString();
+    return new URL(
+      value,
+    ).toString();
   } catch {
     return null;
   }
@@ -304,449 +369,689 @@ function normalizeUrl(
  * ======================================================= */
 
 function normalizeMatchText(
-  value: string | null | undefined,
+  value:
+    | string
+    | null
+    | undefined,
 ): string {
-  return (value ?? "")
+  return (
+    value ?? ""
+  )
     .toLowerCase()
     .normalize("NFKC")
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
+    .replace(
+      /[^a-z0-9]+/g,
+      " ",
+    )
+    .replace(
+      /\s+/g,
+      " ",
+    )
     .trim();
 }
 
 /* =========================================================
- * HASH
- *
- * Used only when Meta's rendered card does not expose a
- * Library ID in the DOM.
- * ======================================================= */
-
-function simpleHash(value: string): string {
-  let hash = 2166136261;
-
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-
-  return (hash >>> 0).toString(16);
-}
-
-/* =========================================================
  * VISIBLE CARD EXTRACTION
- *
- * Important:
- *
- * We do NOT depend on createTreeWalker().
- *
- * Meta changes the rendered DOM frequently and the previous
- * implementation was returning zero cards / throwing:
- *
- *   TypeError: Failed to execute 'createTreeWalker'
- *
- * This implementation uses:
- *
- * 1. Library-ID based semantic containers.
- * 2. article / role=article / card selectors.
- * 3. Sponsored/ad text heuristics.
- * 4. Synthetic IDs when Library ID is not rendered.
  * ======================================================= */
 
 async function extractVisibleCards(
   page: Page,
 ): Promise<RawCard[]> {
+  await page
+    .waitForLoadState(
+      "domcontentloaded",
+      {
+        timeout: 10_000,
+      },
+    )
+    .catch(
+      () => undefined,
+    );
+
+  await page.waitForTimeout(
+    750,
+  );
+
   return page.evaluate(() => {
-    const normalize = (value: string): string =>
-      value
-        .replace(/[\u200B-\u200D\uFEFF]/g, "")
-        .replace(/\u00A0/g, " ")
-        .replace(/\r|\n/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+      const normalize = (
+        value: string,
+      ): string =>
+        value
+          .replace(
+            /[\u200B-\u200D\uFEFF]/g,
+            "",
+          )
+          .replace(
+            /\u00A0/g,
+            " ",
+          )
+          .replace(
+            /\r|\n/g,
+            " ",
+          )
+          .replace(
+            /\s+/g,
+            " ",
+          )
+          .trim();
 
-    const getText = (element: Element): string =>
-      normalize(
-        (element as HTMLElement).innerText ??
-          element.textContent ??
-          "",
-      );
+      const extractAdIdFromUrl = (
+        value: string,
+      ): string | null => {
+        try {
+          const url =
+            new URL(
+              value,
+              window.location.href,
+            );
 
-    const getLibraryIds = (value: string): string[] => {
-      const matches =
+          const id =
+            url.searchParams.get(
+              "id",
+            );
+
+          return id &&
+            /^\d{6,}$/.test(id)
+            ? id
+            : null;
+        } catch {
+          return (
+            value.match(
+              /[?&]id=(\d{6,})/i,
+            )?.[1] ??
+            null
+          );
+        }
+      };
+
+      const extractLibraryId = (
+        value: string,
+      ): string | null =>
         value.match(
-          /(?:Library ID|Library\s*ID|लाइब्रेरी ID)\s*[:#]?\s*(\d{6,})/gi,
-        ) ?? [];
+          /(?:Library ID|लाइब्रेरी ID)\s*:?\s*(\d{6,})/i,
+        )?.[1] ??
+        null;
 
-      return Array.from(
-        new Set(
-          matches
-            .map((match) => match.match(/(\d{6,})/)?.[1] ?? "")
-            .filter(Boolean),
-        ),
-      );
-    };
+      const countAdLinks = (
+        element: Element,
+      ): number => {
+        return Array.from(
+          element.querySelectorAll(
+            "a[href]",
+          ),
+        ).filter(
+          (anchor) =>
+            Boolean(
+              extractAdIdFromUrl(
+                anchor.getAttribute(
+                  "href",
+                ) ?? "",
+              ),
+            ),
+        ).length;
+      };
 
-    const getFirstLibraryId = (
-      element: Element,
-    ): string | null => {
-      return getLibraryIds(getText(element))[0] ?? null;
-    };
+      const countLibraryIds = (
+        element: Element,
+      ): number => {
+        const text =
+          element.textContent ??
+          "";
 
-    const candidateCards = new Map<string, Element>();
+        return new Set(
+          Array.from(
+            text.matchAll(
+              /(?:Library ID|लाइब्रेरी ID)\s*:?\s*(\d{6,})/gi,
+            ),
+          ).map(
+            (match) =>
+              match[1],
+          ),
+        ).size;
+      };
 
-    /* -------------------------------------------------------
-     * 1. Explicit semantic card candidates.
-     * ----------------------------------------------------- */
+      const findCardRoot = (
+        anchor: Element,
+      ): Element | null => {
+        let current:
+          | Element
+          | null =
+          anchor;
 
-    const semanticSelectors = [
-      '[role="article"]',
-      "article",
-      '[data-testid*="ad" i]',
-      '[data-testid*="card" i]',
-      '[aria-label*="Sponsored" i]',
-      '[aria-label*="sponsored" i]',
-    ];
+        let best:
+          | Element
+          | null =
+          null;
 
-    const semanticCandidates = Array.from(
-      document.querySelectorAll(
-        semanticSelectors.join(","),
-      ),
-    );
-
-    /* -------------------------------------------------------
-     * 2. Find explicit Library-ID containers.
-     *
-     * We avoid TreeWalker and inspect block-like elements.
-     * ----------------------------------------------------- */
-
-    const libraryCandidates = Array.from(
-      document.querySelectorAll(
-        "article, section, div",
-      ),
-    );
-
-    for (const element of libraryCandidates) {
-      const text = getText(element);
-
-      if (
-        text.length < 60 ||
-        text.length > 25_000
-      ) {
-        continue;
-      }
-
-      const ids = getLibraryIds(text);
-
-      if (ids.length !== 1) {
-        continue;
-      }
-
-      const id = ids[0];
-
-      /*
-       * Keep the smallest usable container. When several nested
-       * elements contain the same ID, replacing the entry when
-       * the new element is smaller gives us the card instead of
-       * the whole feed.
-       */
-      const existing = candidateCards.get(id);
-
-      if (!existing) {
-        candidateCards.set(id, element);
-        continue;
-      }
-
-      const existingText = getText(existing);
-
-      if (text.length < existingText.length) {
-        candidateCards.set(id, element);
-      }
-    }
-
-    /* -------------------------------------------------------
-     * 3. Semantic fallback.
-     *
-     * This is important because some Meta responses render ad
-     * cards without exposing Library ID in visible text.
-     * ----------------------------------------------------- */
-
-    const adSignals = [
-      "sponsored",
-      "library id",
-      "लाइब्रेरी id",
-      "shop now",
-      "learn more",
-      "buy now",
-      "sign up",
-      "install now",
-      "contact us",
-      "get offer",
-      "order now",
-      "message now",
-      "send message",
-    ];
-
-    for (const element of semanticCandidates) {
-      const text = getText(element);
-
-      if (
-        text.length < 80 ||
-        text.length > 15_000
-      ) {
-        continue;
-      }
-
-      const lowerText = text.toLowerCase();
-
-      const hasAdSignal = adSignals.some((signal) =>
-        lowerText.includes(signal),
-      );
-
-      if (!hasAdSignal) {
-        continue;
-      }
-
-      const explicitId = getFirstLibraryId(element);
-
-      /*
-       * Prefer the real Meta Library ID.
-       */
-      if (explicitId) {
-        const existing = candidateCards.get(explicitId);
-
-        if (!existing) {
-          candidateCards.set(explicitId, element);
-        } else if (
-          getText(element).length <
-          getText(existing).length
+        for (
+          let depth = 0;
+          depth < 18 &&
+          current;
+          depth += 1
         ) {
-          candidateCards.set(explicitId, element);
-        }
+          const adLinkCount =
+            countAdLinks(
+              current,
+            );
 
-        continue;
-      }
+          const libraryIdCount =
+            countLibraryIds(
+              current,
+            );
 
-      /*
-       * No visible Library ID.
-       *
-       * Build a stable synthetic identity from the card's
-       * normalized content and media URLs.
-       */
-      const firstImage =
-        element.querySelector("img")?.getAttribute("src") ?? "";
+          const text =
+            (
+              current as HTMLElement
+            ).innerText ??
+            current.textContent ??
+            "";
 
-      const firstVideo =
-        element.querySelector("video")?.getAttribute("src") ?? "";
-
-      const fingerprintSource = [
-        text.slice(0, 5000),
-        firstImage,
-        firstVideo,
-      ].join("|");
-
-      const syntheticId =
-        `synthetic-${simpleHash(fingerprintSource)}`;
-
-      if (!candidateCards.has(syntheticId)) {
-        candidateCards.set(
-          syntheticId,
-          element,
-        );
-      }
-    }
-
-    /* -------------------------------------------------------
-     * 4. Last-resort generic fallback.
-     *
-     * Search only reasonably sized divs so we don't mistake
-     * the entire page/feed for one ad.
-     * ----------------------------------------------------- */
-
-    if (candidateCards.size === 0) {
-      const genericCandidates = Array.from(
-        document.querySelectorAll("div"),
-      );
-
-      for (const element of genericCandidates) {
-        const text = getText(element);
-
-        if (
-          text.length < 120 ||
-          text.length > 8_000
-        ) {
-          continue;
-        }
-
-        const lowerText = text.toLowerCase();
-
-        const hasBusinessSignal =
-          lowerText.includes("sponsored") ||
-          lowerText.includes("shop now") ||
-          lowerText.includes("learn more") ||
-          lowerText.includes("buy now") ||
-          lowerText.includes("sign up");
-
-        if (!hasBusinessSignal) {
-          continue;
-        }
-
-        const id = getFirstLibraryId(element);
-
-        if (id) {
-          candidateCards.set(id, element);
-          continue;
-        }
-
-        const image =
-          element.querySelector("img")?.getAttribute("src") ?? "";
-
-        const video =
-          element.querySelector("video")?.getAttribute("src") ?? "";
-
-        const syntheticId =
-          `synthetic-${simpleHash(
-            [
-              text.slice(0, 5000),
-              image,
-              video,
-            ].join("|"),
-          )}`;
-
-        candidateCards.set(
-          syntheticId,
-          element,
-        );
-
-        /*
-         * Avoid filling the result set with every nested div.
-         * A handful of best candidates is enough for fallback.
-         */
-        if (candidateCards.size >= 30) {
-          break;
-        }
-      }
-    }
-
-    const platformNames = [
-      "Facebook",
-      "Instagram",
-      "Messenger",
-      "Audience Network",
-      "Threads",
-    ];
-
-    const results: RawCard[] = [];
-
-    for (const [id, card] of candidateCards) {
-      const rawLines = (
-        (card as HTMLElement).innerText ??
-        card.textContent ??
-        ""
-      )
-        .split(/\r?\n/)
-        .map(normalize)
-        .filter(Boolean);
-
-      if (rawLines.length === 0) {
-        continue;
-      }
-
-      const links = Array.from(
-        card.querySelectorAll("a[href]"),
-      )
-        .map((anchor) => {
-          const href =
-            anchor.getAttribute("href");
+          const normalized =
+            normalize(text);
 
           if (
-            !href ||
-            href.startsWith("javascript:")
+            normalized.length >=
+              80 &&
+            normalized.length <=
+              30000 &&
+            (
+              adLinkCount ===
+                1 ||
+              libraryIdCount ===
+                1
+            )
           ) {
-            return null;
+            best =
+              current;
           }
 
-          try {
-            return {
-              href: new URL(
-                href,
-                window.location.href,
-              ).toString(),
-
-              text: normalize(
-                anchor.textContent ?? "",
-              ),
-            };
-          } catch {
-            return null;
+          if (
+            adLinkCount > 1 ||
+            libraryIdCount > 1
+          ) {
+            break;
           }
-        })
-        .filter(
-          (
-            value,
-          ): value is {
-            href: string;
-            text: string;
-          } => value !== null,
+
+          current =
+            current.parentElement;
+        }
+
+        return best;
+      };
+
+      const candidateRoots =
+        new Map<
+          string,
+          Element
+        >();
+
+      /*
+       * ---------------------------------------------------------
+       * PRIMARY DISCOVERY:
+       *
+       * Find actual Ad Library detail links.
+       *
+       * This does NOT require the text "Library ID" to exist.
+       * ---------------------------------------------------------
+       */
+      const adAnchors =
+        Array.from(
+          document.querySelectorAll(
+            "a[href]",
+          ),
         );
 
-      const video =
-        card.querySelector("video") as
-          | HTMLVideoElement
-          | null;
+      for (
+        const anchor of
+          adAnchors
+      ) {
+        const href =
+          anchor.getAttribute(
+            "href",
+          );
 
-      const image =
-        card.querySelector("img") as
-          | HTMLImageElement
-          | null;
+        if (!href) {
+          continue;
+        }
 
-      const joined =
-        rawLines.join(" ").toLowerCase();
+        const id =
+          extractAdIdFromUrl(
+            href,
+          );
 
-      const imageUrl =
-        image?.getAttribute("src") ??
-        image?.getAttribute("data-src") ??
-        null;
+        if (!id) {
+          continue;
+        }
 
-      const videoUrl =
-        video?.currentSrc ||
-        video?.getAttribute("src") ||
-        null;
+        const root =
+          findCardRoot(
+            anchor,
+          );
 
-      const thumbnailUrl =
-        video?.getAttribute("poster") ??
-        imageUrl ??
-        null;
+        if (
+          root &&
+          !candidateRoots.has(
+            id,
+          )
+        ) {
+          candidateRoots.set(
+            id,
+            root,
+          );
+        }
+      }
 
-      results.push({
-        id,
+      /*
+       * ---------------------------------------------------------
+       * SECONDARY DISCOVERY:
+       *
+       * Search visible text for Library IDs.
+       * ---------------------------------------------------------
+       */
+      if (
+        candidateRoots.size ===
+        0
+      ) {
+        const root =
+          document.body ??
+          document.documentElement;
 
-        rawLines,
+        if (root) {
+          const walker =
+            document.createTreeWalker(
+              root,
+              NodeFilter.SHOW_TEXT,
+            );
 
-        links,
+          let node =
+            walker.nextNode();
 
-        imageUrl,
+          while (node) {
+            const id =
+              extractLibraryId(
+                node.textContent ??
+                  "",
+              );
 
-        videoUrl,
+            if (id) {
+              const element =
+                node.parentElement;
 
-        thumbnailUrl,
+              if (element) {
+                const card =
+                  findCardRoot(
+                    element,
+                  );
 
-        videoDurationSeconds:
-          video &&
-          Number.isFinite(video.duration) &&
-          video.duration > 0
-            ? Math.round(video.duration)
-            : null,
+                if (
+                  card &&
+                  !candidateRoots.has(
+                    id,
+                  )
+                ) {
+                  candidateRoots.set(
+                    id,
+                    card,
+                  );
+                }
+              }
+            }
 
-        publisherPlatforms:
-          platformNames.filter((platform) =>
-            joined.includes(
-              platform.toLowerCase(),
+            node =
+              walker.nextNode();
+          }
+        }
+      }
+
+      /*
+       * ---------------------------------------------------------
+       * THIRD DISCOVERY:
+       *
+       * Article / role based fallback.
+       * ---------------------------------------------------------
+       */
+      if (
+        candidateRoots.size ===
+        0
+      ) {
+        const fallbackCards =
+          Array.from(
+            document.querySelectorAll(
+              [
+                '[role="article"]',
+                "article",
+              ].join(","),
             ),
-          ),
-      });
-    }
+          );
 
-    return results;
+        for (
+          const card of
+            fallbackCards
+        ) {
+          const text =
+            (
+              card as HTMLElement
+            ).innerText ??
+            "";
+
+          const id =
+            extractLibraryId(
+              text,
+            );
+
+          if (id) {
+            candidateRoots.set(
+              id,
+              card,
+            );
+            continue;
+          }
+
+          const link =
+            Array.from(
+              card.querySelectorAll(
+                "a[href]",
+              ),
+            ).find(
+              (anchor) =>
+                Boolean(
+                  extractAdIdFromUrl(
+                    anchor.getAttribute(
+                      "href",
+                    ) ?? "",
+                  ),
+                ),
+            );
+
+          if (link) {
+            const href =
+              link.getAttribute(
+                "href",
+              );
+
+            const linkId =
+              extractAdIdFromUrl(
+                href ?? "",
+              );
+
+            if (
+              linkId &&
+              !candidateRoots.has(
+                linkId,
+              )
+            ) {
+              candidateRoots.set(
+                linkId,
+                card,
+              );
+            }
+          }
+        }
+      }
+
+      const platformNames = [
+        "Facebook",
+        "Instagram",
+        "Messenger",
+        "Audience Network",
+        "Threads",
+      ];
+
+      const results: RawCard[] =
+        [];
+
+      for (
+        const [
+          discoveredId,
+          card,
+        ] of candidateRoots
+      ) {
+        const element =
+          card as HTMLElement;
+
+        const rawText =
+          element.innerText ??
+          element.textContent ??
+          "";
+
+        const rawLines =
+          rawText
+            .split(
+              /\r?\n/,
+            )
+            .map(
+              normalize,
+            )
+            .filter(
+              Boolean,
+            );
+
+        const links =
+          Array.from(
+            card.querySelectorAll(
+              "a[href]",
+            ),
+          )
+            .map(
+              (
+                anchor,
+              ) => {
+                const href =
+                  anchor.getAttribute(
+                    "href",
+                  );
+
+                if (
+                  !href ||
+                  href.startsWith(
+                    "javascript:",
+                  )
+                ) {
+                  return null;
+                }
+
+                try {
+                  return {
+                    href:
+                      new URL(
+                        href,
+                        window.location.href,
+                      ).toString(),
+
+                    text:
+                      normalize(
+                        anchor.textContent ??
+                          "",
+                      ),
+                  };
+                } catch {
+                  return null;
+                }
+              },
+            )
+            .filter(
+              (
+                value,
+              ): value is {
+                href: string;
+                text: string;
+              } =>
+                value !== null,
+            );
+
+        let id = discoveredId;
+
+        if (!id && rawLines.length) {
+          const extractedId = extractLibraryId(
+            rawLines.join(" "),
+          );
+
+          if (extractedId) {
+            id = extractedId;
+          }
+        }
+
+        if (!id) {
+          continue;
+        }
+
+        /*
+         * Ensure the parser always receives a canonical
+         * Library ID line even if Meta hides that text.
+         */
+        if (
+          !rawLines.some(
+            (line) =>
+              /^(?:Library ID|लाइब्रेरी ID)\s*:/i.test(
+                line,
+              ),
+          )
+        ) {
+          rawLines.unshift(
+            `Library ID: ${id}`,
+          );
+        }
+
+        /*
+         * Ensure advertiser parsing sees Sponsored as a
+         * structural boundary when the rendered DOM provides it.
+         */
+        const hasSponsored =
+          rawLines.some(
+            (line) =>
+              /^Sponsored$/i.test(
+                line,
+              ) ||
+              /^प्रायोजित$/u.test(
+                line,
+              ),
+          );
+
+        if (!hasSponsored) {
+          const sponsoredIndex =
+            rawLines.findIndex(
+              (line) =>
+                /sponsored/i.test(
+                  line,
+                ),
+            );
+
+          if (
+            sponsoredIndex >=
+              0
+          ) {
+            rawLines[
+              sponsoredIndex
+            ] = "Sponsored";
+          }
+        }
+
+        const video =
+          card.querySelector(
+            "video",
+          ) as
+            | HTMLVideoElement
+            | null;
+
+        const image =
+          card.querySelector(
+            "img",
+          ) as
+            | HTMLImageElement
+            | null;
+
+        const joined =
+          rawLines
+            .join(" ")
+            .toLowerCase();
+
+        const videoUrl =
+          video?.currentSrc ||
+          video?.getAttribute(
+            "src",
+          ) ||
+          null;
+
+        const imageUrl =
+          image?.currentSrc ||
+          image?.getAttribute(
+            "src",
+          ) ||
+          null;
+
+        const thumbnailUrl =
+          video?.getAttribute(
+            "poster",
+          ) ??
+          imageUrl ??
+          null;
+
+        const videoDurationSeconds =
+          video &&
+          Number.isFinite(
+            video.duration,
+          ) &&
+          video.duration > 0
+            ? Math.round(
+                video.duration,
+              )
+            : null;
+
+        results.push({
+          id,
+
+          rawLines,
+
+          links,
+
+          imageUrl,
+
+          videoUrl,
+
+          thumbnailUrl,
+
+          videoDurationSeconds,
+
+          publisherPlatforms:
+            platformNames.filter(
+              (
+                platform,
+              ) =>
+                joined.includes(
+                  platform.toLowerCase(),
+                ),
+            ),
+        });
+      }
+
+      /*
+       * Deduplicate inside the browser.
+       */
+      const unique =
+        new Map<
+          string,
+          RawCard
+        >();
+
+      for (
+        const card of
+          results
+      ) {
+        if (
+          !unique.has(
+            card.id,
+          )
+        ) {
+          unique.set(
+            card.id,
+            card,
+          );
+        }
+      }
+
+      return Array.from(
+        unique.values(),
+      );
   });
 }
 
@@ -764,61 +1069,86 @@ function destinationFromLinks(
     "googleadservices.com",
   ];
 
-  const candidates = links
-    .map((link) => {
-      try {
-        const url = new URL(link.href);
+  const candidates =
+    links
+      .map(
+        (link) => {
+          try {
+            const url =
+              new URL(
+                link.href,
+              );
 
-        const host = url.hostname
-          .replace(/^www\./i, "")
-          .toLowerCase();
+            const host =
+              url.hostname
+                .replace(
+                  /^www\./i,
+                  "",
+                )
+                .toLowerCase();
 
-        if (
-          blockedHosts.some(
-            (blocked) =>
-              host === blocked ||
-              host.endsWith(`.${blocked}`),
-          )
-        ) {
-          return null;
-        }
+            if (
+              blockedHosts.some(
+                (blocked) =>
+                  host ===
+                    blocked ||
+                  host.endsWith(
+                    `.${blocked}`,
+                  ),
+              )
+            ) {
+              return null;
+            }
 
-        let score = 0;
+            let score =
+              0;
 
-        if (url.protocol === "https:") {
-          score += 5;
-        }
+            if (
+              url.protocol ===
+              "https:"
+            ) {
+              score += 5;
+            }
 
-        if (
-          /\b(?:shop|buy|learn|order|get|offer|visit|discover)\b/i.test(
-            link.text,
-          )
-        ) {
-          score += 20;
-        }
+            if (
+              /\b(?:shop|buy|learn|order|get|offer|visit|discover)\b/i.test(
+                link.text,
+              )
+            ) {
+              score += 20;
+            }
 
-        return {
-          url: url.toString(),
-          score,
-        };
-      } catch {
-        return null;
-      }
-    })
-    .filter(
-      (
-        value,
-      ): value is {
-        url: string;
-        score: number;
-      } => value !== null,
-    );
+            return {
+              url:
+                url.toString(),
+
+              score,
+            };
+          } catch {
+            return null;
+          }
+        },
+      )
+      .filter(
+        (
+          value,
+        ): value is {
+          url: string;
+          score: number;
+        } =>
+          value !== null,
+      );
 
   candidates.sort(
-    (a, b) => b.score - a.score,
+    (a, b) =>
+      b.score -
+      a.score,
   );
 
-  return candidates[0]?.url ?? null;
+  return (
+    candidates[0]?.url ??
+    null
+  );
 }
 
 /* =========================================================
@@ -830,27 +1160,37 @@ function isRelevant(
   query: string,
 ): boolean {
   const normalizedQuery =
-    normalizeMatchText(query);
+    normalizeMatchText(
+      query,
+    );
 
   if (!normalizedQuery) {
     return false;
   }
 
   const compactQuery =
-    normalizedQuery.replace(/\s+/g, "");
+    normalizedQuery.replace(
+      /\s+/g,
+      "",
+    );
 
-  const haystack = [
-    ad.advertiserName,
-    ad.creatorName,
-    ad.headline,
-    ad.productName,
-    ad.primaryText,
-    ad.description,
-    ad.landingPage,
-  ]
-    .map(normalizeMatchText)
-    .filter(Boolean)
-    .join(" ");
+  const haystack =
+    [
+      ad.advertiserName,
+      ad.creatorName,
+      ad.headline,
+      ad.productName,
+      ad.primaryText,
+      ad.description,
+      ad.landingPage ?? "",
+    ]
+      .map(
+        normalizeMatchText,
+      )
+      .filter(
+        Boolean,
+      )
+      .join(" ");
 
   if (!haystack) {
     return false;
@@ -867,8 +1207,13 @@ function isRelevant(
   if (
     compactQuery.length >= 3 &&
     haystack
-      .replace(/\s+/g, "")
-      .includes(compactQuery)
+      .replace(
+        /\s+/g,
+        "",
+      )
+      .includes(
+        compactQuery,
+      )
   ) {
     return true;
   }
@@ -909,7 +1254,7 @@ function getAdQualityScore(
     score += 3;
   }
 
-  if (ad.landingPage) {
+  if (ad.landingPage ?? "") {
     score += 5;
   }
 
@@ -948,6 +1293,7 @@ function normalizeCard(
   card: RawCard,
   query: string,
   country: string,
+  advertiserPageId?: string | null,
 ): CompetitorAd {
   const identity =
     extractAdvertiserIdentity(
@@ -990,21 +1336,26 @@ function normalizeCard(
   const lastSeen =
     dates.lastSeen;
 
-  const creativeType: AdCreativeType =
-    card.videoUrl
-      ? "video"
-      : card.imageUrl
-        ? "image"
-        : "unknown";
+  const creativeType:
+    AdCreativeType =
+      card.videoUrl
+        ? "video"
+        : card.imageUrl
+          ? "image"
+          : "unknown";
 
-  const advertiserName =
-    repairMojibake(
-      normalizeWhitespace(
-        identity.advertiserName ??
-          "Unknown advertiser",
-      ),
-    ) ??
-    "Unknown advertiser";
+  /*
+   * CompetitorAd requires advertiserName to be string.
+   * The parser may legitimately return null, so normalize it.
+   */
+const advertiserName =
+  repairMojibake(
+    normalizeWhitespace(
+      identity.advertiserName ??
+        "Unknown advertiser",
+    ),
+  ) ??
+  "Unknown advertiser";
 
   const creatorName =
     identity.creatorName
@@ -1045,22 +1396,28 @@ function normalizeCard(
   const priceLine =
     card.rawLines.find(
       (line) =>
-        /₹|INR|Rs\.?/i.test(line),
+        /₹|INR|Rs\.?/i.test(
+          line,
+        ),
     ) ?? "";
 
   const productPrice =
-    parsePrice(priceLine);
-
-  const containsInr =
-    productPrice !== null ||
-    /₹|INR|Rs\.?/i.test(
-      card.rawLines.join(" "),
+    parsePrice(
+      priceLine,
     );
 
+  /*
+   * Do NOT assign null to engagementPotentialScore.
+   * CompetitorAd declares it as number | undefined.
+   *
+   * We therefore omit it when unavailable.
+   */
   const baseAd: CompetitorAd = {
-    id: card.id,
+    id:
+      card.id,
 
-    platform: "meta",
+    platform:
+      "meta",
 
     advertiserName,
 
@@ -1124,6 +1481,7 @@ function normalizeCard(
       buildLibraryUrl(
         query,
         country,
+        advertiserPageId,
       ),
 
     productName:
@@ -1132,7 +1490,13 @@ function normalizeCard(
     productPrice,
 
     currency:
-      containsInr
+      productPrice !==
+      null ||
+      /₹|INR|Rs\.?/i.test(
+        card.rawLines.join(
+          " ",
+        ),
+      )
         ? "INR"
         : null,
 
@@ -1183,7 +1547,7 @@ function normalizeCard(
 
     metadata: {
       extractionMethod:
-        "meta-incremental-visible-card-v3",
+        "meta-incremental-visible-card-v2",
 
       searchQuery:
         query,
@@ -1211,6 +1575,12 @@ function normalizeCard(
     },
   };
 
+  /*
+   * Add a derived longevity score only when running days
+   * actually exist.
+   *
+   * This avoids a null assignment to a number field.
+   */
   if (
     typeof baseAd.runningDays ===
       "number" &&
@@ -1226,6 +1596,10 @@ function normalizeCard(
       );
   }
 
+  /*
+   * Relevance score is derived from the query match.
+   * It is NOT platform performance.
+   */
   baseAd.relevanceScore =
     isRelevant(
       baseAd,
@@ -1267,11 +1641,14 @@ function fingerprint(
       ad.landingPage,
     ),
 
-    ad.creativeType ?? "",
+    ad.creativeType ??
+      "",
 
-    ad.imageUrl ?? "",
+    ad.imageUrl ??
+      "",
 
-    ad.videoUrl ?? "",
+    ad.videoUrl ??
+      "",
   ].join("|");
 }
 
@@ -1282,20 +1659,28 @@ function fingerprint(
 function deduplicateAds(
   ads: CompetitorAd[],
 ): CompetitorAd[] {
+  /*
+   * First preserve provider/library identity.
+   */
   const byId =
     new Map<
       string,
       CompetitorAd
     >();
 
-  for (const ad of ads) {
-    const idKey = [
-      ad.platform,
-      ad.id,
-    ].join(":");
+  for (
+    const ad of ads
+  ) {
+    const idKey =
+      [
+        ad.platform,
+        ad.id,
+      ].join(":");
 
     const existing =
-      byId.get(idKey);
+      byId.get(
+        idKey,
+      );
 
     if (!existing) {
       byId.set(
@@ -1308,7 +1693,9 @@ function deduplicateAds(
 
     if (
       getAdQualityScore(ad) >
-      getAdQualityScore(existing)
+      getAdQualityScore(
+        existing,
+      )
     ) {
       byId.set(
         idKey,
@@ -1317,18 +1704,27 @@ function deduplicateAds(
     }
   }
 
+  /*
+   * Then collapse true identical creatives.
+   */
   const byFingerprint =
     new Map<
       string,
       CompetitorAd
     >();
 
-  for (const ad of byId.values()) {
+  for (
+    const ad of byId.values()
+  ) {
     const key =
-      fingerprint(ad);
+      fingerprint(
+        ad,
+      );
 
     const existing =
-      byFingerprint.get(key);
+      byFingerprint.get(
+        key,
+      );
 
     if (!existing) {
       byFingerprint.set(
@@ -1341,7 +1737,9 @@ function deduplicateAds(
 
     if (
       getAdQualityScore(ad) >
-      getAdQualityScore(existing)
+      getAdQualityScore(
+        existing,
+      )
     ) {
       byFingerprint.set(
         key,
@@ -1356,170 +1754,39 @@ function deduplicateAds(
 }
 
 /* =========================================================
- * PAGE SNAPSHOT
- *
- * Kept INSIDE scrapeMetaOnce so `page` is always in scope.
- * ======================================================= */
-
-async function getPageSnapshot(
-  page: Page,
-): Promise<{
-  url: string;
-  title: string;
-  bodyTextLength: number;
-  bodyText: string;
-  htmlLength: number;
-  articleCount: number;
-  roleArticleCount: number;
-  imageCount: number;
-  videoCount: number;
-  linkCount: number;
-  libraryIdCount: number;
-}> {
-  return page.evaluate(() => {
-    const bodyText =
-      document.body?.innerText ??
-      "";
-
-    const libraryMatches =
-      bodyText.match(
-        /(?:Library ID|लाइब्रेरी ID)\s*[:#]?\s*\d{6,}/gi,
-      ) ?? [];
-
-    return {
-      url:
-        window.location.href,
-
-      title:
-        document.title,
-
-      bodyTextLength:
-        bodyText.length,
-
-      bodyText:
-        bodyText.slice(0, 3000),
-
-      htmlLength:
-        document.body?.innerHTML
-          ?.length ?? 0,
-
-      articleCount:
-        document.querySelectorAll(
-          "article",
-        ).length,
-
-      roleArticleCount:
-        document.querySelectorAll(
-          '[role="article"]',
-        ).length,
-
-      imageCount:
-        document.querySelectorAll(
-          "img",
-        ).length,
-
-      videoCount:
-        document.querySelectorAll(
-          "video",
-        ).length,
-
-      linkCount:
-        document.querySelectorAll(
-          "a",
-        ).length,
-
-      libraryIdCount:
-        libraryMatches.length,
-    };
-  });
-}
-
-/* =========================================================
  * SCRAPE ONCE
  * ======================================================= */
 
 async function scrapeMetaOnce(
   query: string,
   country: string,
-  collectionDepth:
-    | "quick"
-    | "deep",
+  collectionDepth: "quick" | "deep",
+  advertiserPageId?: string | null,
 ): Promise<CompetitorAd[]> {
   const currentBrowser =
     await getMetaBrowser();
 
   const context:
     | BrowserContext =
-    await currentBrowser.newContext({
-      locale:
-        "en-IN",
-
-      viewport: {
-        width: 1440,
-        height: 1000,
-      },
-
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-
-      extraHTTPHeaders: {
-        "Accept-Language":
-          "en-IN,en;q=0.9",
-      },
-    });
-
-  await context.addInitScript(() => {
-    Object.defineProperty(
-      navigator,
-      "webdriver",
+    await currentBrowser.newContext(
       {
-        get: () => undefined,
-      },
-    );
-
-    Object.defineProperty(
-      navigator,
-      "platform",
-      {
-        get: () => "Win32",
-      },
-    );
-
-    Object.defineProperty(
-      navigator,
-      "languages",
-      {
-        get: () => [
+        locale:
           "en-IN",
-          "en",
-        ],
+
+        viewport: {
+          width: 1440,
+          height: 1000,
+        },
+
+        extraHTTPHeaders: {
+          "Accept-Language":
+            "en-IN,en;q=0.9",
+        },
       },
     );
-
-    if (!("chrome" in window)) {
-      Object.defineProperty(
-        window,
-        "chrome",
-        {
-          value: {
-            runtime: {},
-          },
-          configurable: true,
-        },
-      );
-    }
-  });
 
   const page =
     await context.newPage();
-
-  page.setDefaultTimeout(
-    30_000,
-  );
-
-  page.setDefaultNavigationTimeout(
-    60_000,
-  );
 
   const collected =
     new Map<
@@ -1532,8 +1799,7 @@ async function scrapeMetaOnce(
   let previousCount = 0;
 
   const isQuickCollection =
-    collectionDepth ===
-    "quick";
+    collectionDepth === "quick";
 
   const initialWaitMs =
     isQuickCollection
@@ -1567,124 +1833,96 @@ async function scrapeMetaOnce(
 
   try {
     const targetUrl =
-      buildLibraryUrl(
-        query,
-        country,
-      );
+  buildLibraryUrl(
+    query,
+    country,
+    advertiserPageId,
+  );
 
-    console.info(
-      "[DeepMetaProvider] Opening Meta Ad Library:",
-      {
-        query,
-        country,
-        collectionDepth,
-        targetUrl,
-      },
-    );
+console.info(
+  "[DeepMetaProvider] Navigating Meta Ad Library:",
+  {
+    query,
+    country,
+    advertiserPageId:
+      advertiserPageId ??
+      null,
+    targetUrl,
+  },
+);
 
-    const response =
-      await page.goto(
-        targetUrl,
-        {
-          waitUntil:
-            "commit",
+const navigationResponse =
+  await page.goto(
+    targetUrl,
+    {
+      waitUntil:
+        "domcontentloaded",
 
-          timeout:
-            60_000,
-        },
-      );
+      timeout:
+        60_000,
+    },
+  );
 
-    console.info(
-      "[DeepMetaProvider] Meta navigation response:",
-      {
-        status:
-          response?.status() ??
-          null,
+console.info(
+  "[DeepMetaProvider] Meta navigation response:",
+  {
+    status:
+      navigationResponse?.status() ??
+      null,
 
-        contentType:
-          response?.headers()[
-            "content-type"
-          ] ?? null,
+    url:
+      page.url(),
 
-        url:
-          response?.url() ??
-          targetUrl,
-      },
-    );
+    title:
+      await page.title().catch(
+        () => "",
+      ),
+  },
+);
 
-    await page.waitForLoadState(
-      "domcontentloaded",
-      {
-        timeout: 30_000,
-      },
-    ).catch(() => undefined);
+await page.waitForTimeout(
+  2_500,
+);
+ 
+/*
+ * Meta often continues its client-side navigation after the
+ * initial document is available. Wait for the load state when
+ * possible, but do not fail the scrape when Meta never reaches
+ * a clean "load" state.
+ */
+await page.waitForLoadState(
+  "load",
+  {
+    timeout: 15_000,
+  },
+).catch(
+  () => undefined,
+);
 
-    /*
-     * Meta can commit the navigation before the client-rendered
-     * document is populated. Wait briefly for a real DOM before
-     * taking the diagnostic snapshot.
-     */
-    try {
-      await page.waitForFunction(
-        () =>
-          Boolean(
-            document.body &&
-            document.body.innerHTML.length > 100,
-          ),
-        {
-          timeout:
-            isQuickCollection
-              ? 10_000
-              : 20_000,
-        },
-      );
-    } catch {
-      // Snapshot below records the actual state when rendering
-      // does not complete in time.
-    }
+await page.waitForTimeout(
+  initialWaitMs,
+);
 
-    await page.waitForTimeout(
-      initialWaitMs,
-    );
+/*
+ * Capture diagnostics before the first extraction.
+ */
+console.info(
+  "[DeepMetaProvider] Meta page ready:",
+  {
+    url:
+      page.url(),
 
-    /*
-     * Debug snapshot is intentionally here.
-     * Never place it in search() where `page` does not exist.
-     */
-    try {
-      const snapshot =
-        await getPageSnapshot(
-          page,
-        );
-
-      console.info(
-        "[DeepMetaProvider] PAGE SNAPSHOT:",
-        snapshot,
-      );
-    } catch (snapshotError) {
-      console.warn(
-        "[DeepMetaProvider] Failed to create page snapshot:",
-        snapshotError,
-      );
-    }
-
-    /*
-     * Handle pages that have not rendered meaningful content yet.
-     */
-    try {
-      await page.waitForLoadState(
-        "networkidle",
-        {
-          timeout: 4_000,
-        },
-      );
-    } catch {
-      // Meta can keep network requests open indefinitely.
-    }
+    title:
+      await page.title().catch(
+        () => "",
+      ),
+  },
+);
 
     for (
       let scroll = 0;
-      scroll < maxScrolls;
+      scroll <
+        maxScrolls;
       scroll += 1
     ) {
       const cards =
@@ -1692,24 +1930,21 @@ async function scrapeMetaOnce(
           page,
         );
 
-      let added = 0;
+      let added =
+        0;
 
       for (
-        const card of cards
+        const card of
+          cards
       ) {
         const ad =
           normalizeCard(
             card,
             query,
             country,
+            advertiserPageId,
           );
 
-        /*
-         * Exact advertiser/content relevance filter.
-         *
-         * Synthetic IDs are allowed here; relevance is based on
-         * extracted card content, not the ID format.
-         */
         if (
           !isRelevant(
             ad,
@@ -1736,7 +1971,9 @@ async function scrapeMetaOnce(
         }
 
         if (
-          getAdQualityScore(ad) >
+          getAdQualityScore(
+            ad,
+          ) >
           getAdQualityScore(
             existing,
           )
@@ -1768,8 +2005,8 @@ async function scrapeMetaOnce(
       );
 
       /*
-       * Quick search:
-       * stop after a useful initial result set.
+       * Quick search is for the user's first-page experience.
+       * Stop as soon as we have a useful initial batch.
        */
       if (
         isQuickCollection &&
@@ -1816,7 +2053,9 @@ async function scrapeMetaOnce(
     }
 
     /*
-     * Final extraction for deep mode.
+     * A final extraction is useful for deep collection, but it is
+     * intentionally skipped for the quick first-page path.
+     * That keeps the user-triggered request as fast as possible.
      */
     if (!isQuickCollection) {
       await page.waitForTimeout(
@@ -1829,13 +2068,15 @@ async function scrapeMetaOnce(
         );
 
       for (
-        const card of finalCards
+        const card of
+          finalCards
       ) {
         const ad =
           normalizeCard(
             card,
             query,
             country,
+            advertiserPageId,
           );
 
         if (
@@ -1854,7 +2095,9 @@ async function scrapeMetaOnce(
 
         if (
           !existing ||
-          getAdQualityScore(ad) >
+          getAdQualityScore(
+            ad,
+          ) >
             getAdQualityScore(
               existing,
             )
@@ -1866,17 +2109,6 @@ async function scrapeMetaOnce(
         }
       }
     }
-
-    console.info(
-      "[DeepMetaProvider] Collection complete:",
-      {
-        query,
-        country,
-        collectionDepth,
-        ads:
-          collected.size,
-      },
-    );
 
     return Array.from(
       collected.values(),
@@ -1896,149 +2128,161 @@ async function scrapeMetaOnce(
 
 export const deepMetaProvider:
   AdProvider = {
-  platform: "meta",
+    platform:
+      "meta",
 
-  async search(
-    input: AdSearchInput,
-  ): Promise<ProviderResult> {
-    const query =
-      input.query?.trim();
+    async search(
+      input: AdSearchInput,
+    ): Promise<ProviderResult> {
+      const query =
+        input.query?.trim();
 
-    const country =
-      input.country
-        ?.trim()
-        .toUpperCase() ||
-      DEFAULT_COUNTRY;
+      const country =
+        input.country
+          ?.trim()
+          .toUpperCase() ||
+        DEFAULT_COUNTRY;
 
-    if (!query) {
-      return {
-        ads: [],
-      };
-    }
-
-    for (
-      let attempt = 1;
-      attempt <= MAX_ATTEMPTS;
-      attempt += 1
-    ) {
-      try {
-        const startedAt =
-          Date.now();
-
-        const collectionDepth =
-          input.collectionDepth ===
-          "quick"
-            ? "quick"
-            : "deep";
-
-        const scraped =
-          await scrapeMetaOnce(
-            query,
-            country,
-            collectionDepth,
-          );
-
-        const ads =
-          deduplicateAds(
-            scraped,
-          );
-
-        ads.sort(
-          (a, b) => {
-            const activeDifference =
-              Number(
-                b.isActive ??
-                  false,
-              ) -
-              Number(
-                a.isActive ??
-                  false,
-              );
-
-            if (
-              activeDifference !==
-              0
-            ) {
-              return activeDifference;
-            }
-
-            return (
-              (b.runningDays ??
-                0) -
-              (a.runningDays ??
-                0)
-            );
-          },
-        );
-
-        console.info(
-          "[DeepMetaProvider] Collection complete:",
-          {
-            query,
-            country,
-            collectionDepth,
-            ads:
-              ads.length,
-            attempt,
-            durationMs:
-              Date.now() -
-              startedAt,
-          },
-        );
-
+      if (!query) {
         return {
-          ads,
+          ads: [],
         };
-      } catch (error) {
-        console.error(
-          "[DeepMetaProvider] Attempt failed:",
-          {
-            attempt,
-            query,
-            country,
-            error:
-              error instanceof
-              Error
-                ? {
-                    name:
-                      error.name,
+      }
 
-                    message:
-                      error.message,
+      for (
+        let attempt = 1;
+        attempt <=
+        MAX_ATTEMPTS;
+        attempt += 1
+      ) {
+        try {
+          const startedAt =
+            Date.now();
 
-                    stack:
-                      error.stack,
-                  }
-                : error,
-          },
-        );
+          const collectionDepth =
+            input.collectionDepth ===
+            "quick"
+              ? "quick"
+              : "deep";
 
-        if (
-          attempt <
-          MAX_ATTEMPTS
-        ) {
-          await new Promise<void>(
-            (resolve) => {
-              setTimeout(
-                resolve,
-                attempt * 1000,
+          const scraped =
+            await scrapeMetaOnce(
+              query,
+              country,
+              collectionDepth,
+              input.advertiserPageId ??
+              undefined,
+            );
+
+          const ads =
+            deduplicateAds(
+              scraped,
+            );
+
+          ads.sort(
+            (a, b) => {
+              const activeDifference =
+                Number(
+                  b.isActive ??
+                    false,
+                ) -
+                Number(
+                  a.isActive ??
+                    false,
+                );
+
+              if (
+                activeDifference !==
+                0
+              ) {
+                return activeDifference;
+              }
+
+              return (
+                (b.runningDays ??
+                  0) -
+                (a.runningDays ??
+                  0)
               );
             },
           );
+
+          console.info(
+  "[DeepMetaProvider] Collection complete:",
+  {
+    query,
+    country,
+    collectionDepth,
+    advertiserPageId:
+      input.advertiserPageId ??
+      null,
+    ads:
+      ads.length,
+    attempt,
+    durationMs:
+      Date.now() -
+      startedAt,
+  },
+);
+
+          return {
+            ads,
+          };
+        } catch (error) {
+          console.error(
+            "[DeepMetaProvider] Attempt failed:",
+            {
+              attempt,
+              query,
+              country,
+              error:
+                error instanceof
+                Error
+                  ? {
+                      name:
+                        error.name,
+
+                      message:
+                        error.message,
+
+                      stack:
+                        error.stack,
+                    }
+                  : error,
+            },
+          );
+
+          if (
+            attempt <
+            MAX_ATTEMPTS
+          ) {
+            await new Promise<void>(
+              (
+                resolve,
+              ) => {
+                setTimeout(
+                  resolve,
+                  attempt *
+                    1000,
+                );
+              },
+            );
+          }
         }
       }
-    }
 
-    console.warn(
-      "[DeepMetaProvider] All attempts failed:",
-      {
-        query,
-        country,
-      },
-    );
+      console.warn(
+        "[DeepMetaProvider] All attempts failed:",
+        {
+          query,
+          country,
+        },
+      );
 
-    return {
-      ads: [],
-    };
-  },
-};
+      return {
+        ads: [],
+      };
+    },
+  };
+
+;
