@@ -63,12 +63,12 @@ const DEFAULT_MAX_SCROLLS = 90;
  *
  * DEEP collection keeps the existing crawl ceiling below.
  */
-const QUICK_INITIAL_WAIT_MS = 650;
-const QUICK_SCROLL_WAIT_MS = 120;
-const QUICK_POST_SCROLL_WAIT_MS = 150;
-const QUICK_MAX_SCROLLS = 4;
+const QUICK_INITIAL_WAIT_MS = 2500;
+const QUICK_SCROLL_WAIT_MS = 650;
+const QUICK_POST_SCROLL_WAIT_MS = 750;
+const QUICK_MAX_SCROLLS = 14;
 const QUICK_TARGET_LIBRARY_IDS = 24;
-const QUICK_STABLE_ROUNDS = 1;
+const QUICK_STABLE_ROUNDS = 2;
 
 /*
  * Maximum target for one provider collection.
@@ -316,28 +316,19 @@ function buildLibraryUrl(
   country: string,
   advertiserPageId?: string | null,
 ): string {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({
+    active_status: "active",
+    ad_type: "all",
+    country,
+    is_targeted_country: "false",
+    media_type: "all",
+  });
 
-  params.set("active_status", "active");
-  params.set("ad_type", "all");
-  params.set("country", country);
-  params.set("is_targeted_country", "false");
-  params.set("media_type", "all");
-
-  if (
-    advertiserPageId &&
-    /^\d+$/.test(advertiserPageId)
-  ) {
+  if (advertiserPageId && /^\d+$/.test(advertiserPageId)) {
     params.set("search_type", "page");
-    params.set(
-      "view_all_page_id",
-      advertiserPageId,
-    );
+    params.set("view_all_page_id", advertiserPageId);
   } else {
-    params.set(
-      "search_type",
-      "keyword_unordered",
-    );
+    params.set("search_type", "keyword_unordered");
     params.set("q", query);
   }
 
@@ -397,394 +388,172 @@ function normalizeMatchText(
 async function extractVisibleCards(
   page: Page,
 ): Promise<RawCard[]> {
-  await page
-    .waitForLoadState(
-      "domcontentloaded",
-      {
-        timeout: 10_000,
-      },
-    )
-    .catch(
-      () => undefined,
-    );
-
-  await page.waitForTimeout(
-    750,
-  );
-
-  return page.evaluate(() => {
-      const normalize = (
-        value: string,
-      ): string =>
-        value
-          .replace(
-            /[\u200B-\u200D\uFEFF]/g,
-            "",
-          )
-          .replace(
-            /\u00A0/g,
-            " ",
-          )
-          .replace(
-            /\r|\n/g,
-            " ",
-          )
-          .replace(
-            /\s+/g,
-            " ",
-          )
-          .trim();
-
-      const extractAdIdFromUrl = (
-        value: string,
-      ): string | null => {
-        try {
-          const url =
-            new URL(
-              value,
-              window.location.href,
-            );
-
-          const id =
-            url.searchParams.get(
-              "id",
-            );
-
-          return id &&
-            /^\d{6,}$/.test(id)
-            ? id
-            : null;
-        } catch {
-          return (
-            value.match(
-              /[?&]id=(\d{6,})/i,
-            )?.[1] ??
-            null
-          );
-        }
-      };
-
-      const extractLibraryId = (
-        value: string,
-      ): string | null =>
-        value.match(
-          /(?:Library ID|लाइब्रेरी ID)\s*:?\s*(\d{6,})/i,
-        )?.[1] ??
-        null;
-
-      const countAdLinks = (
-        element: Element,
-      ): number => {
-        return Array.from(
-          element.querySelectorAll(
-            "a[href]",
-          ),
-        ).filter(
-          (anchor) =>
-            Boolean(
-              extractAdIdFromUrl(
-                anchor.getAttribute(
-                  "href",
-                ) ?? "",
-              ),
-            ),
-        ).length;
-      };
-
-      const countLibraryIds = (
-        element: Element,
-      ): number => {
-        const text =
-          element.textContent ??
-          "";
-
-        return new Set(
-          Array.from(
-            text.matchAll(
-              /(?:Library ID|लाइब्रेरी ID)\s*:?\s*(\d{6,})/gi,
-            ),
-          ).map(
-            (match) =>
-              match[1],
-          ),
-        ).size;
-      };
-
-      const findCardRoot = (
-        anchor: Element,
-      ): Element | null => {
-        let current:
-          | Element
-          | null =
-          anchor;
-
-        let best:
-          | Element
-          | null =
-          null;
-
-        for (
-          let depth = 0;
-          depth < 18 &&
-          current;
-          depth += 1
-        ) {
-          const adLinkCount =
-            countAdLinks(
-              current,
-            );
-
-          const libraryIdCount =
-            countLibraryIds(
-              current,
-            );
-
-          const text =
-            (
-              current as HTMLElement
-            ).innerText ??
-            current.textContent ??
-            "";
-
-          const normalized =
-            normalize(text);
-
-          if (
-            normalized.length >=
-              80 &&
-            normalized.length <=
-              30000 &&
-            (
-              adLinkCount ===
-                1 ||
-              libraryIdCount ===
-                1
+  return page.evaluate(
+    (ctaValues) => {
+      const normalize =
+        (
+          value: string,
+        ): string =>
+          value
+            .replace(
+              /[\u200B-\u200D\uFEFF]/g,
+              "",
             )
-          ) {
-            best =
-              current;
-          }
+            .replace(
+              /\u00A0/g,
+              " ",
+            )
+            .replace(
+              /\r|\n/g,
+              " ",
+            )
+            .replace(
+              /\s+/g,
+              " ",
+            )
+            .trim();
 
-          if (
-            adLinkCount > 1 ||
-            libraryIdCount > 1
-          ) {
-            break;
-          }
+      const getLibraryId =
+        (
+          value: string,
+        ): string | null =>
+          value.match(
+            /(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i,
+          )?.[1] ?? null;
 
-          current =
-            current.parentElement;
-        }
+      const countLibraryIds =
+        (
+          element: Element,
+        ): number => {
+          const matches =
+            (
+              element.textContent ??
+              ""
+            ).match(
+              /(?:Library ID|लाइब्रेरी ID):\s*\d+/gi,
+            ) ?? [];
 
-        return best;
-      };
+          return new Set(
+            matches.map(
+              (match) =>
+                match.match(
+                  /(\d+)/,
+                )?.[1] ?? "",
+            ),
+          ).size;
+        };
 
-      const candidateRoots =
+      const candidateCards =
         new Map<
           string,
           Element
         >();
 
-      /*
-       * ---------------------------------------------------------
-       * PRIMARY DISCOVERY:
-       *
-       * Find actual Ad Library detail links.
-       *
-       * This does NOT require the text "Library ID" to exist.
-       * ---------------------------------------------------------
-       */
-      const adAnchors =
-        Array.from(
-          document.querySelectorAll(
-            "a[href]",
-          ),
+      const walker =
+        document.createTreeWalker(
+          document.body,
+          NodeFilter.SHOW_TEXT,
         );
 
-      for (
-        const anchor of
-          adAnchors
-      ) {
-        const href =
-          anchor.getAttribute(
-            "href",
-          );
+      let node =
+        walker.nextNode();
 
-        if (!href) {
-          continue;
-        }
-
+      while (node) {
         const id =
-          extractAdIdFromUrl(
-            href,
+          getLibraryId(
+            node.textContent ??
+              "",
           );
 
-        if (!id) {
-          continue;
-        }
+        if (id) {
+          let current =
+            node.parentElement;
 
-        const root =
-          findCardRoot(
-            anchor,
-          );
+          let best:
+            | Element
+            | null = null;
 
-        if (
-          root &&
-          !candidateRoots.has(
-            id,
-          )
-        ) {
-          candidateRoots.set(
-            id,
-            root,
-          );
-        }
-      }
+          for (
+            let depth = 0;
+            depth < 14 &&
+            current;
+            depth += 1
+          ) {
+            const text =
+              current.textContent?.trim() ??
+              "";
 
-      /*
-       * ---------------------------------------------------------
-       * SECONDARY DISCOVERY:
-       *
-       * Search visible text for Library IDs.
-       * ---------------------------------------------------------
-       */
-      if (
-        candidateRoots.size ===
-        0
-      ) {
-        const root =
-          document.body ??
-          document.documentElement;
-
-        if (root) {
-          const walker =
-            document.createTreeWalker(
-              root,
-              NodeFilter.SHOW_TEXT,
-            );
-
-          let node =
-            walker.nextNode();
-
-          while (node) {
-            const id =
-              extractLibraryId(
-                node.textContent ??
-                  "",
+            const idCount =
+              countLibraryIds(
+                current,
               );
 
-            if (id) {
-              const element =
-                node.parentElement;
-
-              if (element) {
-                const card =
-                  findCardRoot(
-                    element,
-                  );
-
-                if (
-                  card &&
-                  !candidateRoots.has(
-                    id,
-                  )
-                ) {
-                  candidateRoots.set(
-                    id,
-                    card,
-                  );
-                }
-              }
+            if (
+              idCount === 1 &&
+              text.length >= 80 &&
+              text.length <= 25000
+            ) {
+              best = current;
             }
 
-            node =
-              walker.nextNode();
+            if (
+              idCount > 1
+            ) {
+              break;
+            }
+
+            current =
+              current.parentElement;
+          }
+
+          if (
+            best &&
+            !candidateCards.has(
+              id,
+            )
+          ) {
+            candidateCards.set(
+              id,
+              best,
+            );
           }
         }
+
+        node =
+          walker.nextNode();
       }
 
-      /*
-       * ---------------------------------------------------------
-       * THIRD DISCOVERY:
-       *
-       * Article / role based fallback.
-       * ---------------------------------------------------------
-       */
       if (
-        candidateRoots.size ===
+        candidateCards.size ===
         0
       ) {
-        const fallbackCards =
+        const fallback =
           Array.from(
             document.querySelectorAll(
               [
                 '[role="article"]',
                 "article",
+                '[data-testid*="ad" i]',
+                '[data-testid*="card" i]',
               ].join(","),
             ),
           );
 
         for (
-          const card of
-            fallbackCards
+          const element of
+            fallback
         ) {
-          const text =
-            (
-              card as HTMLElement
-            ).innerText ??
-            "";
-
           const id =
-            extractLibraryId(
-              text,
+            getLibraryId(
+              element.textContent ??
+                "",
             );
 
           if (id) {
-            candidateRoots.set(
+            candidateCards.set(
               id,
-              card,
+              element,
             );
-            continue;
-          }
-
-          const link =
-            Array.from(
-              card.querySelectorAll(
-                "a[href]",
-              ),
-            ).find(
-              (anchor) =>
-                Boolean(
-                  extractAdIdFromUrl(
-                    anchor.getAttribute(
-                      "href",
-                    ) ?? "",
-                  ),
-                ),
-            );
-
-          if (link) {
-            const href =
-              link.getAttribute(
-                "href",
-              );
-
-            const linkId =
-              extractAdIdFromUrl(
-                href ?? "",
-              );
-
-            if (
-              linkId &&
-              !candidateRoots.has(
-                linkId,
-              )
-            ) {
-              candidateRoots.set(
-                linkId,
-                card,
-              );
-            }
           }
         }
       }
@@ -800,22 +569,25 @@ async function extractVisibleCards(
       const results: RawCard[] =
         [];
 
+      /*
+       * ctaValues is intentionally passed into evaluate so
+       * the browser-side extraction has the exact same CTA set.
+       */
+      void ctaValues;
+
       for (
         const [
-          discoveredId,
+          id,
           card,
-        ] of candidateRoots
+        ] of candidateCards
       ) {
-        const element =
-          card as HTMLElement;
-
-        const rawText =
-          element.innerText ??
-          element.textContent ??
-          "";
-
         const rawLines =
-          rawText
+          (
+            (
+              card as HTMLElement
+            ).innerText ??
+            ""
+          )
             .split(
               /\r?\n/,
             )
@@ -879,73 +651,6 @@ async function extractVisibleCards(
                 value !== null,
             );
 
-        let id = discoveredId;
-
-        if (!id && rawLines.length) {
-          const extractedId = extractLibraryId(
-            rawLines.join(" "),
-          );
-
-          if (extractedId) {
-            id = extractedId;
-          }
-        }
-
-        if (!id) {
-          continue;
-        }
-
-        /*
-         * Ensure the parser always receives a canonical
-         * Library ID line even if Meta hides that text.
-         */
-        if (
-          !rawLines.some(
-            (line) =>
-              /^(?:Library ID|लाइब्रेरी ID)\s*:/i.test(
-                line,
-              ),
-          )
-        ) {
-          rawLines.unshift(
-            `Library ID: ${id}`,
-          );
-        }
-
-        /*
-         * Ensure advertiser parsing sees Sponsored as a
-         * structural boundary when the rendered DOM provides it.
-         */
-        const hasSponsored =
-          rawLines.some(
-            (line) =>
-              /^Sponsored$/i.test(
-                line,
-              ) ||
-              /^प्रायोजित$/u.test(
-                line,
-              ),
-          );
-
-        if (!hasSponsored) {
-          const sponsoredIndex =
-            rawLines.findIndex(
-              (line) =>
-                /sponsored/i.test(
-                  line,
-                ),
-            );
-
-          if (
-            sponsoredIndex >=
-              0
-          ) {
-            rawLines[
-              sponsoredIndex
-            ] = "Sponsored";
-          }
-        }
-
         const video =
           card.querySelector(
             "video",
@@ -965,38 +670,6 @@ async function extractVisibleCards(
             .join(" ")
             .toLowerCase();
 
-        const videoUrl =
-          video?.currentSrc ||
-          video?.getAttribute(
-            "src",
-          ) ||
-          null;
-
-        const imageUrl =
-          image?.currentSrc ||
-          image?.getAttribute(
-            "src",
-          ) ||
-          null;
-
-        const thumbnailUrl =
-          video?.getAttribute(
-            "poster",
-          ) ??
-          imageUrl ??
-          null;
-
-        const videoDurationSeconds =
-          video &&
-          Number.isFinite(
-            video.duration,
-          ) &&
-          video.duration > 0
-            ? Math.round(
-                video.duration,
-              )
-            : null;
-
         results.push({
           id,
 
@@ -1004,13 +677,37 @@ async function extractVisibleCards(
 
           links,
 
-          imageUrl,
+          imageUrl:
+            image?.getAttribute(
+              "src",
+            ) ?? null,
 
-          videoUrl,
+          videoUrl:
+            video?.currentSrc ||
+            video?.getAttribute(
+              "src",
+            ) ||
+            null,
 
-          thumbnailUrl,
+          thumbnailUrl:
+            video?.getAttribute(
+              "poster",
+            ) ??
+            image?.getAttribute(
+              "src",
+            ) ??
+            null,
 
-          videoDurationSeconds,
+          videoDurationSeconds:
+            video &&
+            Number.isFinite(
+              video.duration,
+            ) &&
+            video.duration > 0
+              ? Math.round(
+                  video.duration,
+                )
+              : null,
 
           publisherPlatforms:
             platformNames.filter(
@@ -1024,35 +721,10 @@ async function extractVisibleCards(
         });
       }
 
-      /*
-       * Deduplicate inside the browser.
-       */
-      const unique =
-        new Map<
-          string,
-          RawCard
-        >();
-
-      for (
-        const card of
-          results
-      ) {
-        if (
-          !unique.has(
-            card.id,
-          )
-        ) {
-          unique.set(
-            card.id,
-            card,
-          );
-        }
-      }
-
-      return Array.from(
-        unique.values(),
-      );
-  });
+      return results;
+    },
+    CTA_VALUES,
+  );
 }
 
 /* =========================================================
@@ -1182,7 +854,7 @@ function isRelevant(
       ad.productName,
       ad.primaryText,
       ad.description,
-      ad.landingPage ?? "",
+      ad.landingPage,
     ]
       .map(
         normalizeMatchText,
@@ -1254,7 +926,7 @@ function getAdQualityScore(
     score += 3;
   }
 
-  if (ad.landingPage ?? "") {
+  if (ad.landingPage) {
     score += 5;
   }
 
@@ -1762,7 +1434,7 @@ async function scrapeMetaOnce(
   country: string,
   collectionDepth: "quick" | "deep",
   advertiserPageId?: string | null,
-): Promise<CompetitorAd[]> {
+):Promise<CompetitorAd[]> {
   const currentBrowser =
     await getMetaBrowser();
 
@@ -1833,91 +1505,36 @@ async function scrapeMetaOnce(
 
   try {
     const targetUrl =
-  buildLibraryUrl(
-    query,
-    country,
-    advertiserPageId,
-  );
+      buildLibraryUrl(
+        query,
+        country,
+        advertiserPageId,
+      );
 
-console.info(
-  "[DeepMetaProvider] Navigating Meta Ad Library:",
-  {
-    query,
-    country,
-    advertiserPageId:
-      advertiserPageId ??
-      null,
-    targetUrl,
-  },
-);
+    console.info(
+      "[DeepMetaProvider] Navigating Meta Ad Library:",
+      {
+        query,
+        country,
+        advertiserPageId: advertiserPageId ?? null,
+        targetUrl,
+      },
+    );
 
-const navigationResponse =
-  await page.goto(
-    targetUrl,
-    {
-      waitUntil:
-        "domcontentloaded",
+    await page.goto(
+      targetUrl,
+      {
+        waitUntil:
+          "domcontentloaded",
 
-      timeout:
-        60_000,
-    },
-  );
+        timeout:
+          60_000,
+      },
+    );
 
-console.info(
-  "[DeepMetaProvider] Meta navigation response:",
-  {
-    status:
-      navigationResponse?.status() ??
-      null,
-
-    url:
-      page.url(),
-
-    title:
-      await page.title().catch(
-        () => "",
-      ),
-  },
-);
-
-await page.waitForTimeout(
-  2_500,
-);
- 
-/*
- * Meta often continues its client-side navigation after the
- * initial document is available. Wait for the load state when
- * possible, but do not fail the scrape when Meta never reaches
- * a clean "load" state.
- */
-await page.waitForLoadState(
-  "load",
-  {
-    timeout: 15_000,
-  },
-).catch(
-  () => undefined,
-);
-
-await page.waitForTimeout(
-  initialWaitMs,
-);
-
-/*
- * Capture diagnostics before the first extraction.
- */
-console.info(
-  "[DeepMetaProvider] Meta page ready:",
-  {
-    url:
-      page.url(),
-
-    title:
-      await page.title().catch(
-        () => "",
-      ),
-  },
-);
+    await page.waitForTimeout(
+      initialWaitMs,
+    );
 
     for (
       let scroll = 0;
@@ -2170,8 +1787,7 @@ export const deepMetaProvider:
               query,
               country,
               collectionDepth,
-              input.advertiserPageId ??
-              undefined,
+              input.advertiserPageId,
             );
 
           const ads =
@@ -2208,22 +1824,21 @@ export const deepMetaProvider:
           );
 
           console.info(
-  "[DeepMetaProvider] Collection complete:",
-  {
-    query,
-    country,
-    collectionDepth,
-    advertiserPageId:
-      input.advertiserPageId ??
-      null,
-    ads:
-      ads.length,
-    attempt,
-    durationMs:
-      Date.now() -
-      startedAt,
-  },
-);
+            "[DeepMetaProvider] Collection complete:",
+            {
+              query,
+              country,
+              collectionDepth,
+              advertiserPageId:
+                input.advertiserPageId ?? null,
+              ads:
+                ads.length,
+              attempt,
+              durationMs:
+                Date.now() -
+                startedAt,
+            },
+          );
 
           return {
             ads,

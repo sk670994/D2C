@@ -1328,6 +1328,46 @@ useEffect(() => {
 
   let polling = false;
 
+  /*
+   * Guard rails so this loop cannot run forever:
+   *
+   * - A 401 means the session is invalid; retrying on the same
+   *   750ms cadence will never succeed and just hammers the API.
+   * - Repeated non-401 failures (network blips, 5xx) get a small
+   *   retry budget before we give up.
+   * - An absolute time cap protects against a job that silently
+   *   never reaches "complete"/"failed" (e.g. its dispatch failed
+   *   upstream) from being polled indefinitely.
+   */
+  const POLL_INTERVAL_MS = 750;
+  const MAX_CONSECUTIVE_FAILURES = 5;
+  const MAX_POLL_DURATION_MS = 10 * 60 * 1000;
+
+  let consecutiveFailures = 0;
+  const pollStartedAt = Date.now();
+  const timerRef: {
+    current?: number;
+  } = {};
+
+  const stopPolling = (message?: string) => {
+    cancelled = true;
+
+    if (timerRef.current !== undefined) {
+      window.clearInterval(
+        timerRef.current,
+      );
+    }
+
+    if (
+      message &&
+      mountedRef.current
+    ) {
+      setError(
+        message,
+      );
+    }
+  };
+
   const poll = async () => {
     if (
       cancelled ||
@@ -1339,6 +1379,16 @@ useEffect(() => {
     polling = true;
 
     try {
+      if (
+        Date.now() - pollStartedAt >
+        MAX_POLL_DURATION_MS
+      ) {
+        stopPolling(
+          "Still collecting ads after several minutes. Try refreshing this search again shortly.",
+        );
+        return;
+      }
+
       const response =
         await fetch(
           `/api/ad-intelligence/search/status/${job.id}`,
@@ -1346,6 +1396,13 @@ useEffect(() => {
             cache: "no-store",
           },
         );
+
+      if (response.status === 401) {
+        stopPolling(
+          "Your session expired. Please sign in again to keep tracking this search.",
+        );
+        return;
+      }
 
       const data =
         (await response.json()) as {
@@ -1359,8 +1416,21 @@ useEffect(() => {
         !data.success ||
         !data.job
       ) {
+        consecutiveFailures += 1;
+
+        if (
+          consecutiveFailures >=
+          MAX_CONSECUTIVE_FAILURES
+        ) {
+          stopPolling(
+            "Couldn't check collection status after several attempts. Please try again.",
+          );
+        }
+
         return;
       }
+
+      consecutiveFailures = 0;
 
       const nextJob =
         data.job;
@@ -1439,6 +1509,16 @@ useEffect(() => {
        * Polling is best effort.
        * Never remove already-visible results.
        */
+      consecutiveFailures += 1;
+
+      if (
+        consecutiveFailures >=
+        MAX_CONSECUTIVE_FAILURES
+      ) {
+        stopPolling(
+          "Couldn't check collection status after several attempts. Please try again.",
+        );
+      }
     } finally {
       polling = false;
     }
@@ -1446,18 +1526,18 @@ useEffect(() => {
 
   void poll();
 
-  const timer =
+  timerRef.current =
     window.setInterval(
       () => {
         void poll();
       },
-      750,
+      POLL_INTERVAL_MS,
     );
 
   return () => {
     cancelled = true;
     window.clearInterval(
-      timer,
+      timerRef.current,
     );
   };
 }, [
@@ -2659,4 +2739,4 @@ useEffect(() => {
       ) : null}
     </>
   );
-}      
+}

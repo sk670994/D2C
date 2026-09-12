@@ -27,9 +27,67 @@ import type {
 
 import { send } from "@vercel/queue";
 
+import type { CollectionEvent } from "@/lib/ad-intelligence/jobs/collect-ad-intelligence";
+
 import {
   checkRateLimit,
 } from "@/lib/rate-limit";
+
+/*
+ * @vercel/queue's send() authenticates via Vercel's OIDC federation,
+ * which is only available when the project has been deployed on
+ * Vercel OR linked locally with `vercel link` + `vercel env pull`.
+ * Without that, every call to send() throws:
+ *
+ *   "Failed to get OIDC token for local development... project.json
+ *   not found, have you linked your project with `vc link`?"
+ *
+ * which previously surfaced as a 500 on every AdSpy refresh/track
+ * click for anyone running `next dev` without a linked Vercel
+ * project. `process.env.VERCEL` is set to "1" automatically on all
+ * Vercel deployments (and by `vercel dev`), so we use it to decide
+ * whether the queue transport is actually available. When it isn't,
+ * we run the same collection job inline instead of enqueuing it —
+ * `collectAdIntelligence` is the exact function the queue consumer
+ * (`/api/queues/adspy-collection`) calls, so behavior is unchanged,
+ * only the transport differs.
+ */
+async function dispatchCollection(
+  payload: CollectionEvent,
+  idempotencyKey: string,
+) {
+  if (process.env.VERCEL) {
+    await send(
+      "adspy-collection",
+      payload,
+      {
+        idempotencyKey,
+        retentionSeconds: 24 * 60 * 60,
+      },
+    );
+    return;
+  }
+
+  console.warn(
+    "[AdSpy refresh] VERCEL env not set — Vercel Queue is unavailable " +
+      "locally without `vercel link`. Running the collection job " +
+      "inline instead of enqueuing it.",
+  );
+
+  const { collectAdIntelligence } = await import(
+    "@/lib/ad-intelligence/jobs/collect-ad-intelligence"
+  );
+
+  // Fire-and-forget: collectAdIntelligence already marks the job
+  // "failed" internally on error, so the status-poll endpoint will
+  // surface failures instead of polling forever.
+  void collectAdIntelligence(payload).catch((error) => {
+    console.error(
+      "[AdSpy refresh] Inline collection failed:",
+      error,
+    );
+  });
+}
 
 export const runtime =
   "nodejs";
@@ -369,8 +427,7 @@ export async function POST(
          *
          * Previously the selected Page ID stopped at the browser.
          */
-        await send(
-          "adspy-collection",
+        await dispatchCollection(
           {
             jobId:
               latest.id,
@@ -395,13 +452,7 @@ export async function POST(
               normalizedAdvertiserPageId ??
               null,
           },
-          {
-            idempotencyKey:
-              `${collectionKey}:dispatch:${dispatchBucket}`,
-
-            retentionSeconds:
-              24 * 60 * 60,
-          },
+          `${collectionKey}:dispatch:${dispatchBucket}`,
         );
 
         console.info(
