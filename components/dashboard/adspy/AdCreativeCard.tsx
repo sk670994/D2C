@@ -45,3 +45,4 @@ export function AdCreativeCard({ ad, onOpen }: { ad: GlobalAdRecord; onOpen: (ad
     </article>
   );
 }
+
