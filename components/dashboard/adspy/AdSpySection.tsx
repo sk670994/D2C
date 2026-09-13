@@ -70,6 +70,10 @@ import {
   isActiveJob,
 } from "./adspy-types";
 
+import { AdSpyLoadingIntelligence } from "./components/AdSpyLoadingIntelligence";
+
+import { AdSpyHistory } from "./components/AdSpyHistory";
+
 export type AdSpySectionProps = {
   query?: string;
 
@@ -914,30 +918,30 @@ export function AdSpySection({
                 )}
               </div>
             </>
-          ) : (
-            <AdSpyEmptyState
-              query={input}
-              collecting={
-                collecting ||
-                search.loading
-              }
-            />
-          )}
+          ) : collecting || search.loading ? (
+  <AdSpyLoadingIntelligence />
+) : (
+  <AdSpyEmptyState
+    query={input}
+    collecting={collecting || search.loading}
+  />
+)}
 
-          {submittedQuery.length >=
-          2 ? (
-            <AdSpyAnalysis
-              query={
-                submittedQuery
-              }
-              country={
-                countryInput
-              }
-              platform={
-                platform
-              }
-            />
-          ) : null}
+         {submittedQuery.length >= 2 ? (
+  <>
+    <AdSpyAnalysis
+      query={submittedQuery}
+      country={countryInput}
+      platform={platform}
+    />
+
+    <AdSpyHistory
+      query={submittedQuery}
+      country={countryInput}
+      platform={platform}
+    />
+  </>
+) : null}
         </div>
       </div>
 

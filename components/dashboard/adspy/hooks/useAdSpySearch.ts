@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
-
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   EMPTY_SUMMARY,
   isActiveJob,
@@ -19,212 +13,37 @@ import {
 
 type SearchOverrides = {
   query?: string;
-
-  pageId?:
-    | string
-    | null;
-
+  pageId?: string | null;
   country?: string;
-
   platform?: Platform;
-
   mode?: SearchMode;
 };
 
 const PAGE_SIZE = 36;
+const CACHE_TTL_MS = 45_000;
+const MAX_CACHE_ENTRIES = 12;
 
-const PREFETCH_TTL_MS =
-  45_000;
+type CacheEntry = {
+  expiresAt: number;
+  response: SearchResponse;
+};
 
-const PREFETCH_MAX_ENTRIES =
-  12;
-
-const responseCache =
-  new Map<
-    string,
-    {
-      expiresAt: number;
-      response: SearchResponse;
-    }
-  >();
-
-function cacheKey(
-  input: {
-    query: string;
-    country: string;
-    platform: Platform;
-    mode: SearchMode;
-    pageId?:
-      | string
-      | null;
-    page: number;
-  },
-): string {
+function buildCacheKey(params: {
+  query: string;
+  country: string;
+  platform: Platform;
+  mode: SearchMode;
+  pageId?: string | null;
+  page: number;
+}) {
   return [
-    input.query
-      .trim()
-      .toLowerCase(),
-
-    input.country
-      .trim()
-      .toUpperCase(),
-
-    input.platform,
-
-    input.mode,
-
-    input.pageId ??
-      "",
-
-    input.page,
+    params.query.trim().toLowerCase(),
+    params.country.trim().toUpperCase(),
+    params.platform,
+    params.mode,
+    params.pageId ?? "",
+    params.page,
   ].join("|");
-}
-
-function readCache(
-  key: string,
-): SearchResponse | null {
-  const cached =
-    responseCache.get(
-      key,
-    );
-
-  if (!cached) {
-    return null;
-  }
-
-  if (
-    cached.expiresAt <=
-    Date.now()
-  ) {
-    responseCache.delete(
-      key,
-    );
-
-    return null;
-  }
-
-  return cached.response;
-}
-
-function writeCache(
-  key: string,
-  response: SearchResponse,
-): void {
-  responseCache.set(
-    key,
-    {
-      expiresAt:
-        Date.now() +
-        PREFETCH_TTL_MS,
-
-      response,
-    },
-  );
-
-  while (
-    responseCache.size >
-    PREFETCH_MAX_ENTRIES
-  ) {
-    const oldestKey =
-      responseCache.keys().next()
-        .value as
-        | string
-        | undefined;
-
-    if (!oldestKey) {
-      break;
-    }
-
-    responseCache.delete(
-      oldestKey,
-    );
-  }
-}
-
-async function fetchSearchResponse(
-  query: string,
-  country: string,
-  platform: Platform,
-  mode: SearchMode,
-  pageId:
-    | string
-    | null
-    | undefined,
-  page: number,
-  signal?: AbortSignal,
-): Promise<SearchResponse> {
-  const url =
-    new URL(
-      "/api/ad-intelligence/search",
-      window.location.origin,
-    );
-
-  url.searchParams.set(
-    "q",
-    query,
-  );
-
-  url.searchParams.set(
-    "country",
-    country,
-  );
-
-  url.searchParams.set(
-    "platform",
-    platform,
-  );
-
-  url.searchParams.set(
-    "mode",
-    mode,
-  );
-
-  url.searchParams.set(
-    "page",
-    String(page),
-  );
-
-  url.searchParams.set(
-    "limit",
-    String(PAGE_SIZE),
-  );
-
-  if (
-    pageId &&
-    platform === "meta" &&
-    mode === "advertiser"
-  ) {
-    url.searchParams.set(
-      "pageId",
-      pageId,
-    );
-  }
-
-  const response =
-    await fetch(
-      url,
-      {
-        cache:
-          "no-store",
-
-        signal,
-      },
-    );
-
-  const data =
-    (await response.json()) as SearchResponse;
-
-  if (
-    !response.ok ||
-    !data.success
-  ) {
-    throw new Error(
-      data.error ??
-        "Search failed.",
-    );
-  }
-
-  return data;
 }
 
 export function useAdSpySearch({
@@ -238,558 +57,289 @@ export function useAdSpySearch({
   country: string;
   platform: Platform;
   mode: SearchMode;
-  pageId:
-    | string
-    | null;
+  pageId: string | null;
 }) {
-  const [
-    ads,
-    setAds,
-  ] =
-    useState<Ad[]>(
-      [],
-    );
+  const [ads, setAds] = useState<Ad[]>([]);
+  const [summary, setSummary] = useState<Summary>(EMPTY_SUMMARY);
+  const [intelligence, setIntelligence] =
+    useState<Intelligence | null>(null);
+  const [job, setJob] = useState<Job | null>(null);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
 
-  const [
-    summary,
-    setSummary,
-  ] =
-    useState<Summary>(
-      EMPTY_SUMMARY,
-    );
+  const requestIdRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const cacheRef = useRef(new Map<string, CacheEntry>());
+  const prefetchedPagesRef = useRef(new Set<string>());
 
-  const [
-    intelligence,
-    setIntelligence,
-  ] =
-    useState<
-      Intelligence | null
-    >(null);
+  const search = useCallback(
+    async (
+      nextPage = 1,
+      silent = false,
+      overrides: SearchOverrides = {},
+    ): Promise<SearchResponse | null> => {
+      const activeQuery = (overrides.query ?? query).trim();
+      const activeCountry =
+        (overrides.country ?? country).trim().toUpperCase() || "IN";
+      const activePlatform = overrides.platform ?? platform;
+      const activeMode = overrides.mode ?? mode;
+      const activePageId =
+        overrides.pageId !== undefined ? overrides.pageId : pageId;
 
-  const [
-    job,
-    setJob,
-  ] =
-    useState<Job | null>(
-      null,
-    );
+      if (activeQuery.length < 2) {
+        setAds([]);
+        setSummary(EMPTY_SUMMARY);
+        setIntelligence(null);
+        setTotal(0);
+        setPage(1);
+        setTotalPages(0);
+        setJob(null);
+        setLastUpdatedAt(null);
+        setRefreshing(false);
+        return null;
+      }
 
-  const [
-    total,
-    setTotal,
-  ] =
-    useState(0);
+      const cacheKey = buildCacheKey({
+        query: activeQuery,
+        country: activeCountry,
+        platform: activePlatform,
+        mode: activeMode,
+        pageId: activePageId,
+        page: nextPage,
+      });
 
-  const [
-    page,
-    setPage,
-  ] =
-    useState(1);
+      const cached = cacheRef.current.get(cacheKey);
 
-  const [
-    totalPages,
-    setTotalPages,
-  ] =
-    useState(0);
+      if (!silent && cached && cached.expiresAt > Date.now()) {
+        const data = cached.response;
 
-  const [
-    loading,
-    setLoading,
-  ] =
-    useState(false);
-
-  const [
-    refreshing,
-    setRefreshing,
-  ] =
-    useState(false);
-
-  const [
-    error,
-    setError,
-  ] =
-    useState("");
-
-  const [
-    lastUpdatedAt,
-    setLastUpdatedAt,
-  ] =
-    useState<
-      string | null
-    >(null);
-
-  const requestIdRef =
-    useRef(0);
-
-  const abortRef =
-    useRef<
-      AbortController | null
-    >(null);
-
-  const prefetchingRef =
-    useRef(
-      new Set<string>(),
-    );
-
-  const applyResponse =
-    useCallback(
-      (
-        data: SearchResponse,
-        requestedPage: number,
-      ) => {
-        setAds(
-          data.ads ??
-            [],
-        );
-
-        setSummary(
-          data.summary ??
-            EMPTY_SUMMARY,
-        );
-
-        setIntelligence(
-          data.intelligence ??
-            null,
-        );
-
-        setTotal(
-          Number(
-            data.total ??
-              0,
-          ),
-        );
-
-        setPage(
-          Number(
-            data.page ??
-              requestedPage,
-          ),
-        );
-
-        setTotalPages(
-          Number(
-            data.totalPages ??
-              0,
-          ),
-        );
-
-        setJob(
-          data.collectionJob ??
-            null,
-        );
-
-        setLastUpdatedAt(
-          data.lastUpdatedAt ??
-            null,
-        );
-
+        setAds(data.ads ?? []);
+        setSummary(data.summary ?? EMPTY_SUMMARY);
+        setIntelligence(data.intelligence ?? null);
+        setTotal(Number(data.total ?? 0));
+        setPage(Number(data.page ?? nextPage));
+        setTotalPages(Number(data.totalPages ?? 0));
+        setJob(data.collectionJob ?? null);
+        setLastUpdatedAt(data.lastUpdatedAt ?? null);
         setRefreshing(
           Boolean(
             data.isRefreshing ||
-              isActiveJob(
-                data.collectionJob
-                  ?.status,
-              ),
+              isActiveJob(data.collectionJob?.status),
           ),
         );
-      },
-      [],
-    );
 
-  const prefetchPage =
-    useCallback(
-      async (
-        nextPage: number,
-        overrides: SearchOverrides = {},
-      ) => {
-        const activeQuery =
-          (
-            overrides.query ??
-            query
-          ).trim();
+        return data;
+      }
 
-        const activeCountry =
-          (
-            overrides.country ??
-            country
-          )
-            .trim()
-            .toUpperCase() ||
-          "IN";
+      const requestId = ++requestIdRef.current;
 
-        const activePlatform =
-          overrides.platform ??
-          platform;
+      abortRef.current?.abort();
 
-        const activeMode =
-          overrides.mode ??
-          mode;
+      const controller = new AbortController();
+      abortRef.current = controller;
 
-        const activePageId =
-          overrides.pageId ??
-          pageId;
+      if (!silent) {
+        setLoading(true);
+      }
 
-        if (
-          activeQuery.length <
-            2 ||
-          nextPage <
-            1
-        ) {
-          return;
-        }
+      setError("");
 
-        const key =
-          cacheKey({
-            query:
-              activeQuery,
-
-            country:
-              activeCountry,
-
-            platform:
-              activePlatform,
-
-            mode:
-              activeMode,
-
-            pageId:
-              activePageId,
-
-            page:
-              nextPage,
-          });
-
-        if (
-          readCache(key) ||
-          prefetchingRef.current.has(
-            key,
-          )
-        ) {
-          return;
-        }
-
-        prefetchingRef.current.add(
-          key,
+      try {
+        const url = new URL(
+          "/api/ad-intelligence/search",
+          window.location.origin,
         );
 
-        try {
-          const data =
-            await fetchSearchResponse(
-              activeQuery,
-              activeCountry,
-              activePlatform,
-              activeMode,
-              activePageId,
-              nextPage,
-            );
-
-          writeCache(
-            key,
-            data,
-          );
-        } catch {
-          /*
-           * Prefetch is opportunistic.
-           * Never surface a background
-           * prefetch failure to the UI.
-           */
-        } finally {
-          prefetchingRef.current.delete(
-            key,
-          );
-        }
-      },
-      [
-        country,
-        mode,
-        pageId,
-        platform,
-        query,
-      ],
-    );
-
-  const search =
-    useCallback(
-      async (
-        nextPage = 1,
-        silent = false,
-        overrides: SearchOverrides = {},
-      ): Promise<SearchResponse | null> => {
-        const activeQuery =
-          (
-            overrides.query ??
-            query
-          ).trim();
-
-        const activeCountry =
-          (
-            overrides.country ??
-            country
-          )
-            .trim()
-            .toUpperCase() ||
-          "IN";
-
-        const activePlatform =
-          overrides.platform ??
-          platform;
-
-        const activeMode =
-          overrides.mode ??
-          mode;
-
-        const activePageId =
-          overrides.pageId ??
-          pageId;
+        url.searchParams.set("q", activeQuery);
+        url.searchParams.set("country", activeCountry);
+        url.searchParams.set("platform", activePlatform);
+        url.searchParams.set("mode", activeMode);
+        url.searchParams.set("page", String(nextPage));
+        url.searchParams.set("limit", String(PAGE_SIZE));
 
         if (
-          activeQuery.length <
-          2
+          activePageId &&
+          activePlatform === "meta" &&
+          activeMode === "advertiser"
         ) {
-          setAds(
-            [],
-          );
-
-          setSummary(
-            EMPTY_SUMMARY,
-          );
-
-          setIntelligence(
-            null,
-          );
-
-          setTotal(
-            0,
-          );
-
-          setPage(
-            1,
-          );
-
-          setTotalPages(
-            0,
-          );
-
-          setJob(
-            null,
-          );
-
-          setLastUpdatedAt(
-            null,
-          );
-
-          setRefreshing(
-            false,
-          );
-
-          return null;
+          url.searchParams.set("pageId", activePageId);
         }
 
-        const key =
-          cacheKey({
-            query:
-              activeQuery,
+        const response = await fetch(url, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
 
-            country:
-              activeCountry,
+        const data = (await response.json()) as SearchResponse;
 
-            platform:
-              activePlatform,
-
-            mode:
-              activeMode,
-
-            pageId:
-              activePageId,
-
-            page:
-              nextPage,
-          });
-
-        const cached =
-          readCache(key);
-
-        const requestId =
-          ++requestIdRef.current;
-
-        abortRef.current?.abort();
-
-        if (cached) {
-          applyResponse(
-            cached,
-            nextPage,
-          );
-
-          setError(
-            "",
-          );
-
-          setLoading(
-            false,
-          );
-
-          void prefetchPage(
-            nextPage + 1,
-            overrides,
-          );
-
-          return cached;
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || "Search failed.");
         }
 
-        const controller =
-          new AbortController();
+        cacheRef.current.set(cacheKey, {
+          expiresAt: Date.now() + CACHE_TTL_MS,
+          response: data,
+        });
 
-        abortRef.current =
-          controller;
+        while (cacheRef.current.size > MAX_CACHE_ENTRIES) {
+          const oldest = cacheRef.current.keys().next().value;
 
-        if (!silent) {
-          setLoading(
-            true,
-          );
+          if (!oldest) break;
+
+          cacheRef.current.delete(oldest);
         }
 
-        setError(
-          "",
-        );
-
-        try {
-          const data =
-            await fetchSearchResponse(
-              activeQuery,
-              activeCountry,
-              activePlatform,
-              activeMode,
-              activePageId,
-              nextPage,
-              controller.signal,
-            );
-
-          if (
-            requestId !==
-            requestIdRef.current
-          ) {
-            return data;
-          }
-
-          applyResponse(
-            data,
-            nextPage,
-          );
-
-          writeCache(
-            key,
-            data,
-          );
-
-          const next =
-            nextPage + 1;
-
-          const availablePages =
-            Number(
-              data.totalPages ??
-                0,
-            );
-
-          if (
-            next <=
-            availablePages
-          ) {
-            void prefetchPage(
-              next,
-              overrides,
-            );
-          }
-
+        if (requestId !== requestIdRef.current) {
           return data;
-        } catch (
-          searchError
+        }
+
+        setAds(data.ads ?? []);
+        setSummary(data.summary ?? EMPTY_SUMMARY);
+        setIntelligence(data.intelligence ?? null);
+        setTotal(Number(data.total ?? 0));
+        setPage(Number(data.page ?? nextPage));
+        setTotalPages(Number(data.totalPages ?? 0));
+        setJob(data.collectionJob ?? null);
+        setLastUpdatedAt(data.lastUpdatedAt ?? null);
+        setRefreshing(
+          Boolean(
+            data.isRefreshing ||
+              isActiveJob(data.collectionJob?.status),
+          ),
+        );
+
+        /*
+         * Warm the next page in the background.
+         * This doesn't affect the current render.
+         */
+        const nextPrefetchPage = Number(data.page ?? nextPage) + 1;
+        const resolvedTotalPages = Number(data.totalPages ?? 0);
+
+        if (
+          nextPrefetchPage <= resolvedTotalPages &&
+          resolvedTotalPages > 1
         ) {
-          if (
-            searchError instanceof
-              DOMException &&
-            searchError.name ===
-              "AbortError"
-          ) {
-            return null;
-          }
+          const prefetchKey = buildCacheKey({
+            query: activeQuery,
+            country: activeCountry,
+            platform: activePlatform,
+            mode: activeMode,
+            pageId: activePageId,
+            page: nextPrefetchPage,
+          });
 
           if (
-            requestId ===
-            requestIdRef.current
+            !prefetchedPagesRef.current.has(prefetchKey) &&
+            !cacheRef.current.has(prefetchKey)
           ) {
-            setError(
-              searchError instanceof
-                Error
-                ? searchError.message
-                : "Search failed.",
-            );
-          }
+            prefetchedPagesRef.current.add(prefetchKey);
 
-          return null;
-        } finally {
-          if (
-            requestId ===
-              requestIdRef.current &&
-            !silent
-          ) {
-            setLoading(
-              false,
+            const prefetchUrl = new URL(
+              "/api/ad-intelligence/search",
+              window.location.origin,
             );
+
+            prefetchUrl.searchParams.set("q", activeQuery);
+            prefetchUrl.searchParams.set("country", activeCountry);
+            prefetchUrl.searchParams.set("platform", activePlatform);
+            prefetchUrl.searchParams.set("mode", activeMode);
+            prefetchUrl.searchParams.set(
+              "page",
+              String(nextPrefetchPage),
+            );
+            prefetchUrl.searchParams.set("limit", String(PAGE_SIZE));
+
+            if (
+              activePageId &&
+              activePlatform === "meta" &&
+              activeMode === "advertiser"
+            ) {
+              prefetchUrl.searchParams.set("pageId", activePageId);
+            }
+
+            void fetch(prefetchUrl, {
+              cache: "no-store",
+            })
+              .then(async (prefetchResponse) => {
+                if (!prefetchResponse.ok) return;
+
+                const prefetchData =
+                  (await prefetchResponse.json()) as SearchResponse;
+
+                if (!prefetchData.success) return;
+
+                cacheRef.current.set(prefetchKey, {
+                  expiresAt: Date.now() + CACHE_TTL_MS,
+                  response: prefetchData,
+                });
+
+                while (cacheRef.current.size > MAX_CACHE_ENTRIES) {
+                  const oldest =
+                    cacheRef.current.keys().next().value;
+
+                  if (!oldest) break;
+
+                  cacheRef.current.delete(oldest);
+                }
+              })
+              .catch(() => {
+                /* Prefetch is opportunistic. */
+              });
           }
         }
-      },
-      [
-        applyResponse,
-        country,
-        mode,
-        pageId,
-        platform,
-        prefetchPage,
-        query,
-      ],
-    );
 
-  useEffect(
-    () => {
-      return () => {
-        abortRef.current?.abort();
-      };
+        return data;
+      } catch (error) {
+        if (
+          error instanceof DOMException &&
+          error.name === "AbortError"
+        ) {
+          return null;
+        }
+
+        if (requestId === requestIdRef.current) {
+          setError(
+            error instanceof Error
+              ? error.message
+              : "Search failed.",
+          );
+        }
+
+        return null;
+      } finally {
+        if (requestId === requestIdRef.current && !silent) {
+          setLoading(false);
+        }
+      }
     },
-    [],
+    [country, mode, pageId, platform, query],
   );
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   return {
     ads,
-
     summary,
-
     intelligence,
-
     job,
-
     setJob,
-
     total,
-
     page,
-
     totalPages,
-
     loading,
-
     refreshing,
-
     error,
-
     setError,
-
     lastUpdatedAt,
-
     search,
-
-    prefetchPage,
-
-    pageSize:
-      PAGE_SIZE,
   };
 }

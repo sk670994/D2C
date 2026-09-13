@@ -156,7 +156,7 @@ export async function GET(
       Number(
         params.get(
           "limit",
-        ) ?? "24",
+        ) ?? "36",
       );
 
     const page =
@@ -180,7 +180,7 @@ export async function GET(
               rawLimit,
             ),
           )
-        : 24;
+        : 36;
 
     if (
       query.length < 2
