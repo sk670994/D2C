@@ -1,0 +1,17 @@
+/*
+ * AdSpy motion/layout refinement.
+ * The [data-adspy-creative] hook lets us force the intended compact library
+ * grid without rewriting the large AdSpySection component.
+ */
+
+@media (min-width: 1024px) {
+  :where(div):has(> article[data-adspy-creative]) {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (min-width: 1280px) {
+  :where(div):has(> article[data-adspy-creative]) {
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+  }
+}

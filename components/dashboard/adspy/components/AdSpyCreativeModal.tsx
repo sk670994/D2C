@@ -1,4 +1,4 @@
-/* eslint-disable @next/next/no-img-element */
+﻿/* eslint-disable @next/next/no-img-element */
 
 "use client";
 
@@ -109,7 +109,7 @@ function dateLabel(
   value?: string | null,
 ) {
   if (!value) {
-    return "—";
+    return "â€”";
   }
 
   const date =
@@ -120,7 +120,7 @@ function dateLabel(
       date.getTime(),
     )
   ) {
-    return "—";
+    return "â€”";
   }
 
   return date.toLocaleDateString(
@@ -137,7 +137,7 @@ function dateTimeLabel(
   value?: string | null,
 ) {
   if (!value) {
-    return "—";
+    return "â€”";
   }
 
   const date =
@@ -148,7 +148,7 @@ function dateTimeLabel(
       date.getTime(),
     )
   ) {
-    return "—";
+    return "â€”";
   }
 
   return date.toLocaleString(
@@ -170,7 +170,7 @@ function safeText(
     value == null ||
     String(value).trim() === ""
   ) {
-    return "—";
+    return "â€”";
   }
 
   return String(value);
@@ -366,7 +366,7 @@ function detectHook(
 
   const first =
     text.split(
-      /[.!?।！？]/,
+      /[.!?à¥¤ï¼ï¼Ÿ]/,
     )[0] || text;
 
   if (
@@ -815,7 +815,7 @@ export function AdSpyCreativeModal({
                 {ad.creatorName ? (
                   <>
                     <span>
-                      ·
+                      Â·
                     </span>
 
                     <span>
@@ -1209,7 +1209,7 @@ export function AdSpyCreativeModal({
                           .publisherPlatforms
                           ?.length
                           ? ad.publisherPlatforms.join(
-                              " · ",
+                              " Â· ",
                             )
                           : "Not captured"
                       }
@@ -1228,7 +1228,7 @@ export function AdSpyCreativeModal({
                                   item.name,
                               )
                               .join(
-                                " · ",
+                                " Â· ",
                               )
                           : "Not captured"
                       }
@@ -1288,7 +1288,7 @@ export function AdSpyCreativeModal({
                                     Boolean,
                                   )
                                   .join(
-                                    " · ",
+                                    " Â· ",
                                   ) ||
                                   "Location detail not captured"}
                               </div>
@@ -1315,7 +1315,7 @@ export function AdSpyCreativeModal({
                     <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
                       <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
                         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-700" />
-                        Loading version history…
+                        Loading version historyâ€¦
                       </div>
 
                       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200">

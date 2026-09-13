@@ -6,8 +6,7 @@ import { SignOutButton } from "@/components/auth/SignOutButton";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { createClient } from "@/lib/supabase/server";
 import { BrandLogo } from "@/components/app/BrandLogo";
-
-import "../../components/dashboard/adspy/adspy.css";
+import { AdSpy3DAtmosphere } from "@/components/ui/adspy/AdSpy3DAtmosphere";
 
 export default async function AdSpyPage() {
   const supabase = await createClient();
@@ -23,7 +22,9 @@ export default async function AdSpyPage() {
 
   return (
     <main className="adspy-page">
-      <header className="zt-appbar">
+      <AdSpy3DAtmosphere />
+
+      <header className="zt-appbar relative z-[200]">
         <BrandLogo />
 
         <nav className="zt-appnav" aria-label="Product navigation">
@@ -44,7 +45,9 @@ export default async function AdSpyPage() {
         </div>
       </header>
 
-      <AdSpySection />
+      <div className="relative z-10">
+        <AdSpySection />
+      </div>
     </main>
   );
 }

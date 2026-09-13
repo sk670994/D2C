@@ -1,0 +1,32 @@
+/* AdSpy v8 interaction layer. Kept scoped so legacy dashboard styles cannot repaint it. */
+[data-adspy-v8] [data-adspy-control="primary"] { background:#0f172a !important; color:#fff !important; border-color:#0f172a !important; }
+[data-adspy-v8] [data-adspy-control="primary"]:hover { background:#1e293b !important; border-color:#1e293b !important; }
+[data-adspy-v8] [data-adspy-control="secondary"],
+[data-adspy-v8] [data-adspy-control="mode"],
+[data-adspy-v8] [data-adspy-control="suggestion"],
+[data-adspy-v8] [data-adspy-control="country"] { background:#fff !important; color:#334155 !important; border-color:#e2e8f0 !important; }
+[data-adspy-v8] [data-adspy-control="secondary"]:hover,
+[data-adspy-v8] [data-adspy-control="mode"]:hover,
+[data-adspy-v8] [data-adspy-control="suggestion"]:hover { background:#f8fafc !important; color:#0f172a !important; }
+[data-adspy-v8] [data-adspy-control="tracked"] { background:#eff6ff !important; color:#1d4ed8 !important; border-color:#bfdbfe !important; }
+[data-adspy-v8] [data-adspy-control="mode-active"],
+[data-adspy-v8] [data-adspy-control="filter-active"] { background:#0f172a !important; color:#fff !important; border-color:#0f172a !important; }
+[data-adspy-v8] [data-adspy-control="filter"] { background:transparent !important; color:#64748b !important; border-color:transparent !important; }
+[data-adspy-v8] [data-adspy-control="filter"]:hover { background:#f8fafc !important; color:#0f172a !important; }
+[data-adspy-v8] [data-adspy-control="suggestion-icon"] { background:#0f172a !important; color:#fff !important; }
+[data-adspy-v8] [data-adspy-control="media-play"] { background:rgba(255,255,255,.97) !important; color:#0f172a !important; }
+[data-adspy-v8] input { color:#0f172a !important; }
+[data-adspy-v8] ::selection { background:rgba(37,99,235,.18); }
+
+@media (max-width: 1023px) {
+  [data-adspy-v8] [data-adspy-creative] { transform:none !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-adspy-v8] *,
+  [data-adspy-v8] *::before,
+  [data-adspy-v8] *::after { animation-duration:0.01ms !important; animation-iteration-count:1 !important; scroll-behavior:auto !important; transition-duration:0.01ms !important; }
+}
+
+[data-adspy-v8] { background:#f8fafc; }
+.adspy-page { background:#f8fafc !important; }

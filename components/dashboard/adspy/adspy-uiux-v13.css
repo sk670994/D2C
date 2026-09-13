@@ -1,0 +1,131 @@
+/* AdSpy v12 interaction corrections */
+[data-adspy-root] {
+  isolation: isolate;
+}
+
+[data-adspy-root] > div:first-of-type {
+  position: relative;
+  z-index: 100;
+  overflow: visible !important;
+}
+
+[data-adspy-root] [data-adspy-search-shell] {
+  position: relative;
+  z-index: 1000;
+}
+
+[data-adspy-root] [data-adspy-control="suggestion"] {
+  background: #fff !important;
+  color: #334155 !important;
+}
+
+[data-adspy-root] [data-adspy-control="suggestion"]:hover {
+  background: #f8fafc !important;
+}
+
+[data-adspy-root] [data-adspy-control="primary"] {
+  background: #0f172a !important;
+  border-color: #0f172a !important;
+  color: #fff !important;
+}
+
+[data-adspy-root] [data-adspy-control="primary"]:hover {
+  background: #1e293b !important;
+}
+
+[data-adspy-root] .cursor-pointer {
+  cursor: pointer;
+}
+
+@media (max-width: 767px) {
+  [data-adspy-root] {
+    padding-inline: 10px;
+  }
+
+  [data-adspy-root] .grid.xl\:grid-cols-5 {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-adspy-root] *,
+  [data-adspy-root] *::before,
+  [data-adspy-root] *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+
+/* AdSpy v13 — interaction/performance fixes */
+[data-adspy-root] {
+  isolation: isolate;
+}
+
+[data-adspy-root] > div:first-of-type {
+  position: relative;
+  z-index: 100;
+  overflow: visible !important;
+}
+
+[data-adspy-root] [data-adspy-search-shell] {
+  position: relative;
+  z-index: 1000;
+}
+
+[data-adspy-root] [data-adspy-control="suggestion"] {
+  background: #fff !important;
+  color: #334155 !important;
+}
+
+[data-adspy-root] [data-adspy-control="suggestion"]:hover {
+  background: #f8fafc !important;
+}
+
+[data-adspy-root] [data-adspy-control="primary"] {
+  background: #0f172a !important;
+  border-color: #0f172a !important;
+  color: #fff !important;
+}
+
+[data-adspy-root] [data-adspy-control="primary"]:hover {
+  background: #1e293b !important;
+}
+
+[data-adspy-root] [data-adspy-control="tracked"] {
+  background: #eff6ff !important;
+  color: #1d4ed8 !important;
+  border-color: #bfdbfe !important;
+}
+
+[data-adspy-root] [data-adspy-creative] {
+  cursor: pointer;
+  transform-style: preserve-3d;
+}
+
+[data-adspy-root] [data-adspy-creative]:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, .35);
+  outline-offset: 3px;
+}
+
+@media (max-width: 1023px) {
+  [data-adspy-root] [data-adspy-creative] {
+    transform: none !important;
+  }
+}
+
+@media (max-width: 767px) {
+  [data-adspy-root] {
+    padding-inline: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-adspy-root] *,
+  [data-adspy-root] *::before,
+  [data-adspy-root] *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
