@@ -1,9 +1,15 @@
 import "server-only";
 
 import type { AdPlatform } from "../types";
+import {
+  getStrategyIntelligence,
+  type StrategyIntelligence,
+} from "./strategy";
 import { createGlobalServiceClient } from "./supabase";
 
-type SearchMode = "advertiser" | "keyword";
+type SearchMode =
+  | "advertiser"
+  | "keyword";
 
 type CreativeRow = {
   id: string;
@@ -28,9 +34,11 @@ export type CompetitiveAnalytics = {
   imageShare: number;
   carouselShare: number;
   creatorShare: number;
+
   averageRunningDays: number;
   medianRunningDays: number;
   longestRunningDays: number;
+
   momentum: {
     newLast7Days: number;
     newLast30Days: number;
@@ -39,31 +47,37 @@ export type CompetitiveAnalytics = {
     persistent60Days: number;
     refreshRate30Days: number;
   };
+
   formatMix: Array<{
     label: string;
     count: number;
     share: number;
   }>;
+
   topCreators: Array<{
     label: string;
     count: number;
     share: number;
   }>;
+
   topHooks: Array<{
     label: string;
     count: number;
     share: number;
   }>;
+
   topOffers: Array<{
     label: string;
     count: number;
     share: number;
   }>;
+
   topCtas: Array<{
     label: string;
     count: number;
     share: number;
   }>;
+
   repetition: {
     uniqueHooks: number;
     repeatedHookAds: number;
@@ -72,54 +86,82 @@ export type CompetitiveAnalytics = {
     repeatedOfferAds: number;
     repeatedOfferShare: number;
   };
+
   patternsToInvestigate: Array<{
     title: string;
     detail: string;
     evidence: string;
   }>;
+
+  strategy: StrategyIntelligence;
+
   generatedAt: string;
 };
 
 const MAX_ROWS = 20_000;
+const DAY_MS = 86_400_000;
 
-function clean(value: string | null | undefined): string {
+function clean(
+  value:
+    | string
+    | null
+    | undefined,
+): string {
   return String(value ?? "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
 function safeDateMs(
-  value: string | null | undefined,
+  value:
+    | string
+    | null
+    | undefined,
 ): number | null {
-  if (!value) return null;
+  if (!value) {
+    return null;
+  }
 
-  const time = new Date(value).getTime();
+  const time = new Date(
+    value,
+  ).getTime();
 
-  return Number.isFinite(time) ? time : null;
+  return Number.isFinite(time)
+    ? time
+    : null;
 }
 
-function runningDays(row: CreativeRow): number | null {
-  const first = safeDateMs(row.first_seen_at);
+function runningDays(
+  row: CreativeRow,
+): number | null {
+  const first = safeDateMs(
+    row.first_seen_at,
+  );
 
   if (first == null) {
     return null;
   }
 
   const last =
-    safeDateMs(row.last_seen_at) ??
-    Date.now();
+    safeDateMs(
+      row.last_seen_at,
+    ) ?? Date.now();
 
   return Math.max(
     1,
     Math.floor(
-      (last - first) / 86_400_000,
+      (last - first) /
+        DAY_MS,
     ) + 1,
   );
 }
 
-function buildHook(row: CreativeRow): string | null {
+function buildHook(
+  row: CreativeRow,
+): string | null {
   const text = clean(
-    row.primary_text ?? row.headline,
+    row.primary_text ??
+      row.headline,
   );
 
   if (!text) {
@@ -127,27 +169,42 @@ function buildHook(row: CreativeRow): string | null {
   }
 
   const first =
-    text.split(/[.!?।！？]/)[0]?.trim() ?? text;
+    text
+      .split(/[.!?।！？]/)[0]
+      ?.trim() ?? text;
 
   if (!first) {
     return null;
   }
 
   return first
-    .replace(/\bhttps?:\/\/\S+/gi, "")
-    .replace(/\s+/g, " ")
+    .replace(
+      /\bhttps?:\/\/\S+/gi,
+      "",
+    )
+    .replace(
+      /\s+/g,
+      " ",
+    )
     .trim()
     .slice(0, 100);
 }
 
 function countValues(
-  values: Array<string | null | undefined>,
+  values: Array<
+    string | null | undefined
+  >,
   total: number,
 ) {
-  const counts = new Map<string, number>();
+  const counts =
+    new Map<
+      string,
+      number
+    >();
 
   for (const value of values) {
-    const normalized = clean(value);
+    const normalized =
+      clean(value);
 
     if (!normalized) {
       continue;
@@ -155,64 +212,121 @@ function countValues(
 
     counts.set(
       normalized,
-      (counts.get(normalized) ?? 0) + 1,
+      (counts.get(
+        normalized,
+      ) ?? 0) + 1,
     );
   }
 
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
+  return [
+    ...counts.entries(),
+  ]
+    .sort(
+      (a, b) =>
+        b[1] - a[1],
+    )
     .slice(0, 8)
-    .map(([label, count]) => ({
-      label,
-      count,
-      share: total
-        ? Math.round((count / total) * 1000) / 10
-        : 0,
-    }));
+    .map(
+      ([
+        label,
+        count,
+      ]) => ({
+        label,
+        count,
+        share: total
+          ? Math.round(
+              (count /
+                total) *
+                1000,
+            ) / 10
+          : 0,
+      }),
+    );
 }
 
-function percentage(part: number, whole: number): number {
+function percentage(
+  part: number,
+  whole: number,
+): number {
   return whole
-    ? Math.round((part / whole) * 1000) / 10
+    ? Math.round(
+        (part / whole) *
+          1000,
+      ) / 10
     : 0;
 }
 
-function median(values: number[]): number {
+function median(
+  values: number[],
+): number {
   if (!values.length) {
     return 0;
   }
 
-  const sorted = [...values].sort(
-    (a, b) => a - b,
+  const sorted = [
+    ...values,
+  ].sort(
+    (a, b) =>
+      a - b,
   );
 
-  const middle = Math.floor(sorted.length / 2);
+  const middle =
+    Math.floor(
+      sorted.length / 2,
+    );
 
-  if (sorted.length % 2) {
-    return sorted[middle];
+  if (
+    sorted.length %
+      2
+  ) {
+    return sorted[
+      middle
+    ];
   }
 
   return Math.round(
-    (sorted[middle - 1] + sorted[middle]) / 2,
+    (
+      sorted[
+        middle - 1
+      ] +
+      sorted[
+        middle
+      ]
+    ) / 2,
   );
 }
 
-async function loadRows(input: {
-  query: string;
-  country: string;
-  platform: AdPlatform;
-  mode: SearchMode;
-}): Promise<CreativeRow[]> {
-  const client = createGlobalServiceClient();
+async function loadRows(
+  input: {
+    query: string;
+    country: string;
+    platform: AdPlatform;
+    mode: SearchMode;
+  },
+): Promise<
+  CreativeRow[]
+> {
+  const client =
+    createGlobalServiceClient();
 
-  const { data, error } = await client.rpc(
+  const {
+    data,
+    error,
+  } = await client.rpc(
     "adspy_analysis_rows",
     {
-      p_query: input.query.trim(),
-      p_country: input.country.trim().toUpperCase(),
-      p_platform: input.platform,
-      p_mode: input.mode,
-      p_limit: MAX_ROWS,
+      p_query:
+        input.query.trim(),
+      p_country:
+        input.country
+          .trim()
+          .toUpperCase(),
+      p_platform:
+        input.platform,
+      p_mode:
+        input.mode,
+      p_limit:
+        MAX_ROWS,
     },
   );
 
@@ -222,214 +336,444 @@ async function loadRows(input: {
     );
   }
 
-  return ((data ?? []) as unknown as CreativeRow[]).slice(
+  return (
+    (data ??
+      []) as unknown as CreativeRow[]
+  ).slice(
     0,
     MAX_ROWS,
   );
 }
 
-export async function getCompetitiveAnalytics(input: {
-  query: string;
-  country: string;
-  platform: AdPlatform;
-  mode: SearchMode;
-}): Promise<CompetitiveAnalytics> {
-  const rows = await loadRows(input);
+export async function getCompetitiveAnalytics(
+  input: {
+    query: string;
+    country: string;
+    platform: AdPlatform;
+    mode: SearchMode;
+  },
+): Promise<CompetitiveAnalytics> {
+  const [
+    rows,
+    strategy,
+  ] = await Promise.all([
+    loadRows(input),
+    getStrategyIntelligence(
+      input,
+    ),
+  ]);
 
-  const now = Date.now();
-  const day7 = now - 7 * 86_400_000;
-  const day30 = now - 30 * 86_400_000;
+  const now =
+    Date.now();
 
-  const total = rows.length;
+  const day7 =
+    now -
+    7 * DAY_MS;
 
-  const activeRows = rows.filter(
-    (row) => row.is_currently_active !== false,
-  );
+  const day30 =
+    now -
+    30 * DAY_MS;
 
-  const running = rows
-    .map(runningDays)
-    .filter(
-      (value): value is number =>
-        value !== null && Number.isFinite(value),
+  const total =
+    rows.length;
+
+  const activeRows =
+    rows.filter(
+      (row) =>
+        row.is_currently_active !==
+        false,
     );
 
-  const newLast7Days = rows.filter((row) => {
-    const first = safeDateMs(row.first_seen_at);
-    return first !== null && first >= day7;
-  }).length;
+  const running =
+    rows
+      .map(
+        runningDays,
+      )
+      .filter(
+        (
+          value,
+        ): value is number =>
+          value !== null &&
+          Number.isFinite(
+            value,
+          ),
+      );
 
-  const newLast30Days = rows.filter((row) => {
-    const first = safeDateMs(row.first_seen_at);
-    return first !== null && first >= day30;
-  }).length;
+  const newLast7Days =
+    rows.filter(
+      (row) => {
+        const first =
+          safeDateMs(
+            row.first_seen_at,
+          );
 
-  const retiredLast30Days = rows.filter((row) => {
-    const last = safeDateMs(row.last_seen_at);
-    return (
-      row.is_currently_active === false &&
-      last !== null &&
-      last >= day30
+        return (
+          first !== null &&
+          first >= day7
+        );
+      },
+    ).length;
+
+  const newLast30Days =
+    rows.filter(
+      (row) => {
+        const first =
+          safeDateMs(
+            row.first_seen_at,
+          );
+
+        return (
+          first !== null &&
+          first >= day30
+        );
+      },
+    ).length;
+
+  const retiredLast30Days =
+    rows.filter(
+      (row) => {
+        const last =
+          safeDateMs(
+            row.last_seen_at,
+          );
+
+        return (
+          row.is_currently_active ===
+            false &&
+          last !== null &&
+          last >= day30
+        );
+      },
+    ).length;
+
+  const persistent30Days =
+    running.filter(
+      (value) =>
+        value >= 30,
+    ).length;
+
+  const persistent60Days =
+    running.filter(
+      (value) =>
+        value >= 60,
+    ).length;
+
+  const video =
+    rows.filter(
+      (row) =>
+        row.creative_type ===
+        "video",
+    ).length;
+
+  const image =
+    rows.filter(
+      (row) =>
+        row.creative_type ===
+        "image",
+    ).length;
+
+  const carousel =
+    rows.filter(
+      (row) =>
+        row.creative_type ===
+        "carousel",
+    ).length;
+
+  const creators =
+    rows.filter(
+      (row) =>
+        Boolean(
+          clean(
+            row.creator_name,
+          ),
+        ),
+    ).length;
+
+  const hooks =
+    rows.map(
+      buildHook,
     );
-  }).length;
 
-  const persistent30Days = running.filter(
-    (value) => value >= 30,
-  ).length;
+  const offers =
+    rows.map(
+      (row) =>
+        row.offer,
+    );
 
-  const persistent60Days = running.filter(
-    (value) => value >= 60,
-  ).length;
+  const ctas =
+    rows.map(
+      (row) =>
+        row.call_to_action,
+    );
 
-  const video = rows.filter(
-    (row) => row.creative_type === "video",
-  ).length;
+  const creatorNames =
+    rows.map(
+      (row) =>
+        row.creator_name,
+    );
 
-  const image = rows.filter(
-    (row) => row.creative_type === "image",
-  ).length;
+  const uniqueHooks =
+    new Set(
+      hooks.filter(
+        Boolean,
+      ),
+    ).size;
 
-  const carousel = rows.filter(
-    (row) => row.creative_type === "carousel",
-  ).length;
+  const repeatedHookCounts =
+    countValues(
+      hooks,
+      total,
+    );
 
-  const creators = rows.filter(
-    (row) => Boolean(clean(row.creator_name)),
-  ).length;
+  const repeatedHookAds =
+    repeatedHookCounts.reduce(
+      (
+        sum,
+        item,
+      ) =>
+        sum +
+        (item.count > 1
+          ? item.count
+          : 0),
+      0,
+    );
 
-  const hooks = rows.map(buildHook);
-  const offers = rows.map((row) => row.offer);
-  const ctas = rows.map((row) => row.call_to_action);
-  const creatorNames = rows.map((row) => row.creator_name);
+  const uniqueOffers =
+    new Set(
+      offers
+        .map(clean)
+        .filter(
+          Boolean,
+        ),
+    ).size;
 
-  const uniqueHooks = new Set(
-    hooks.filter(Boolean),
-  ).size;
+  const repeatedOfferCounts =
+    countValues(
+      offers,
+      total,
+    );
 
-  const repeatedHookCounts = countValues(
-    hooks,
-    total,
-  );
-
-  const repeatedHookAds = repeatedHookCounts.reduce(
-    (sum, item) =>
-      sum + (item.count > 1 ? item.count : 0),
-    0,
-  );
-
-  const uniqueOffers = new Set(
-    offers.map(clean).filter(Boolean),
-  ).size;
-
-  const repeatedOfferCounts = countValues(
-    offers,
-    total,
-  );
-
-  const repeatedOfferAds = repeatedOfferCounts.reduce(
-    (sum, item) =>
-      sum + (item.count > 1 ? item.count : 0),
-    0,
-  );
+  const repeatedOfferAds =
+    repeatedOfferCounts.reduce(
+      (
+        sum,
+        item,
+      ) =>
+        sum +
+        (item.count > 1
+          ? item.count
+          : 0),
+      0,
+    );
 
   const formatMix = [
     {
       label: "Video",
       count: video,
-      share: percentage(video, total),
+      share:
+        percentage(
+          video,
+          total,
+        ),
     },
     {
-      label: "Static image",
+      label:
+        "Static image",
       count: image,
-      share: percentage(image, total),
+      share:
+        percentage(
+          image,
+          total,
+        ),
     },
     {
-      label: "Carousel",
+      label:
+        "Carousel",
       count: carousel,
-      share: percentage(carousel, total),
+      share:
+        percentage(
+          carousel,
+          total,
+        ),
     },
   ];
 
-  const refreshRate30Days = total
-    ? Math.round(
-        ((newLast30Days + retiredLast30Days) /
-          total) *
-          1000,
-      ) / 10
-    : 0;
+  const refreshRate30Days =
+    total
+      ? Math.round(
+          (
+            (
+              newLast30Days +
+              retiredLast30Days
+            ) /
+            total
+          ) *
+            1000,
+        ) / 10
+      : 0;
 
   const patternsToInvestigate: CompetitiveAnalytics[
     "patternsToInvestigate"
   ] = [];
 
-  const topHook = repeatedHookCounts[0];
+  const topHook =
+    repeatedHookCounts[0];
 
   if (topHook) {
-    patternsToInvestigate.push({
-      title: "Repeated hook pattern",
-      detail: `“${topHook.label}” appears repeatedly across the indexed set.`,
-      evidence: `${topHook.count} observed creatives`,
-    });
+    patternsToInvestigate.push(
+      {
+        title:
+          "Repeated hook pattern",
+        detail:
+          `“${topHook.label}” appears repeatedly across the indexed set.`,
+        evidence:
+          `${topHook.count} observed creatives`,
+      },
+    );
   }
 
-  const topOffer = repeatedOfferCounts[0];
+  const topOffer =
+    repeatedOfferCounts[0];
 
   if (topOffer) {
-    patternsToInvestigate.push({
-      title: "Offer repetition",
-      detail: `“${topOffer.label}” is a recurring commercial message.`,
-      evidence: `${topOffer.count} observed creatives`,
-    });
+    patternsToInvestigate.push(
+      {
+        title:
+          "Offer repetition",
+        detail:
+          `“${topOffer.label}” is a recurring commercial message.`,
+        evidence:
+          `${topOffer.count} observed creatives`,
+      },
+    );
   }
 
-  const dominantFormat = [...formatMix].sort(
-    (a, b) => b.count - a.count,
-  )[0];
+  const dominantFormat =
+    [
+      ...formatMix,
+    ].sort(
+      (a, b) =>
+        b.count -
+        a.count,
+    )[0];
 
-  if (dominantFormat && total) {
-    patternsToInvestigate.push({
-      title: "Dominant format",
-      detail: `${dominantFormat.label} is the most common creative format in this dataset.`,
-      evidence: `${dominantFormat.share}% of indexed creatives`,
-    });
+  if (
+    dominantFormat &&
+    total
+  ) {
+    patternsToInvestigate.push(
+      {
+        title:
+          "Dominant format",
+        detail:
+          `${dominantFormat.label} is the most common creative format in this dataset.`,
+        evidence:
+          `${dominantFormat.share}% of indexed creatives`,
+      },
+    );
   }
 
-  if (persistent30Days > 0) {
-    patternsToInvestigate.push({
-      title: "Persistence signal",
-      detail:
-        "Some creatives have remained observable for 30+ days and are worth studying for messaging or format consistency.",
-      evidence: `${persistent30Days} creatives observed for 30+ days`,
-    });
+  if (
+    persistent30Days >
+    0
+  ) {
+    patternsToInvestigate.push(
+      {
+        title:
+          "Persistence signal",
+        detail:
+          "Some creatives have remained observable for 30+ days and are worth studying for messaging or format consistency.",
+        evidence:
+          `${persistent30Days} creatives observed for 30+ days`,
+      },
+    );
   }
 
-  if (newLast30Days > 0) {
-    patternsToInvestigate.push({
-      title: "Recent creative activity",
-      detail:
-        "A meaningful portion of the indexed set is recent, indicating an active creative refresh cycle.",
-      evidence: `${newLast30Days} first seen in the last 30 days`,
-    });
+  if (
+    newLast30Days >
+    0
+  ) {
+    patternsToInvestigate.push(
+      {
+        title:
+          "Recent creative activity",
+        detail:
+          "A meaningful portion of the indexed set is recent, indicating an active creative refresh cycle.",
+        evidence:
+          `${newLast30Days} first seen in the last 30 days`,
+      },
+    );
   }
 
   return {
-    totalAds: total,
-    activeAds: activeRows.length,
-    inactiveAds: Math.max(0, total - activeRows.length),
-    activeShare: percentage(activeRows.length, total),
-    videoShare: percentage(video, total),
-    imageShare: percentage(image, total),
-    carouselShare: percentage(carousel, total),
-    creatorShare: percentage(creators, total),
-    averageRunningDays: running.length
-      ? Math.round(
-          running.reduce((sum, value) => sum + value, 0) /
-            running.length,
-        )
-      : 0,
-    medianRunningDays: median(running),
-    longestRunningDays: running.length
-      ? Math.max(...running)
-      : 0,
+    totalAds:
+      total,
+    activeAds:
+      activeRows.length,
+    inactiveAds:
+      Math.max(
+        0,
+        total -
+          activeRows.length,
+      ),
+
+    activeShare:
+      percentage(
+        activeRows.length,
+        total,
+      ),
+
+    videoShare:
+      percentage(
+        video,
+        total,
+      ),
+
+    imageShare:
+      percentage(
+        image,
+        total,
+      ),
+
+    carouselShare:
+      percentage(
+        carousel,
+        total,
+      ),
+
+    creatorShare:
+      percentage(
+        creators,
+        total,
+      ),
+
+    averageRunningDays:
+      running.length
+        ? Math.round(
+            running.reduce(
+              (
+                sum,
+                value,
+              ) =>
+                sum + value,
+              0,
+            ) /
+              running.length,
+          )
+        : 0,
+
+    medianRunningDays:
+      median(
+        running,
+      ),
+
+    longestRunningDays:
+      running.length
+        ? Math.max(
+            ...running,
+          )
+        : 0,
+
     momentum: {
       newLast7Days,
       newLast30Days,
@@ -438,27 +782,54 @@ export async function getCompetitiveAnalytics(input: {
       persistent60Days,
       refreshRate30Days,
     },
+
     formatMix,
-    topCreators: countValues(creatorNames, total),
-    topHooks: repeatedHookCounts,
-    topOffers: repeatedOfferCounts,
-    topCtas: countValues(ctas, total),
+
+    topCreators:
+      countValues(
+        creatorNames,
+        total,
+      ),
+
+    topHooks:
+      repeatedHookCounts,
+
+    topOffers:
+      repeatedOfferCounts,
+
+    topCtas:
+      countValues(
+        ctas,
+        total,
+      ),
+
     repetition: {
       uniqueHooks,
       repeatedHookAds,
-      repeatedHookShare: percentage(
-        repeatedHookAds,
-        total,
-      ),
+      repeatedHookShare:
+        percentage(
+          repeatedHookAds,
+          total,
+        ),
+
       uniqueOffers,
       repeatedOfferAds,
-      repeatedOfferShare: percentage(
-        repeatedOfferAds,
-        total,
-      ),
+      repeatedOfferShare:
+        percentage(
+          repeatedOfferAds,
+          total,
+        ),
     },
+
     patternsToInvestigate:
-      patternsToInvestigate.slice(0, 5),
-    generatedAt: new Date().toISOString(),
+      patternsToInvestigate.slice(
+        0,
+        5,
+      ),
+
+    strategy,
+
+    generatedAt:
+      new Date().toISOString(),
   };
 }
