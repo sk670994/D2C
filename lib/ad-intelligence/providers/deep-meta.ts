@@ -9,26 +9,15 @@ import {
   type BrowserContext,
   type Page,
 } from "playwright-core";
-
 import chromium from "@sparticuz/chromium-min";
 
-import type {
-  AdProvider,
-  AdSearchInput,
-  ProviderResult,
-} from "../provider";
-
-import type {
-  AdCreativeType,
-  CompetitorAd,
-} from "../types";
-
+import type { AdProvider, AdSearchInput, ProviderResult } from "../provider";
+import type { AdCreativeType, CompetitorAd } from "../types";
 import {
   normalizeExtractedText,
   normalizeWhitespace,
   repairMojibake,
 } from "../meta/text";
-
 import {
   calculateRunningDays,
   extractActiveStatus,
@@ -41,1863 +30,457 @@ import {
   parsePrice,
 } from "../meta/parser";
 
-/* =========================================================
- * CONSTANTS
- * ======================================================= */
-
+const META_LIBRARY_URL = "https://www.facebook.com/ads/library/";
 const DEFAULT_COUNTRY = "IN";
-
-const INITIAL_WAIT_MS = 1800;
-
-const SCROLL_WAIT_MS = 375;
-
-const POST_SCROLL_WAIT_MS = 500;
-
-const DEFAULT_MAX_SCROLLS = 90;
-
-/*
- * QUICK collection is intended for a user-triggered first search.
- *
- * It deliberately uses a small crawl budget so a previously unseen
- * brand can produce a useful first result set quickly.
- *
- * DEEP collection keeps the existing crawl ceiling below.
- */
-const QUICK_INITIAL_WAIT_MS = 2500;
-const QUICK_SCROLL_WAIT_MS = 650;
-const QUICK_POST_SCROLL_WAIT_MS = 750;
 const QUICK_MAX_SCROLLS = 14;
-const QUICK_TARGET_LIBRARY_IDS = 24;
-const QUICK_STABLE_ROUNDS = 2;
-
-/*
- * Maximum target for one provider collection.
- *
- * This is a ceiling, not a guarantee that Meta will expose
- * this many unique creatives for every query.
- */
-const TARGET_LIBRARY_IDS = 600;
-
-const STABLE_ROUNDS = 8;
-
-const MAX_ATTEMPTS = 3;
-
-/* =========================================================
- * CTA
- * ======================================================= */
-
+const QUICK_TARGET = 24;
+const QUICK_STABLE_ROUNDS = 3;
+const DEEP_MAX_SCROLLS = 180;
+const DEEP_TARGET = 1200;
+const DEEP_STABLE_ROUNDS = 8;
+const NAV_TIMEOUT = 45_000;
+const INITIAL_WAIT = 2_500;
+const SCROLL_WAIT = 650;
 const CTA_VALUES = [
-  "Shop Now",
-  "Learn More",
-  "Sign Up",
-  "Buy Now",
-  "Install Now",
-  "Book Now",
-  "Contact Us",
-  "Get Offer",
-  "Apply Now",
-  "Download",
-  "Subscribe",
-  "Order Now",
-  "Message Now",
-  "Send Message",
-  "Get Directions",
-  "Call Now",
-  "Watch More",
-  "Listen Now",
-  "Play Game",
-  "Use App",
-
-  "अभी खरीदें",
-  "और जानें",
-  "साइन अप करें",
-  "अभी इंस्टॉल करें",
-  "संदेश भेजें",
+  "Shop Now", "Learn More", "Sign Up", "Buy Now", "Install Now", "Book Now",
+  "Contact Us", "Get Offer", "Apply Now", "Download", "Subscribe", "Order Now",
+  "Message Now", "Send Message", "Get Directions", "Call Now", "Watch More",
+  "Listen Now", "Play Game", "Use App", "अभी खरीदें", "और जानें", "साइन अप करें",
+  "अभी इंस्टॉल करें", "संदेश भेजें",
 ] as const;
-
-/* =========================================================
- * RAW CARD
- * ======================================================= */
 
 type RawCard = {
   id: string;
-
   rawLines: string[];
-
-  links: Array<{
-    href: string;
-    text: string;
-  }>;
-
+  links: Array<{ href: string; text: string }>;
   imageUrl: string | null;
-
   videoUrl: string | null;
-
   thumbnailUrl: string | null;
-
   videoDurationSeconds: number | null;
-
   publisherPlatforms: string[];
 };
 
-/* =========================================================
- * BROWSER SINGLETON
- * ======================================================= */
-
-let metaBrowser: Browser | null = null;
-
-let metaBrowserPromise:
-  | Promise<Browser>
-  | null = null;
-
-/* =========================================================
- * LOCAL EXECUTABLE
- * ======================================================= */
+let browser: Browser | null = null;
+let browserPromise: Promise<Browser> | null = null;
 
 function getLocalExecutable(): string {
   const candidates = [
     process.env.CHROME_EXECUTABLE_PATH,
     process.env.EDGE_EXECUTABLE_PATH,
-
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-
     "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
     "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-  ].filter(
-    (
-      value,
-    ): value is string =>
-      typeof value === "string" &&
-      value.trim().length > 0,
-  );
+  ].filter((v): v is string => typeof v === "string" && v.trim().length > 0);
 
   for (const candidate of candidates) {
     try {
-      if (/^file:\/\//i.test(candidate)) {
-        continue;
-      }
-
-      const resolved =
-        path.resolve(candidate);
-
-      if (existsSync(resolved)) {
-        return resolved;
-      }
+      if (/^file:\/\//i.test(candidate)) continue;
+      const resolved = path.resolve(candidate);
+      if (existsSync(resolved)) return resolved;
     } catch {
-      // Continue checking candidates.
+      // try the next candidate
     }
   }
 
-  throw new Error(
-    [
-      "No local Chrome/Edge executable found.",
-      "Set CHROME_EXECUTABLE_PATH or EDGE_EXECUTABLE_PATH.",
-    ].join(" "),
-  );
+  throw new Error("No local Chrome/Edge executable found. Set CHROME_EXECUTABLE_PATH or EDGE_EXECUTABLE_PATH.");
 }
 
-/* =========================================================
- * BROWSER
- * ======================================================= */
-
-async function getMetaBrowser(): Promise<Browser> {
-  if (metaBrowser) {
-    try {
-      if (
-        metaBrowser.isConnected()
-      ) {
-        return metaBrowser;
-      }
-    } catch {
-      // Continue and recreate.
-    }
-
-    metaBrowser = null;
-  }
-
-  if (!metaBrowserPromise) {
-    metaBrowserPromise =
-      (async () => {
-        const isLocal =
-          process.platform ===
-            "win32" ||
-          process.env.IS_LOCAL ===
-            "true";
-
-        let executablePath: string;
-
-        let launchArgs: string[];
-
-        if (isLocal) {
-          executablePath =
-            getLocalExecutable();
-
-          launchArgs = [
-            "--disable-blink-features=AutomationControlled",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-          ];
-        } else {
-          const packUrl =
-            process.env.CHROMIUM_PACK_URL?.trim();
-
-          if (!packUrl) {
-            throw new Error(
-              "CHROMIUM_PACK_URL is required in production.",
-            );
-          }
-
-          if (
-            !/^https?:\/\//i.test(
-              packUrl,
-            )
-          ) {
-            throw new Error(
-              "CHROMIUM_PACK_URL must be an HTTP/HTTPS URL.",
-            );
-          }
-
-          executablePath =
-            await chromium.executablePath(
-              packUrl,
-            );
-
-          launchArgs = [
-            ...chromium.args,
-            "--disable-dev-shm-usage",
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-          ];
+async function getBrowser(): Promise<Browser> {
+  if (browser?.isConnected()) return browser;
+  browser = null;
+  if (!browserPromise) {
+    browserPromise = (async () => {
+      const local = process.platform === "win32" || process.env.IS_LOCAL === "true";
+      let executablePath: string;
+      let args: string[];
+      if (local) {
+        executablePath = getLocalExecutable();
+        args = ["--disable-dev-shm-usage", "--disable-gpu"];
+      } else {
+        const packUrl = process.env.CHROMIUM_PACK_URL?.trim();
+        if (!packUrl || !/^https?:\/\//i.test(packUrl)) {
+          throw new Error("CHROMIUM_PACK_URL must be an HTTP/HTTPS URL in production.");
         }
-
-        const nextBrowser =
-          await playwrightChromium.launch(
-            {
-              executablePath,
-              args: launchArgs,
-              headless: true,
-            },
-          );
-
-        nextBrowser.on(
-          "disconnected",
-          () => {
-            if (
-              metaBrowser ===
-              nextBrowser
-            ) {
-              metaBrowser = null;
-            }
-          },
-        );
-
-        metaBrowser =
-          nextBrowser;
-
-        return nextBrowser;
-      })().finally(
-        () => {
-          metaBrowserPromise =
-            null;
-        },
-      );
+        executablePath = await chromium.executablePath(packUrl);
+        args = [...chromium.args, "--disable-dev-shm-usage", "--no-sandbox", "--disable-setuid-sandbox"];
+      }
+      const next = await playwrightChromium.launch({ executablePath, args, headless: true });
+      next.on("disconnected", () => {
+        if (browser === next) browser = null;
+      });
+      browser = next;
+      return next;
+    })().finally(() => {
+      browserPromise = null;
+    });
   }
-
-  return metaBrowserPromise;
+  return browserPromise;
 }
 
-/* =========================================================
- * URL
- * ======================================================= */
-
-function buildLibraryUrl(
-  query: string,
-  country: string,
-  advertiserPageId?: string | null,
-): string {
+function buildLibraryUrl(input: AdSearchInput): string {
+  const country = (input.country ?? DEFAULT_COUNTRY).trim().toUpperCase();
+  const activeStatus = input.collectionDepth === "deep" ? "all" : "active";
   const params = new URLSearchParams({
-    active_status: "active",
+    active_status: activeStatus,
     ad_type: "all",
     country,
     is_targeted_country: "false",
     media_type: "all",
   });
 
-  if (advertiserPageId && /^\d+$/.test(advertiserPageId)) {
+  const pageId = input.advertiserPageId?.trim();
+  if (pageId && /^\d+$/.test(pageId) && input.mode !== "keyword") {
     params.set("search_type", "page");
-    params.set("view_all_page_id", advertiserPageId);
+    params.set("view_all_page_id", pageId);
   } else {
     params.set("search_type", "keyword_unordered");
-    params.set("q", query);
+    params.set("q", input.query.trim());
   }
-
-  return `https://www.facebook.com/ads/library/?${params.toString()}`;
+  return `${META_LIBRARY_URL}?${params.toString()}`;
 }
 
-/* =========================================================
- * URL NORMALIZATION
- * ======================================================= */
-
-function normalizeUrl(
-  value: string | null,
-): string | null {
-  if (!value) {
-    return null;
-  }
-
+function normalizeUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
   try {
-    return new URL(
-      value,
-    ).toString();
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+    return url.toString();
   } catch {
     return null;
   }
 }
 
-/* =========================================================
- * QUERY NORMALIZATION
- * ======================================================= */
-
-function normalizeMatchText(
-  value:
-    | string
-    | null
-    | undefined,
-): string {
-  return (
-    value ?? ""
-  )
-    .toLowerCase()
-    .normalize("NFKC")
-    .replace(
-      /[^a-z0-9]+/g,
-      " ",
-    )
-    .replace(
-      /\s+/g,
-      " ",
-    )
-    .trim();
+function normalizedText(value: string | null | undefined): string {
+return (repairMojibake(normalizeExtractedText(value ?? "")) ?? "").trim();
 }
 
-/* =========================================================
- * VISIBLE CARD EXTRACTION
- * ======================================================= */
-
-async function extractVisibleCards(
-  page: Page,
-): Promise<RawCard[]> {
-  return page.evaluate(
-    (ctaValues) => {
-      const normalize =
-        (
-          value: string,
-        ): string =>
-          value
-            .replace(
-              /[\u200B-\u200D\uFEFF]/g,
-              "",
-            )
-            .replace(
-              /\u00A0/g,
-              " ",
-            )
-            .replace(
-              /\r|\n/g,
-              " ",
-            )
-            .replace(
-              /\s+/g,
-              " ",
-            )
-            .trim();
-
-      const getLibraryId =
-        (
-          value: string,
-        ): string | null =>
-          value.match(
-            /(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i,
-          )?.[1] ?? null;
-
-      const countLibraryIds =
-        (
-          element: Element,
-        ): number => {
-          const matches =
-            (
-              element.textContent ??
-              ""
-            ).match(
-              /(?:Library ID|लाइब्रेरी ID):\s*\d+/gi,
-            ) ?? [];
-
-          return new Set(
-            matches.map(
-              (match) =>
-                match.match(
-                  /(\d+)/,
-                )?.[1] ?? "",
-            ),
-          ).size;
-        };
-
-      const candidateCards =
-        new Map<
-          string,
-          Element
-        >();
-
-      const walker =
-        document.createTreeWalker(
-          document.body,
-          NodeFilter.SHOW_TEXT,
-        );
-
-      let node =
-        walker.nextNode();
-
-      while (node) {
-        const id =
-          getLibraryId(
-            node.textContent ??
-              "",
-          );
-
-        if (id) {
-          let current =
-            node.parentElement;
-
-          let best:
-            | Element
-            | null = null;
-
-          for (
-            let depth = 0;
-            depth < 14 &&
-            current;
-            depth += 1
-          ) {
-            const text =
-              current.textContent?.trim() ??
-              "";
-
-            const idCount =
-              countLibraryIds(
-                current,
-              );
-
-            if (
-              idCount === 1 &&
-              text.length >= 80 &&
-              text.length <= 25000
-            ) {
-              best = current;
-            }
-
-            if (
-              idCount > 1
-            ) {
-              break;
-            }
-
-            current =
-              current.parentElement;
-          }
-
-          if (
-            best &&
-            !candidateCards.has(
-              id,
-            )
-          ) {
-            candidateCards.set(
-              id,
-              best,
-            );
-          }
-        }
-
-        node =
-          walker.nextNode();
-      }
-
-      if (
-        candidateCards.size ===
-        0
-      ) {
-        const fallback =
-          Array.from(
-            document.querySelectorAll(
-              [
-                '[role="article"]',
-                "article",
-                '[data-testid*="ad" i]',
-                '[data-testid*="card" i]',
-              ].join(","),
-            ),
-          );
-
-        for (
-          const element of
-            fallback
-        ) {
-          const id =
-            getLibraryId(
-              element.textContent ??
-                "",
-            );
-
-          if (id) {
-            candidateCards.set(
-              id,
-              element,
-            );
-          }
-        }
-      }
-
-      const platformNames = [
-        "Facebook",
-        "Instagram",
-        "Messenger",
-        "Audience Network",
-        "Threads",
-      ];
-
-      const results: RawCard[] =
-        [];
-
-      /*
-       * ctaValues is intentionally passed into evaluate so
-       * the browser-side extraction has the exact same CTA set.
-       */
-      void ctaValues;
-
-      for (
-        const [
-          id,
-          card,
-        ] of candidateCards
-      ) {
-        const rawLines =
-          (
-            (
-              card as HTMLElement
-            ).innerText ??
-            ""
-          )
-            .split(
-              /\r?\n/,
-            )
-            .map(
-              normalize,
-            )
-            .filter(
-              Boolean,
-            );
-
-        const links =
-          Array.from(
-            card.querySelectorAll(
-              "a[href]",
-            ),
-          )
-            .map(
-              (
-                anchor,
-              ) => {
-                const href =
-                  anchor.getAttribute(
-                    "href",
-                  );
-
-                if (
-                  !href ||
-                  href.startsWith(
-                    "javascript:",
-                  )
-                ) {
-                  return null;
-                }
-
-                try {
-                  return {
-                    href:
-                      new URL(
-                        href,
-                        window.location.href,
-                      ).toString(),
-
-                    text:
-                      normalize(
-                        anchor.textContent ??
-                          "",
-                      ),
-                  };
-                } catch {
-                  return null;
-                }
-              },
-            )
-            .filter(
-              (
-                value,
-              ): value is {
-                href: string;
-                text: string;
-              } =>
-                value !== null,
-            );
-
-        const video =
-          card.querySelector(
-            "video",
-          ) as
-            | HTMLVideoElement
-            | null;
-
-        const image =
-          card.querySelector(
-            "img",
-          ) as
-            | HTMLImageElement
-            | null;
-
-        const joined =
-          rawLines
-            .join(" ")
-            .toLowerCase();
-
-        results.push({
-          id,
-
-          rawLines,
-
-          links,
-
-          imageUrl:
-            image?.getAttribute(
-              "src",
-            ) ?? null,
-
-          videoUrl:
-            video?.currentSrc ||
-            video?.getAttribute(
-              "src",
-            ) ||
-            null,
-
-          thumbnailUrl:
-            video?.getAttribute(
-              "poster",
-            ) ??
-            image?.getAttribute(
-              "src",
-            ) ??
-            null,
-
-          videoDurationSeconds:
-            video &&
-            Number.isFinite(
-              video.duration,
-            ) &&
-            video.duration > 0
-              ? Math.round(
-                  video.duration,
-                )
-              : null,
-
-          publisherPlatforms:
-            platformNames.filter(
-              (
-                platform,
-              ) =>
-                joined.includes(
-                  platform.toLowerCase(),
-                ),
-            ),
-        });
-      }
-
-      return results;
-    },
-    CTA_VALUES,
-  );
+function normalizeMatch(value: string | null | undefined): string {
+  return normalizedText(value).toLowerCase().normalize("NFKC").replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\s+/g, " ").trim();
 }
 
-/* =========================================================
- * DESTINATION
- * ======================================================= */
-
-function destinationFromLinks(
-  links: RawCard["links"],
-): string | null {
-  const blockedHosts = [
-    "facebook.com",
-    "instagram.com",
-    "doubleclick.net",
-    "googleadservices.com",
-  ];
-
-  const candidates =
-    links
-      .map(
-        (link) => {
-          try {
-            const url =
-              new URL(
-                link.href,
-              );
-
-            const host =
-              url.hostname
-                .replace(
-                  /^www\./i,
-                  "",
-                )
-                .toLowerCase();
-
-            if (
-              blockedHosts.some(
-                (blocked) =>
-                  host ===
-                    blocked ||
-                  host.endsWith(
-                    `.${blocked}`,
-                  ),
-              )
-            ) {
-              return null;
-            }
-
-            let score =
-              0;
-
-            if (
-              url.protocol ===
-              "https:"
-            ) {
-              score += 5;
-            }
-
-            if (
-              /\b(?:shop|buy|learn|order|get|offer|visit|discover)\b/i.test(
-                link.text,
-              )
-            ) {
-              score += 20;
-            }
-
-            return {
-              url:
-                url.toString(),
-
-              score,
-            };
-          } catch {
-            return null;
-          }
-        },
-      )
-      .filter(
-        (
-          value,
-        ): value is {
-          url: string;
-          score: number;
-        } =>
-          value !== null,
-      );
-
-  candidates.sort(
-    (a, b) =>
-      b.score -
-      a.score,
-  );
-
-  return (
-    candidates[0]?.url ??
-    null
-  );
-}
-
-/* =========================================================
- * RELEVANCE
- * ======================================================= */
-
-function isRelevant(
-  ad: CompetitorAd,
-  query: string,
-): boolean {
-  const normalizedQuery =
-    normalizeMatchText(
-      query,
-    );
-
-  if (!normalizedQuery) {
-    return false;
-  }
-
-  const compactQuery =
-    normalizedQuery.replace(
-      /\s+/g,
-      "",
-    );
-
-  const haystack =
-    [
-      ad.advertiserName,
-      ad.creatorName,
-      ad.headline,
-      ad.productName,
-      ad.primaryText,
-      ad.description,
-      ad.landingPage,
-    ]
-      .map(
-        normalizeMatchText,
-      )
-      .filter(
-        Boolean,
-      )
-      .join(" ");
-
-  if (!haystack) {
-    return false;
-  }
-
-  if (
-    haystack.includes(
-      normalizedQuery,
-    )
-  ) {
-    return true;
-  }
-
-  if (
-    compactQuery.length >= 3 &&
-    haystack
-      .replace(
-        /\s+/g,
-        "",
-      )
-      .includes(
-        compactQuery,
-      )
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-/* =========================================================
- * AD QUALITY
- * ======================================================= */
-
-function getAdQualityScore(
-  ad: CompetitorAd,
-): number {
-  let score = 0;
-
-  if (
-    ad.advertiserName &&
-    ad.advertiserName !==
-      "Unknown advertiser"
-  ) {
-    score += 10;
-  }
-
-  if (ad.creatorName) {
-    score += 3;
-  }
-
-  if (ad.primaryText) {
-    score += 5;
-  }
-
-  if (ad.headline) {
-    score += 5;
-  }
-
-  if (ad.callToAction) {
-    score += 3;
-  }
-
-  if (ad.landingPage) {
-    score += 5;
-  }
-
-  if (ad.imageUrl) {
-    score += 4;
-  }
-
-  if (ad.videoUrl) {
-    score += 6;
-  }
-
-  if (ad.thumbnailUrl) {
-    score += 3;
-  }
-
-  if (ad.firstSeen) {
-    score += 2;
-  }
-
-  if (ad.lastSeen) {
-    score += 2;
-  }
-
-  if (ad.offer) {
-    score += 2;
-  }
-
-  return score;
-}
-
-/* =========================================================
- * NORMALIZE CARD
- * ======================================================= */
-
-function normalizeCard(
-  card: RawCard,
-  query: string,
-  country: string,
-  advertiserPageId?: string | null,
-): CompetitorAd {
-  const identity =
-    extractAdvertiserIdentity(
-      card.rawLines,
-    );
-
-  const primaryText =
-    extractPrimaryText(
-      card.rawLines,
-      CTA_VALUES,
-    );
-
-  const productName =
-    extractProductName(
-      card.rawLines,
-      card.links,
-      CTA_VALUES,
-    );
-
-  const callToAction =
-    extractCallToAction(
-      card.rawLines,
-      CTA_VALUES,
-    );
-
-  const dates =
-    extractDateRange(
-      card.rawLines,
-    );
-
-  const offer =
-    extractOffer(
-      primaryText,
-      card.rawLines,
-    );
-
-  const firstSeen =
-    dates.firstSeen;
-
-  const lastSeen =
-    dates.lastSeen;
-
-  const creativeType:
-    AdCreativeType =
-      card.videoUrl
-        ? "video"
-        : card.imageUrl
-          ? "image"
-          : "unknown";
-
-  /*
-   * CompetitorAd requires advertiserName to be string.
-   * The parser may legitimately return null, so normalize it.
-   */
-const advertiserName =
-  repairMojibake(
-    normalizeWhitespace(
-      identity.advertiserName ??
-        "Unknown advertiser",
-    ),
-  ) ??
-  "Unknown advertiser";
-
-  const creatorName =
-    identity.creatorName
-      ? repairMojibake(
-          normalizeWhitespace(
-            identity.creatorName,
-          ),
-        )
-      : null;
-
-  const normalizedPrimaryText =
-    primaryText
-      ? repairMojibake(
-          normalizeExtractedText(
-            primaryText,
-          ),
-        )
-      : null;
-
-  const normalizedProductName =
-    productName
-      ? repairMojibake(
-          normalizeWhitespace(
-            productName,
-          ),
-        )
-      : null;
-
-  const normalizedCta =
-    callToAction
-      ? repairMojibake(
-          normalizeWhitespace(
-            callToAction,
-          ),
-        )
-      : null;
-
-  const priceLine =
-    card.rawLines.find(
-      (line) =>
-        /₹|INR|Rs\.?/i.test(
-          line,
-        ),
-    ) ?? "";
-
-  const productPrice =
-    parsePrice(
-      priceLine,
-    );
-
-  /*
-   * Do NOT assign null to engagementPotentialScore.
-   * CompetitorAd declares it as number | undefined.
-   *
-   * We therefore omit it when unavailable.
-   */
-  const baseAd: CompetitorAd = {
-    id:
-      card.id,
-
-    platform:
-      "meta",
-
-    advertiserName,
-
-    creatorName,
-
-    partnershipType:
-      identity.partnershipType,
-
-    country,
-
-    creativeType,
-
-    imageUrl:
-      normalizeUrl(
-        card.imageUrl,
-      ),
-
-    videoUrl:
-      normalizeUrl(
-        card.videoUrl,
-      ),
-
-    thumbnailUrl:
-      normalizeUrl(
-        card.thumbnailUrl,
-      ),
-
-    videoDurationSeconds:
-      card.videoDurationSeconds,
-
-    primaryText:
-      normalizedPrimaryText,
-
-    headline:
-      normalizedProductName,
-
-    description:
-      null,
-
-    callToAction:
-      normalizedCta,
-
-    firstSeen,
-
-    lastSeen,
-
-    isActive:
-      extractActiveStatus(
-        card.rawLines,
-      ),
-
-    publisherPlatforms:
-      card.publisherPlatforms,
-
-    landingPage:
-      destinationFromLinks(
-        card.links,
-      ),
-
-    sourceUrl:
-      buildLibraryUrl(
-        query,
-        country,
-        advertiserPageId,
-      ),
-
-    productName:
-      normalizedProductName,
-
-    productPrice,
-
-    currency:
-      productPrice !==
-      null ||
-      /₹|INR|Rs\.?/i.test(
-        card.rawLines.join(
-          " ",
-        ),
-      )
-        ? "INR"
-        : null,
-
-    offer,
-
-    runningDays:
-      calculateRunningDays(
-        firstSeen,
-        lastSeen,
-      ),
-
-    creativeScore:
-      null,
-
-    transcript:
-      null,
-
-    transcriptStatus:
-      creativeType === "video"
-        ? "pending"
-        : "not_video",
-
-    metricSources: {
-      creativeScore:
-        "unavailable",
-
-      longevityScore:
-        "derived",
-
-      relevanceScore:
-        "derived",
-
-      engagementPotentialScore:
-        "unavailable",
-
-      reach:
-        "unavailable",
-
-      clicks:
-        "unavailable",
-
-      ctr:
-        "unavailable",
-
-      impressions:
-        "unavailable",
-    },
-
-    metadata: {
-      extractionMethod:
-        "meta-incremental-visible-card-v2",
-
-      searchQuery:
-        query,
-
-      country,
-
-      rawLines:
-        card.rawLines,
-
-      mediaSource:
-        card.videoUrl
-          ? "video"
-          : card.imageUrl
-            ? "image"
-            : "unknown",
-
-      languageSource:
-        "heuristic",
-
-      geographySource:
-        "unavailable",
-
-      providerSource:
-        "meta_ad_library",
-    },
-  };
-
-  /*
-   * Add a derived longevity score only when running days
-   * actually exist.
-   *
-   * This avoids a null assignment to a number field.
-   */
-  if (
-    typeof baseAd.runningDays ===
-      "number" &&
-    baseAd.runningDays > 0
-  ) {
-    baseAd.longevityScore =
-      Math.min(
-        100,
-        Math.round(
-          baseAd.runningDays /
-            3.65,
-        ),
-      );
-  }
-
-  /*
-   * Relevance score is derived from the query match.
-   * It is NOT platform performance.
-   */
-  baseAd.relevanceScore =
-    isRelevant(
-      baseAd,
-      query,
-    )
-      ? 100
-      : 0;
-
-  return baseAd;
-}
-
-/* =========================================================
- * FINGERPRINT
- * ======================================================= */
-
-function fingerprint(
-  ad: CompetitorAd,
-): string {
+function isLikelyChallenge(text: string): boolean {
+  const t = text.toLowerCase();
   return [
-    ad.platform,
-
-    normalizeMatchText(
-      ad.advertiserName,
-    ),
-
-    normalizeMatchText(
-      ad.headline,
-    ),
-
-    normalizeMatchText(
-      ad.primaryText,
-    ),
-
-    normalizeMatchText(
-      ad.callToAction,
-    ),
-
-    normalizeMatchText(
-      ad.landingPage,
-    ),
-
-    ad.creativeType ??
-      "",
-
-    ad.imageUrl ??
-      "",
-
-    ad.videoUrl ??
-      "",
-  ].join("|");
+    "log in to facebook",
+    "you must log in",
+    "security check",
+    "unusual activity",
+    "confirm you are not a robot",
+    "temporarily blocked",
+  ].some((x) => t.includes(x));
 }
 
-/* =========================================================
- * DEDUPLICATION
- * ======================================================= */
-
-function deduplicateAds(
-  ads: CompetitorAd[],
-): CompetitorAd[] {
-  /*
-   * First preserve provider/library identity.
-   */
-  const byId =
-    new Map<
-      string,
-      CompetitorAd
-    >();
-
-  for (
-    const ad of ads
-  ) {
-    const idKey =
-      [
-        ad.platform,
-        ad.id,
-      ].join(":");
-
-    const existing =
-      byId.get(
-        idKey,
-      );
-
-    if (!existing) {
-      byId.set(
-        idKey,
-        ad,
-      );
-
-      continue;
-    }
-
-    if (
-      getAdQualityScore(ad) >
-      getAdQualityScore(
-        existing,
-      )
-    ) {
-      byId.set(
-        idKey,
-        ad,
-      );
-    }
-  }
-
-  /*
-   * Then collapse true identical creatives.
-   */
-  const byFingerprint =
-    new Map<
-      string,
-      CompetitorAd
-    >();
-
-  for (
-    const ad of byId.values()
-  ) {
-    const key =
-      fingerprint(
-        ad,
-      );
-
-    const existing =
-      byFingerprint.get(
-        key,
-      );
-
-    if (!existing) {
-      byFingerprint.set(
-        key,
-        ad,
-      );
-
-      continue;
-    }
-
-    if (
-      getAdQualityScore(ad) >
-      getAdQualityScore(
-        existing,
-      )
-    ) {
-      byFingerprint.set(
-        key,
-        ad,
-      );
-    }
-  }
-
-  return Array.from(
-    byFingerprint.values(),
-  );
-}
-
-/* =========================================================
- * SCRAPE ONCE
- * ======================================================= */
-
-async function scrapeMetaOnce(
-  query: string,
-  country: string,
-  collectionDepth: "quick" | "deep",
-  advertiserPageId?: string | null,
-):Promise<CompetitorAd[]> {
-  const currentBrowser =
-    await getMetaBrowser();
-
-  const context:
-    | BrowserContext =
-    await currentBrowser.newContext(
-      {
-        locale:
-          "en-IN",
-
-        viewport: {
-          width: 1440,
-          height: 1000,
-        },
-
-        extraHTTPHeaders: {
-          "Accept-Language":
-            "en-IN,en;q=0.9",
-        },
-      },
-    );
-
-  const page =
-    await context.newPage();
-
-  const collected =
-    new Map<
-      string,
-      CompetitorAd
-    >();
-
-  let stableRounds = 0;
-
-  let previousCount = 0;
-
-  const isQuickCollection =
-    collectionDepth === "quick";
-
-  const initialWaitMs =
-    isQuickCollection
-      ? QUICK_INITIAL_WAIT_MS
-      : INITIAL_WAIT_MS;
-
-  const scrollWaitMs =
-    isQuickCollection
-      ? QUICK_SCROLL_WAIT_MS
-      : SCROLL_WAIT_MS;
-
-  const postScrollWaitMs =
-    isQuickCollection
-      ? QUICK_POST_SCROLL_WAIT_MS
-      : POST_SCROLL_WAIT_MS;
-
-  const maxScrolls =
-    isQuickCollection
-      ? QUICK_MAX_SCROLLS
-      : DEFAULT_MAX_SCROLLS;
-
-  const targetLibraryIds =
-    isQuickCollection
-      ? QUICK_TARGET_LIBRARY_IDS
-      : TARGET_LIBRARY_IDS;
-
-  const stableRoundLimit =
-    isQuickCollection
-      ? QUICK_STABLE_ROUNDS
-      : STABLE_ROUNDS;
-
-  try {
-    const targetUrl =
-      buildLibraryUrl(
-        query,
-        country,
-        advertiserPageId,
-      );
-
-    console.info(
-      "[DeepMetaProvider] Navigating Meta Ad Library:",
-      {
-        query,
-        country,
-        advertiserPageId: advertiserPageId ?? null,
-        targetUrl,
-      },
-    );
-
-    await page.goto(
-      targetUrl,
-      {
-        waitUntil:
-          "domcontentloaded",
-
-        timeout:
-          60_000,
-      },
-    );
-
-    await page.waitForTimeout(
-      initialWaitMs,
-    );
-
-    for (
-      let scroll = 0;
-      scroll <
-        maxScrolls;
-      scroll += 1
-    ) {
-      const cards =
-        await extractVisibleCards(
-          page,
-        );
-
-      let added =
-        0;
-
-      for (
-        const card of
-          cards
-      ) {
-        const ad =
-          normalizeCard(
-            card,
-            query,
-            country,
-            advertiserPageId,
-          );
-
-        if (
-          !isRelevant(
-            ad,
-            query,
-          )
-        ) {
-          continue;
+async function extractVisibleCards(page: Page): Promise<RawCard[]> {
+  return page.evaluate(() => {
+    const clean = (v: string) => v.replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim();
+    const getId = (v: string) => v.match(/(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i)?.[1] ?? null;
+    const countIds = (el: Element) => {
+      const all = (el.textContent ?? "").match(/(?:Library ID|लाइब्रेरी ID):\s*\d+/gi) ?? [];
+      return new Set(all.map((x) => x.match(/(\d+)/)?.[1] ?? "")).size;
+    };
+    const cards = new Map<string, Element>();
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const id = getId(node.textContent ?? "");
+      if (id) {
+        let el = node.parentElement;
+        let best: Element | null = null;
+        for (let depth = 0; depth < 16 && el; depth += 1) {
+          const text = el.textContent?.trim() ?? "";
+          const ids = countIds(el);
+          if (ids === 1 && text.length >= 60 && text.length <= 30_000) best = el;
+          if (ids > 1) break;
+          el = el.parentElement;
         }
-
-        const existing =
-          collected.get(
-            ad.id,
-          );
-
-        if (!existing) {
-          collected.set(
-            ad.id,
-            ad,
-          );
-
-          added += 1;
-
-          continue;
-        }
-
-        if (
-          getAdQualityScore(
-            ad,
-          ) >
-          getAdQualityScore(
-            existing,
-          )
-        ) {
-          collected.set(
-            ad.id,
-            ad,
-          );
-        }
+        if (best) cards.set(id, best);
       }
-
-      const currentCount =
-        collected.size;
-
-      console.info(
-        "[DeepMetaProvider] Collection progress:",
-        {
-          query,
-          country,
-          collectionDepth,
-          scroll:
-            scroll + 1,
-          visible:
-            cards.length,
-          added,
-          collected:
-            currentCount,
-        },
-      );
-
-      /*
-       * Quick search is for the user's first-page experience.
-       * Stop as soon as we have a useful initial batch.
-       */
-      if (
-        isQuickCollection &&
-        currentCount >= 12
-      ) {
-        break;
-      }
-
-      if (
-        currentCount >=
-        targetLibraryIds
-      ) {
-        break;
-      }
-
-      if (
-        currentCount ===
-        previousCount
-      ) {
-        stableRounds += 1;
-      } else {
-        stableRounds = 0;
-      }
-
-      previousCount =
-        currentCount;
-
-      if (
-        stableRounds >=
-          stableRoundLimit &&
-        currentCount > 0
-      ) {
-        break;
-      }
-
-      await page.mouse.wheel(
-        0,
-        2400,
-      );
-
-      await page.waitForTimeout(
-        scrollWaitMs,
-      );
+      node = walker.nextNode();
     }
-
-    /*
-     * A final extraction is useful for deep collection, but it is
-     * intentionally skipped for the quick first-page path.
-     * That keeps the user-triggered request as fast as possible.
-     */
-    if (!isQuickCollection) {
-      await page.waitForTimeout(
-        postScrollWaitMs,
-      );
-
-      const finalCards =
-        await extractVisibleCards(
-          page,
-        );
-
-      for (
-        const card of
-          finalCards
-      ) {
-        const ad =
-          normalizeCard(
-            card,
-            query,
-            country,
-            advertiserPageId,
-          );
-
-        if (
-          !isRelevant(
-            ad,
-            query,
-          )
-        ) {
-          continue;
-        }
-
-        const existing =
-          collected.get(
-            ad.id,
-          );
-
-        if (
-          !existing ||
-          getAdQualityScore(
-            ad,
-          ) >
-            getAdQualityScore(
-              existing,
-            )
-        ) {
-          collected.set(
-            ad.id,
-            ad,
-          );
-        }
+    if (!cards.size) {
+      for (const el of Array.from(document.querySelectorAll('article,[role="article"],[data-testid*="ad" i]'))) {
+        const id = getId(el.textContent ?? "");
+        if (id) cards.set(id, el);
       }
     }
-
-    return Array.from(
-      collected.values(),
-    );
-  } finally {
-    await context
-      .close()
-      .catch(
-        () => undefined,
-      );
-  }
-}
-
-/* =========================================================
- * PROVIDER
- * ======================================================= */
-
-export const deepMetaProvider:
-  AdProvider = {
-    platform:
-      "meta",
-
-    async search(
-      input: AdSearchInput,
-    ): Promise<ProviderResult> {
-      const query =
-        input.query?.trim();
-
-      const country =
-        input.country
-          ?.trim()
-          .toUpperCase() ||
-        DEFAULT_COUNTRY;
-
-      if (!query) {
-        return {
-          ads: [],
-        };
-      }
-
-      for (
-        let attempt = 1;
-        attempt <=
-        MAX_ATTEMPTS;
-        attempt += 1
-      ) {
-        try {
-          const startedAt =
-            Date.now();
-
-          const collectionDepth =
-            input.collectionDepth ===
-            "quick"
-              ? "quick"
-              : "deep";
-
-          const scraped =
-            await scrapeMetaOnce(
-              query,
-              country,
-              collectionDepth,
-              input.advertiserPageId,
-            );
-
-          const ads =
-            deduplicateAds(
-              scraped,
-            );
-
-          ads.sort(
-            (a, b) => {
-              const activeDifference =
-                Number(
-                  b.isActive ??
-                    false,
-                ) -
-                Number(
-                  a.isActive ??
-                    false,
-                );
-
-              if (
-                activeDifference !==
-                0
-              ) {
-                return activeDifference;
-              }
-
-              return (
-                (b.runningDays ??
-                  0) -
-                (a.runningDays ??
-                  0)
-              );
-            },
-          );
-
-          console.info(
-            "[DeepMetaProvider] Collection complete:",
-            {
-              query,
-              country,
-              collectionDepth,
-              advertiserPageId:
-                input.advertiserPageId ?? null,
-              ads:
-                ads.length,
-              attempt,
-              durationMs:
-                Date.now() -
-                startedAt,
-            },
-          );
-
-          return {
-            ads,
-          };
-        } catch (error) {
-          console.error(
-            "[DeepMetaProvider] Attempt failed:",
-            {
-              attempt,
-              query,
-              country,
-              error:
-                error instanceof
-                Error
-                  ? {
-                      name:
-                        error.name,
-
-                      message:
-                        error.message,
-
-                      stack:
-                        error.stack,
-                    }
-                  : error,
-            },
-          );
-
-          if (
-            attempt <
-            MAX_ATTEMPTS
-          ) {
-            await new Promise<void>(
-              (
-                resolve,
-              ) => {
-                setTimeout(
-                  resolve,
-                  attempt *
-                    1000,
-                );
-              },
-            );
-          }
-        }
-      }
-
-      console.warn(
-        "[DeepMetaProvider] All attempts failed:",
-        {
-          query,
-          country,
-        },
-      );
-
+    const platformNames = ["Facebook", "Instagram", "Messenger", "Audience Network", "Threads"];
+    return Array.from(cards.entries()).map(([id, card]) => {
+      const rawLines = ((card as HTMLElement).innerText ?? "").split(/\r?\n/).map(clean).filter(Boolean);
+      const links = Array.from(card.querySelectorAll("a[href]"))
+        .map((a) => {
+          const href = a.getAttribute("href");
+          if (!href || href.startsWith("javascript:")) return null;
+          try {
+            return { href: new URL(href, window.location.href).toString(), text: clean(a.textContent ?? "") };
+          } catch { return null; }
+        })
+        .filter((x): x is { href: string; text: string } => Boolean(x));
+      const video = card.querySelector("video") as HTMLVideoElement | null;
+      const img = card.querySelector("img") as HTMLImageElement | null;
+      const source = video?.querySelector("source[src]")?.getAttribute("src") ?? null;
+      const imgCandidates = Array.from(card.querySelectorAll("img"))
+        .map((x) => x.getAttribute("src") || x.getAttribute("data-src") || x.getAttribute("data-original"))
+        .filter((x): x is string => Boolean(x));
+      const joined = rawLines.join(" ").toLowerCase();
       return {
-        ads: [],
+        id,
+        rawLines,
+        links,
+        imageUrl: imgCandidates[0] ?? img?.currentSrc ?? img?.src ?? null,
+        videoUrl: video?.currentSrc || source || video?.getAttribute("src") || null,
+        thumbnailUrl: video?.poster || imgCandidates[0] || null,
+        videoDurationSeconds: video && Number.isFinite(video.duration) && video.duration > 0 ? Math.round(video.duration) : null,
+        publisherPlatforms: platformNames.filter((name) => joined.includes(name.toLowerCase())),
       };
+    });
+  });
+}
+
+function destinationFromLinks(links: RawCard["links"]): string | null {
+  for (const link of links) {
+    const url = normalizeUrl(link.href);
+    if (!url) continue;
+    const host = new URL(url).hostname.toLowerCase();
+    if (host.includes("facebook.com/ads") || host.includes("facebook.com")) continue;
+    if (host.includes("instagram.com")) continue;
+    return url;
+  }
+  return links.map((x) => normalizeUrl(x.href)).find(Boolean) ?? null;
+}
+
+function inferHeadline(lines: string[], primaryText: string | null, cta: string | null): string | null {
+  for (const line of lines) {
+    if (!line || line === primaryText || line === cta) continue;
+    if (/^(Library ID|लाइब्रेरी ID):\s*\d+$/i.test(line)) continue;
+    if (/^(Active|Inactive|Image|Video|Carousel)$/i.test(line)) continue;
+    if (/^\d+:\d{2}\s*\/\s*\d+:\d{2}$/.test(line)) continue;
+    if (/^\d{1,2}\s+[A-Za-z]+\s+\d{4}/i.test(line)) continue;
+    if (line.length >= 3 && line.length <= 140) return line;
+  }
+  return null;
+}
+
+function normalizeCard(card: RawCard, input: AdSearchInput, sourceUrl: string): CompetitorAd | null {
+  const lines = card.rawLines.map(normalizedText).filter(Boolean);
+  if (!lines.length) return null;
+  const identity = extractAdvertiserIdentity(lines);
+  const primaryText = extractPrimaryText(lines) || null;
+  const cta = extractCallToAction(lines, CTA_VALUES) || null;
+  const dates = extractDateRange(lines);
+  const isActive = extractActiveStatus(lines);
+  const productName = extractProductName(lines) || null;
+  const offer = extractOffer(primaryText,lines) || null;
+  const landingPage = destinationFromLinks(card.links);
+  const imageUrl = normalizeUrl(card.imageUrl);
+  const videoUrl = normalizeUrl(card.videoUrl);
+  const thumbnailUrl = normalizeUrl(card.thumbnailUrl) || imageUrl;
+  const creativeType: AdCreativeType = videoUrl ? "video" : imageUrl ? "image" : "unknown";
+  const runningDays = calculateRunningDays(dates.firstSeen, dates.lastSeen);
+  const compactCopy = normalizeWhitespace(primaryText ?? "");
+  const price = parsePrice(lines.join(" "));
+
+  if (!identity.advertiserName && !primaryText && !landingPage) return null;
+
+  return {
+    id: card.id,
+    platform: "meta",
+    advertiserName: normalizedText(identity.advertiserName) || input.query.trim(),
+    advertiserId: input.advertiserPageId ?? null,
+    creatorName: normalizedText(identity.creatorName) || null,
+    partnershipType: identity.partnershipType,
+    country: (input.country ?? DEFAULT_COUNTRY).toUpperCase(),
+    creativeType,
+    imageUrl,
+    videoUrl,
+    thumbnailUrl,
+    videoDurationSeconds: card.videoDurationSeconds,
+    primaryText: compactCopy || null,
+    headline: inferHeadline(lines, primaryText, cta),
+    description: null,
+    callToAction: cta,
+    firstSeen: dates.firstSeen,
+    lastSeen: dates.lastSeen,
+    isActive,
+    publisherPlatforms: card.publisherPlatforms.length ? card.publisherPlatforms : ["Facebook", "Instagram"],
+    landingPage,
+    sourceUrl,
+    productName,
+    productPrice: price,
+    currency: price != null ? "INR" : null,
+    offer,
+    runningDays,
+    transcript: null,
+    transcriptStatus: creativeType === "video" ? "unavailable" : "not_video",
+    metricSources: {
+      creativeScore: "derived",
+      longevityScore: "derived",
+      relevanceScore: "derived",
+      engagementPotentialScore: "unavailable",
+      reach: "unavailable",
+      clicks: "unavailable",
+      ctr: "unavailable",
+      impressions: "unavailable",
+    },
+    longevityScore: Math.min(100, runningDays > 0 ? 25 + Math.min(75, runningDays * 1.25) : 0),
+    relevanceScore: 0,
+    engagementPotentialScore: 0,
+    intelligence: { rankingReasons: [], badges: [] },
+    metadata: {
+      extractionMethod: "meta-library-dom-v3",
+      providerSource: "meta_ad_library",
+      collectedAt: new Date().toISOString(),
+      searchMode: input.mode ?? "advertiser",
+      collectionDepth: input.collectionDepth ?? "deep",
     },
   };
+}
 
-;
+function isRelevant(ad: CompetitorAd, input: AdSearchInput): boolean {
+  if (input.advertiserPageId) return true;
+  if ((input.mode ?? "advertiser") === "keyword") return true;
+  const q = normalizeMatch(input.query);
+  if (!q) return true;
+  const haystack = normalizeMatch([ad.advertiserName, ad.primaryText, ad.headline, ad.productName, ad.offer, ad.landingPage].filter(Boolean).join(" "));
+  return haystack.includes(q) || q.split(" ").filter(Boolean).every((token) => haystack.includes(token));
+}
+
+function dedupeAds(ads: CompetitorAd[]): CompetitorAd[] {
+  const seen = new Set<string>();
+  const result: CompetitorAd[] = [];
+  for (const ad of ads) {
+    const fingerprint = [
+      ad.id,
+      ad.advertiserName,
+      ad.headline,
+      ad.primaryText,
+      ad.callToAction,
+      ad.landingPage,
+      ad.creativeType,
+      ad.imageUrl,
+      ad.videoUrl,
+    ].map((v) => normalizeMatch(String(v ?? ""))).join("|");
+    if (seen.has(fingerprint)) continue;
+    seen.add(fingerprint);
+    result.push(ad);
+  }
+  return result;
+}
+
+async function scrapeOnce(input: AdSearchInput): Promise<CompetitorAd[]> {
+  const pageUrl = buildLibraryUrl(input);
+  const quick = input.collectionDepth !== "deep";
+  const maxScrolls = quick ? QUICK_MAX_SCROLLS : DEEP_MAX_SCROLLS;
+  const target = quick ? QUICK_TARGET : DEEP_TARGET;
+  const stableTarget = quick ? QUICK_STABLE_ROUNDS : DEEP_STABLE_ROUNDS;
+
+  const b = await getBrowser();
+  let context: BrowserContext | null = null;
+  try {
+    context = await b.newContext({
+      locale: "en-IN",
+      viewport: { width: 1440, height: 1000 },
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36",
+    });
+    await context.route("**/*", async (route) => {
+      const resource = route.request().resourceType();
+      if (["font", "media"].includes(resource)) return route.continue();
+      if (["websocket"].includes(resource)) return route.abort();
+      return route.continue();
+    });
+    const page = await context.newPage();
+    page.setDefaultTimeout(15_000);
+    page.setDefaultNavigationTimeout(NAV_TIMEOUT);
+
+    await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+    await page.waitForTimeout(INITIAL_WAIT);
+
+    const bodyText = await page.locator("body").innerText().catch(() => "");
+    if (isLikelyChallenge(bodyText)) {
+      throw new Error("Meta Ad Library is not accessible from the collector session. The source returned a login/security/challenge page.");
+    }
+
+    const collected = new Map<string, CompetitorAd>();
+    let stableRounds = 0;
+    let previousCount = 0;
+
+    for (let scroll = 0; scroll <= maxScrolls; scroll += 1) {
+      const raw = await extractVisibleCards(page);
+      let added = 0;
+      for (const card of raw) {
+        const ad = normalizeCard(card, input, page.url() || pageUrl);
+        if (!ad || !isRelevant(ad, input)) continue;
+        if (!collected.has(ad.id)) {
+          collected.set(ad.id, ad);
+          added += 1;
+        }
+      }
+
+      if (collected.size >= target) break;
+      if (added === 0 && collected.size === previousCount) stableRounds += 1;
+      else stableRounds = 0;
+      previousCount = collected.size;
+      if (stableRounds >= stableTarget) break;
+
+      await page.evaluate(() => window.scrollBy({ top: Math.max(window.innerHeight * 1.35, 900), behavior: "instant" }));
+      await page.waitForTimeout(SCROLL_WAIT);
+    }
+
+    const finalRaw = await extractVisibleCards(page);
+    for (const card of finalRaw) {
+      const ad = normalizeCard(card, input, page.url() || pageUrl);
+      if (ad && isRelevant(ad, input)) collected.set(ad.id, ad);
+    }
+
+    return dedupeAds(Array.from(collected.values())).sort((a, b) => {
+      const active = Number(Boolean(b.isActive)) - Number(Boolean(a.isActive));
+      if (active) return active;
+      return Number(b.runningDays ?? 0) - Number(a.runningDays ?? 0);
+    });
+  } finally {
+    if (context) await context.close().catch(() => undefined);
+  }
+}
+
+export const deepMetaProvider: AdProvider = {
+  platform: "meta",
+  async search(input: AdSearchInput): Promise<ProviderResult> {
+    const normalized: AdSearchInput = {
+      ...input,
+      query: input.query.trim(),
+      country: (input.country ?? DEFAULT_COUNTRY).trim().toUpperCase(),
+      mode: input.mode === "keyword" ? "keyword" : "advertiser",
+      collectionDepth: input.collectionDepth === "quick" ? "quick" : "deep",
+      advertiserPageId: input.advertiserPageId?.trim() || null,
+    };
+
+    if (normalized.query.length < 2) return { ads: [] };
+
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const ads = await scrapeOnce(normalized);
+        console.info("[MetaProvider] collection complete", {
+          attempt,
+          query: normalized.query,
+          pageId: normalized.advertiserPageId ?? null,
+          depth: normalized.collectionDepth,
+          count: ads.length,
+        });
+        return { ads };
+      } catch (error) {
+        lastError = error;
+        console.error("[MetaProvider] collection attempt failed", {
+          attempt,
+          query: normalized.query,
+          pageId: normalized.advertiserPageId ?? null,
+          depth: normalized.collectionDepth,
+          error: error instanceof Error ? error.message : error,
+        });
+        if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error("Meta collection failed.");
+  },
+};
