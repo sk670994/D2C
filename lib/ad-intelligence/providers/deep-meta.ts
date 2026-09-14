@@ -35,9 +35,9 @@ const DEFAULT_COUNTRY = "IN";
 const QUICK_MAX_SCROLLS = 14;
 const QUICK_TARGET = 24;
 const QUICK_STABLE_ROUNDS = 3;
-const DEEP_MAX_SCROLLS = 180;
+const DEEP_MAX_SCROLLS = 360;
 const DEEP_TARGET = 1200;
-const DEEP_STABLE_ROUNDS = 8;
+const DEEP_STABLE_ROUNDS = 18;
 const NAV_TIMEOUT = 45_000;
 const INITIAL_WAIT = 2_500;
 const SCROLL_WAIT = 650;
@@ -367,6 +367,105 @@ function dedupeAds(ads: CompetitorAd[]): CompetitorAd[] {
   return result;
 }
 
+async function clickPaginationControls(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const candidates = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        'button, [role="button"], a[role="button"]',
+      ),
+    );
+
+    const labels = [
+      "see more ads",
+      "load more ads",
+      "more ads",
+      "show more ads",
+      "load more",
+      "see more",
+    ];
+
+    let clicked = 0;
+    for (const element of candidates) {
+      const text = (element.innerText || element.textContent || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+
+      if (!text || !labels.some((label) => text === label || text.includes(label))) {
+        continue;
+      }
+
+      const rect = element.getBoundingClientRect();
+      const visible =
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.bottom >= 0 &&
+        rect.top <= window.innerHeight;
+
+      if (!visible) continue;
+
+      element.click();
+      clicked += 1;
+      if (clicked >= 3) break;
+    }
+
+    return clicked;
+  }).catch(() => 0);
+}
+
+async function scrollToRevealMore(page: Page): Promise<{
+  moved: boolean;
+  scrollHeight: number;
+  maxScrollTop: number;
+}> {
+  return page.evaluate(() => {
+    const beforeY = window.scrollY;
+    const beforeHeight = document.documentElement.scrollHeight;
+
+    const scrollables = Array.from(document.querySelectorAll<HTMLElement>("*"))
+      .filter((element) => {
+        const style = window.getComputedStyle(element);
+        if (!["auto", "scroll"].includes(style.overflowY)) return false;
+        return element.scrollHeight > element.clientHeight + 240;
+      })
+      .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight));
+
+    const primary = scrollables[0];
+
+    if (primary) {
+      const nextTop = Math.min(
+        primary.scrollTop + Math.max(primary.clientHeight * 0.82, 850),
+        primary.scrollHeight - primary.clientHeight,
+      );
+      primary.scrollTop = nextTop;
+    }
+
+    window.scrollBy({
+      top: Math.max(window.innerHeight * 0.92, 820),
+      behavior: "instant",
+    });
+
+    const afterY = window.scrollY;
+    const afterHeight = Math.max(
+      document.documentElement.scrollHeight,
+      primary?.scrollHeight ?? 0,
+    );
+
+    return {
+      moved: afterY !== beforeY || afterHeight !== beforeHeight,
+      scrollHeight: afterHeight,
+      maxScrollTop: Math.max(
+        0,
+        afterHeight - window.innerHeight,
+      ),
+    };
+  }).catch(() => ({
+    moved: false,
+    scrollHeight: 0,
+    maxScrollTop: 0,
+  }));
+}
+
 async function scrapeOnce(input: AdSearchInput): Promise<CompetitorAd[]> {
   const pageUrl = buildLibraryUrl(input);
   const quick = input.collectionDepth !== "deep";
@@ -403,27 +502,86 @@ async function scrapeOnce(input: AdSearchInput): Promise<CompetitorAd[]> {
     const collected = new Map<string, CompetitorAd>();
     let stableRounds = 0;
     let previousCount = 0;
+    let previousScrollHeight = 0;
+    let previousMaxScrollTop = 0;
+    let lastProgressAt = Date.now();
 
     for (let scroll = 0; scroll <= maxScrolls; scroll += 1) {
+      // Meta's Ad Library can virtualize the results list. We therefore
+      // accumulate IDs across scroll positions instead of assuming the
+      // current DOM contains the whole dataset.
       const raw = await extractVisibleCards(page);
+
       let added = 0;
       for (const card of raw) {
         const ad = normalizeCard(card, input, page.url() || pageUrl);
         if (!ad || !isRelevant(ad, input)) continue;
+
         if (!collected.has(ad.id)) {
           collected.set(ad.id, ad);
           added += 1;
         }
       }
 
-      if (collected.size >= target) break;
-      if (added === 0 && collected.size === previousCount) stableRounds += 1;
-      else stableRounds = 0;
-      previousCount = collected.size;
-      if (stableRounds >= stableTarget) break;
+      // Some versions of the library expose an explicit paging control
+      // instead of only lazy-loading when the scroll position changes.
+      const clicked = quick ? 0 : await clickPaginationControls(page);
+      if (clicked > 0) {
+        await page.waitForTimeout(Math.min(900, SCROLL_WAIT));
+      }
 
-      await page.evaluate(() => window.scrollBy({ top: Math.max(window.innerHeight * 1.35, 900), behavior: "instant" }));
+      if (collected.size >= target) break;
+
+      const movement = await scrollToRevealMore(page);
+      const madeProgress =
+        added > 0 ||
+        clicked > 0 ||
+        movement.moved ||
+        movement.scrollHeight > previousScrollHeight ||
+        movement.maxScrollTop > previousMaxScrollTop;
+
+      if (madeProgress) {
+        stableRounds = 0;
+        lastProgressAt = Date.now();
+      } else if (collected.size === previousCount) {
+        stableRounds += 1;
+      } else {
+        stableRounds = 0;
+      }
+
+      previousCount = collected.size;
+      previousScrollHeight = movement.scrollHeight;
+      previousMaxScrollTop = movement.maxScrollTop;
+
+      // Quick search should remain fast. Deep search should only stop after
+      // a much longer genuine plateau, not after a handful of virtualized
+      // DOM passes.
+      if (quick && stableRounds >= stableTarget) break;
+
+      if (
+        !quick &&
+        stableRounds >= stableTarget &&
+        Date.now() - lastProgressAt > stableTarget * SCROLL_WAIT
+      ) {
+        break;
+      }
+
       await page.waitForTimeout(SCROLL_WAIT);
+    }
+
+    // Final deep pass: a small extra tail sweep catches cards that were
+    // inserted after the last scroll event or after a "See more" click.
+    if (!quick) {
+      for (let tail = 0; tail < 4; tail += 1) {
+        await page.waitForTimeout(400);
+        await clickPaginationControls(page);
+        const tailRaw = await extractVisibleCards(page);
+        for (const card of tailRaw) {
+          const ad = normalizeCard(card, input, page.url() || pageUrl);
+          if (ad && isRelevant(ad, input)) collected.set(ad.id, ad);
+        }
+        await scrollToRevealMore(page);
+      }
     }
 
     const finalRaw = await extractVisibleCards(page);

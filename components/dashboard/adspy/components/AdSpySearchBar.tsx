@@ -73,7 +73,7 @@ export function AdSpySearchBar({
               ? "0 0 0 4px rgba(37,99,235,.08), 0 14px 40px rgba(15,23,42,.08)"
               : "0 1px 3px rgba(15,23,42,.04)",
           }}
-          className={`flex h-12 items-center gap-2.5 rounded-xl border bg-white px-3.5 transition ${
+          className={`flex h-10 items-center gap-2.5 rounded-xl border bg-white px-3.5 transition ${
             showSuggestions ? "border-blue-300" : "border-slate-200"
           }`}
           style={{ transformStyle: "preserve-3d" }}
@@ -217,7 +217,7 @@ export function AdSpySearchBar({
         onChange={(event) => onCountryChange(event.target.value.toUpperCase().slice(0, 2))}
         maxLength={2}
         aria-label="Country code"
-        className="h-12 rounded-xl border border-slate-200 bg-white px-2.5 text-center text-xs font-bold uppercase text-slate-800 shadow-sm outline-none transition focus:border-blue-300 focus:ring-4 focus:ring-blue-50"
+        className="h-10 rounded-xl border border-slate-200 bg-white px-2.5 text-center text-xs font-bold uppercase text-slate-800 shadow-sm outline-none transition focus:border-blue-300 focus:ring-4 focus:ring-blue-50"
       />
 
       <motion.button
@@ -230,10 +230,10 @@ export function AdSpySearchBar({
         whileHover={{ y: -1, rotateX: -2, rotateY: 2 }}
         whileTap={{ scale: 0.98 }}
         transition={{ type: "spring", stiffness: 320, damping: 22 }}
-        className="h-12 rounded-xl bg-slate-950 px-4 text-xs font-bold text-white shadow-[0_10px_26px_rgba(15,23,42,.14)]"
+        className="h-10 rounded-xl bg-slate-950 px-3.5 text-[10px] font-bold text-white shadow-[0_10px_26px_rgba(15,23,42,.14)]"
         style={{ transformStyle: "preserve-3d", perspective: 700 }}
       >
-        <span>Run intelligence</span>
+        <span>Search</span>
       </motion.button>
     </div>
   );

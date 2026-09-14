@@ -1,4 +1,6 @@
 import "@/components/dashboard/adspy/adspy.css";
+import "@/components/dashboard/adspy/adspy-refinement-v25.css";
+import "@/components/dashboard/adspy/adspy-refinement-v23.css";
 import "@/components/dashboard/adspy/adspy-uiux-v19.css";
 import "@/components/dashboard/adspy/adspy-uiux-v12.css";
 import "@/components/dashboard/adspy/adspy-uiux-v13.css";

@@ -33,6 +33,9 @@ import {
   checkRateLimit,
 } from "@/lib/rate-limit";
 
+import { after } from "next/server";
+
+
 /*
  * @vercel/queue's send() authenticates via Vercel's OIDC federation,
  * which is only available when the project has been deployed on
@@ -81,12 +84,13 @@ async function dispatchCollection(
   // Fire-and-forget: collectAdIntelligence already marks the job
   // "failed" internally on error, so the status-poll endpoint will
   // surface failures instead of polling forever.
-  void collectAdIntelligence(payload).catch((error) => {
-    console.error(
-      "[AdSpy refresh] Inline collection failed:",
-      error,
-    );
-  });
+ after(async () => {
+  try {
+    await collectAdIntelligence(payload);
+  } catch (error) {
+    console.error("[AdSpy refresh] Inline collection failed:", error);
+  }
+});
 }
 
 export const runtime =

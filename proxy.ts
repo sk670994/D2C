@@ -14,12 +14,11 @@ export async function proxy(
 
 export const config = {
   matcher: [
-    "/dashboard/:path*",
-    "/adspy/:path*",
-    "/login",
-    "/auth/:path*",
-    "/brand-vault/:path*",
-    "/records/:path*",
-    "/zwirk/:path*",
-  ],
+  "/dashboard/:path*",
+  "/login",
+  "/auth/:path*",
+  "/brand-vault/:path*",
+  "/records/:path*",
+  "/zwirk/:path*",
+],
 };

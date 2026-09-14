@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { FILTERS } from "./adspy-types";
 
@@ -528,7 +528,7 @@ export function AdSpySection({ query = "", country = "IN", platform = "meta", on
     }
   }, [countryInput, fetchSearch, input, job, mode, platform, selectedPageId]);
 
-  const runSearch = useCallback(async (overrideQuery?: string, overridePageId?: string | null) => {
+  const runSearch = useCallback(async (overrideQuery?: string, overridePageId?: string | null, forceCollection = false) => {
     const q = (overrideQuery ?? input).trim();
     if (q.length < 2) {
       setError("Enter at least 2 characters.");
@@ -556,13 +556,26 @@ export function AdSpySection({ query = "", country = "IN", platform = "meta", on
         // Tracking state is optional and must never block search results.
       }
     })();
+    const effectivePageId = overridePageId !== undefined ? overridePageId : selectedPageId;
     const active = Boolean(result.isRefreshing || isActiveJob(result.collectionJob?.status));
+
     if (active && result.collectionJob?.id) {
-      void refreshAndPoll(result.collectionJob.id, overridePageId ?? selectedPageId);
+      void refreshAndPoll(result.collectionJob.id, effectivePageId);
       return;
     }
-    if (Number(result.total ?? 0) === 0 || Number(result.summary?.totalAds ?? 0) === 0) {
-      void refreshAndPoll(result.collectionJobId ?? null, overridePageId ?? selectedPageId);
+
+    // Exact advertiser selection is a live-intelligence action:
+    // show the indexed dataset immediately, while also starting a
+    // fresh Meta collection regardless of the current index count.
+    if (
+      forceCollection ||
+      Number(result.total ?? 0) === 0 ||
+      Number(result.summary?.totalAds ?? 0) === 0
+    ) {
+      void refreshAndPoll(
+        result.collectionJobId ?? null,
+        effectivePageId,
+      );
     }
   }, [countryInput, fetchSearch, input, onCountryChange, onPlatformChange, onQueryChange, platform, refreshAndPoll, selectedPageId]);
 
@@ -702,7 +715,7 @@ export function AdSpySection({ query = "", country = "IN", platform = "meta", on
     setSelectedPageId(advertiser.pageId);
     setSuggestionOpen(false);
     onQueryChange?.(label);
-    void runSearch(label, advertiser.pageId);
+    void runSearch(label, advertiser.pageId, true);
   }, [onQueryChange, runSearch]);
 
   const handleSelectQuery = useCallback((q: string) => {
@@ -714,7 +727,7 @@ export function AdSpySection({ query = "", country = "IN", platform = "meta", on
   }, [onQueryChange]);
 
   const headline = selectedPageId ? `Verified Meta advertiser search` : `Competitive ad intelligence`;
-  const statusLabel = refreshing ? "Collecting fresh creatives" : job?.status === "complete" ? "Dataset current" : "Search the live intelligence index";
+  const statusLabel = refreshing ? "Fetching live creatives" : job?.status === "complete" ? "Dataset current" : "Live intelligence index";
 
   return (
     <section data-adspy-root data-adspy-v8 className="mx-auto w-full max-w-[1380px] space-y-4 pb-10">

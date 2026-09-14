@@ -1,0 +1,89 @@
+/* AdSpy v25 — final build-safe refinement override */
+
+[data-adspy-root] {
+  --adspy-blue: #2563eb;
+  --adspy-blue-soft: #eff6ff;
+  --adspy-ink: #0f172a;
+  --adspy-border: #e2e8f0;
+  isolation: isolate;
+}
+
+[data-adspy-root] [data-adspy-control="primary"] {
+  background: var(--adspy-ink) !important;
+  border-color: var(--adspy-ink) !important;
+  color: #fff !important;
+}
+
+[data-adspy-root] [data-adspy-control="primary"]:hover {
+  background: #1e293b !important;
+}
+
+[data-adspy-root] [data-adspy-control="secondary"],
+[data-adspy-root] [data-adspy-control="suggestion"] {
+  background: #fff !important;
+  color: #334155 !important;
+  border-color: var(--adspy-border) !important;
+}
+
+[data-adspy-root] [data-adspy-control="tracked"] {
+  background: var(--adspy-blue-soft) !important;
+  color: #1d4ed8 !important;
+  border-color: #bfdbfe !important;
+}
+
+[data-adspy-root] [role="listbox"] {
+  z-index: 1200 !important;
+  max-height: min(360px, 46vh);
+  overscroll-behavior: contain;
+}
+
+[data-adspy-root] [data-adspy-creative] {
+  cursor: pointer;
+  contain: layout paint;
+}
+
+.adspy-page {
+  overflow-x: clip;
+}
+
+.dark [data-adspy-root] .bg-white {
+  background-color: #0d1a2b !important;
+}
+
+.dark [data-adspy-root] .bg-slate-50,
+.dark [data-adspy-root] .bg-slate-100 {
+  background-color: #102238 !important;
+}
+
+.dark [data-adspy-root] .border-slate-100,
+.dark [data-adspy-root] .border-slate-200 {
+  border-color: #203751 !important;
+}
+
+.dark [data-adspy-root] .text-slate-950 {
+  color: #f8fafc !important;
+}
+
+.dark [data-adspy-root] .text-slate-900,
+.dark [data-adspy-root] .text-slate-800 {
+  color: #e2e8f0 !important;
+}
+
+.dark [data-adspy-root] .text-slate-700 {
+  color: #cbd5e1 !important;
+}
+
+.dark [data-adspy-root] .text-slate-600,
+.dark [data-adspy-root] .text-slate-500 {
+  color: #94a3b8 !important;
+}
+
+.dark [data-adspy-root] .text-slate-400 {
+  color: #64748b !important;
+}
+
+@media (max-width: 767px) {
+  [data-adspy-root] .grid.xl\:grid-cols-5 {
+    grid-template-columns: 1fr !important;
+  }
+}
