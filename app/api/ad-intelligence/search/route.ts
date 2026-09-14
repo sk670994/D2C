@@ -1,328 +1,106 @@
-import {
-  NextRequest,
-  NextResponse,
-} from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-import {
-  createClient as createServerAuthClient,
-} from "@/lib/supabase/server";
-
-import {
-  searchGlobalAdsAccurate,
-} from "@/lib/ad-intelligence/global/accurate-search";
-
-import type {
-  AdPlatform,
-} from "@/lib/ad-intelligence/types";
+import { createClient as createServerAuthClient } from "@/lib/supabase/server";
+import { searchGlobalAdsAccurate } from "@/lib/ad-intelligence/global/accurate-search";
+import type { AdPlatform } from "@/lib/ad-intelligence/types";
 
 export const runtime = "nodejs";
-export const dynamic =
-  "force-dynamic";
+export const dynamic = "force-dynamic";
 
-function normalizePlatform(
-  value: string | null,
-): AdPlatform {
-  if (
-    value === "google" ||
-    value === "linkedin"
-  ) {
-    return value;
+const PAGE_SIZE = 25;
+
+function platform(value: string | null): AdPlatform {
+  return value === "google" || value === "linkedin" ? value : "meta";
+}
+function mode(value: string | null): "advertiser" | "keyword" {
+  return value === "keyword" ? "keyword" : "advertiser";
+}
+function country(value: string | null): string {
+  const value2 = (value ?? "IN").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(value2) ? value2 : "IN";
+}
+function pageId(value: string | null): string | undefined {
+  const value2 = (value ?? "").trim();
+  return /^\d+$/.test(value2) ? value2 : undefined;
+}
+function page(value: string | null): number {
+  const n = Number(value ?? 1);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+}
+
+export async function GET(request: NextRequest) {
+  const auth = await createServerAuthClient();
+  const {
+    data: { user },
+    error,
+  } = await auth.auth.getUser();
+
+  if (error || !user) {
+    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  return "meta";
-}
+  const params = request.nextUrl.searchParams;
+  const q = (params.get("q") ?? "").trim();
+  const c = country(params.get("country"));
+  const p = platform(params.get("platform"));
+  const m = mode(params.get("mode"));
+  const pg = page(params.get("page"));
+  const pid = pageId(params.get("pageId"));
 
-function normalizeMode(
-  value: string | null,
-):
-  | "advertiser"
-  | "keyword" {
-  return value ===
-    "keyword"
-    ? "keyword"
-    : "advertiser";
-}
-
-function normalizeCountry(
-  value: string | null,
-): string {
-  const country =
-    (
-      value ?? "IN"
-    )
-      .trim()
-      .toUpperCase();
-
-  return /^[A-Z]{2}$/.test(
-    country,
-  )
-    ? country
-    : "IN";
-}
-
-function normalizePageId(
-  value: string | null,
-):
-  | string
-  | undefined {
-  const pageId =
-    (
-      value ?? ""
-    ).trim();
-
-  return pageId.length > 0 &&
-    /^\d+$/.test(pageId)
-    ? pageId
-    : undefined;
-}
-
-export async function GET(
-  request: NextRequest,
-) {
-  const requestStartedAt =
-    Date.now();
-
-  try {
-    const auth =
-      await createServerAuthClient();
-
-    const {
-      data: { user },
-      error: authError,
-    } =
-      await auth.auth.getUser();
-
-    if (
-      authError ||
-      !user
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Unauthorized",
-        },
-        {
-          status: 401,
-        },
-      );
-    }
-
-    const params =
-      request.nextUrl
-        .searchParams;
-
-    const query =
-      (
-        params.get("q") ??
-        ""
-      ).trim();
-
-    const pageId =
-      normalizePageId(
-        params.get(
-          "pageId",
-        ),
-      );
-
-    const country =
-      normalizeCountry(
-        params.get(
-          "country",
-        ),
-      );
-
-    const platform =
-      normalizePlatform(
-        params.get(
-          "platform",
-        ),
-      );
-
-    const mode =
-      normalizeMode(
-        params.get(
-          "mode",
-        ),
-      );
-
-    const rawPage =
-      Number(
-        params.get("page") ??
-          "1",
-      );
-
-    const rawLimit =
-      Number(
-        params.get(
-          "limit",
-        ) ?? "36",
-      );
-
-    const page =
-      Number.isFinite(
-        rawPage,
-      ) &&
-      rawPage >= 1
-        ? Math.floor(
-            rawPage,
-          )
-        : 1;
-
-    const limit =
-      Number.isFinite(
-        rawLimit,
-      ) &&
-      rawLimit >= 1
-        ? Math.min(
-            60,
-            Math.floor(
-              rawLimit,
-            ),
-          )
-        : 36;
-
-    if (
-      query.length < 2
-    ) {
-      return NextResponse.json({
-        success: true,
-
-        query,
-
-        country,
-
-        platform,
-
-        mode,
-
-        pageId:
-          pageId ??
-          null,
-
-        ads: [],
-
-        total: 0,
-
-        page,
-
-        limit,
-
-        totalPages: 0,
-
-        summary: {
-          totalAds: 0,
-          activeAds: 0,
-          inactiveAds: 0,
-          unknownAds: 0,
-          videoAds: 0,
-          imageAds: 0,
-          carouselAds: 0,
-          creatorAds: 0,
-          averageRunningDays: 0,
-          longestRunningDays: 0,
-        },
-
-        intelligence: {
-          topCreators: [],
-          topOffers: [],
-          topHooks: [],
-          longestRunningAd: null,
-
-          reach: {
-            status:
-              "unavailable",
-            reason:
-              "A public reach figure is not exposed reliably.",
-          },
-        },
-
-        languages: [],
-
-        markets: [],
-
-        lastUpdatedAt:
-          null,
-
-        isRefreshing:
-          false,
-
-        collectionJobId:
-          null,
-
-        collectionJob:
-          null,
-
-        meta: {
-          durationMs:
-            Date.now() -
-            requestStartedAt,
-        },
-      });
-    }
-
-    const result =
-      await searchGlobalAdsAccurate(
-        {
-          query,
-
-          country,
-
-          platform,
-
-          mode,
-
-          page,
-
-          limit,
-
-          advertiserPageId:
-            pageId,
-        },
-      );
-
+  if (q.length < 2) {
     return NextResponse.json({
       success: true,
-
-      query,
-
-      country,
-
-      platform,
-
-      mode,
-
-      pageId:
-        pageId ??
-        null,
-
-      ...result,
-
-      meta: {
-        durationMs:
-          Date.now() -
-          requestStartedAt,
-      },
+      query: q,
+      country: c,
+      platform: p,
+      mode: m,
+      pageId: pid ?? null,
+      ads: [],
+      total: 0,
+      page: 1,
+      limit: PAGE_SIZE,
+      totalPages: 0,
+      dataSource: "indexed",
     });
-  } catch (error) {
-    console.error(
-      "[AdSpy search]",
-      error,
-    );
+  }
+
+  try {
+    const result = await searchGlobalAdsAccurate({
+      query: q,
+      country: c,
+      platform: p,
+      mode: m,
+      page: pg,
+      limit: PAGE_SIZE,
+      advertiserPageId: pid,
+    });
 
     return NextResponse.json(
       {
-        success: false,
-
-        error:
-          error instanceof
-          Error
-            ? error.message
-            : "Search failed.",
+        success: true,
+        query: q,
+        country: c,
+        platform: p,
+        mode: m,
+        pageId: pid ?? null,
+        ...result,
+        limit: PAGE_SIZE,
+        dataSource: "indexed",
       },
       {
-        status: 500,
+        headers: {
+          "Cache-Control": "private, max-age=2, stale-while-revalidate=10",
+        },
       },
+    );
+  } catch (error) {
+    console.error("[AdSpy search]", error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Search failed.",
+      },
+      { status: 500 },
     );
   }
 }

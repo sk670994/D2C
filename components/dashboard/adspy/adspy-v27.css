@@ -1,0 +1,51 @@
+/* AdSpy v27: authoritative palette and layering. */
+[data-adspy-root] {
+  --adspy-ink: #0f172a;
+  --adspy-blue: #2563eb;
+  --adspy-blue-50: #eff6ff;
+  --adspy-blue-100: #dbeafe;
+  --adspy-border: #e2e8f0;
+  --adspy-muted: #64748b;
+  isolation: isolate;
+}
+
+/* Never allow legacy teal/green utilities to repaint AdSpy controls. */
+[data-adspy-root] [class*="bg-teal"],
+[data-adspy-root] [class*="bg-emerald"],
+[data-adspy-root] [class*="bg-green"],
+[data-adspy-root] [class*="text-teal"],
+[data-adspy-root] [class*="text-emerald"],
+[data-adspy-root] [class*="text-green"],
+[data-adspy-root] [class*="border-teal"],
+[data-adspy-root] [class*="border-emerald"],
+[data-adspy-root] [class*="border-green"] {
+  background-image: none !important;
+}
+
+[data-adspy-root] [class*="bg-teal"],
+[data-adspy-root] [class*="bg-emerald"],
+[data-adspy-root] [class*="bg-green"] {
+  background-color: var(--adspy-ink) !important;
+}
+
+[data-adspy-root] [class*="text-teal"],
+[data-adspy-root] [class*="text-emerald"],
+[data-adspy-root] [class*="text-green"] {
+  color: #475569 !important;
+}
+
+[data-adspy-root] [class*="border-teal"],
+[data-adspy-root] [class*="border-emerald"],
+[data-adspy-root] [class*="border-green"] {
+  border-color: var(--adspy-border) !important;
+}
+
+[data-adspy-root] [data-adspy-control="tracked"] {
+  background: var(--adspy-blue-50) !important;
+  color: #1d4ed8 !important;
+  border-color: #bfdbfe !important;
+}
+
+[data-adspy-root] [role="listbox"] {
+  z-index: 2147483000 !important;
+}

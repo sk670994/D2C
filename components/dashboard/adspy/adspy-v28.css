@@ -1,0 +1,64 @@
+/* AdSpy v28 — authoritative blue/slate control layer. */
+[data-adspy-root] {
+  --adspy-ink: #0f172a;
+  --adspy-blue: #2563eb;
+  --adspy-blue-50: #eff6ff;
+  --adspy-blue-100: #dbeafe;
+  --adspy-border: #e2e8f0;
+  isolation: isolate;
+}
+
+/* Explicit controls beat every legacy AdSpy green/teal rule. */
+[data-adspy-root] [data-adspy-control="primary"],
+[data-adspy-root] [data-adspy-control="mode-active"],
+[data-adspy-root] [data-adspy-control="filter-active"] {
+  background: var(--adspy-ink) !important;
+  background-color: var(--adspy-ink) !important;
+  color: #fff !important;
+  border-color: var(--adspy-ink) !important;
+}
+
+[data-adspy-root] [data-adspy-control="tracked"] {
+  background: var(--adspy-blue-50) !important;
+  background-color: var(--adspy-blue-50) !important;
+  color: #1d4ed8 !important;
+  border-color: #bfdbfe !important;
+}
+
+[data-adspy-root] [data-adspy-control="secondary"],
+[data-adspy-root] [data-adspy-control="mode"],
+[data-adspy-root] [data-adspy-control="filter"] {
+  background: #fff !important;
+  background-color: #fff !important;
+  color: #475569 !important;
+  border-color: var(--adspy-border) !important;
+}
+
+/* Neutralize common legacy palette utilities only inside AdSpy. */
+[data-adspy-root] [class*="bg-teal"],
+[data-adspy-root] [class*="bg-emerald"],
+[data-adspy-root] [class*="bg-green"] {
+  background: #fff !important;
+  background-color: #fff !important;
+}
+
+[data-adspy-root] [class*="text-teal"],
+[data-adspy-root] [class*="text-emerald"],
+[data-adspy-root] [class*="text-green"] {
+  color: #475569 !important;
+}
+
+[data-adspy-root] [class*="border-teal"],
+[data-adspy-root] [class*="border-emerald"],
+[data-adspy-root] [class*="border-green"] {
+  border-color: var(--adspy-border) !important;
+}
+
+/* Search controls are intentionally compact and never green. */
+[data-adspy-root] input:focus {
+  outline: none;
+}
+
+[data-adspy-root] [role="listbox"] {
+  z-index: 2147483000 !important;
+}

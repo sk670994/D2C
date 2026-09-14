@@ -2,8 +2,7 @@
 
 "use client";
 
-import { ArrowUpRight, Loader2, Search, UserRound, Sparkles } from "lucide-react";
-import { motion } from "framer-motion";
+import { ArrowUpRight, Check, Loader2, Search, UserRound, X } from "lucide-react";
 import type { AutocompleteAdvertiser, Platform, SearchMode } from "../adspy-types";
 
 function compact(value?: number | null) {
@@ -13,7 +12,6 @@ function compact(value?: number | null) {
     maximumFractionDigits: 1,
   }).format(value);
 }
-
 
 export function AdSpySearchBar({
   value,
@@ -48,15 +46,11 @@ export function AdSpySearchBar({
   onCloseSuggestions: () => void;
   onCountryChange: (value: string) => void;
 }) {
-  const normalized = value.trim().toLowerCase();
-
-  const displayAdvertisers = advertisers;
-
-  const showSuggestions =
+  const show =
     suggestionsOpen &&
     mode === "advertiser" &&
     platform === "meta" &&
-    normalized.length >= 2;
+    value.trim().length >= 2;
 
   const selectAdvertiser = (advertiser: AutocompleteAdvertiser) => {
     onCloseSuggestions();
@@ -64,21 +58,14 @@ export function AdSpySearchBar({
   };
 
   return (
-    <div className="relative z-50 grid gap-2 lg:grid-cols-[minmax(0,1fr)_74px_126px]">
-      <div className="relative">
-        <motion.div
-          data-adspy-search-shell
-          animate={{
-            boxShadow: showSuggestions
-              ? "0 0 0 4px rgba(37,99,235,.08), 0 14px 40px rgba(15,23,42,.08)"
-              : "0 1px 3px rgba(15,23,42,.04)",
-          }}
-          className={`flex h-10 items-center gap-2.5 rounded-xl border bg-white px-3.5 transition ${
-            showSuggestions ? "border-blue-300" : "border-slate-200"
+    <div className="relative z-[10000] grid gap-2 lg:grid-cols-[minmax(0,1fr)_72px_112px]">
+      <div className="relative min-w-0">
+        <div
+          className={`flex h-10 items-center gap-2 rounded-xl border bg-white px-3 shadow-sm ${
+            show ? "border-blue-300 ring-4 ring-blue-50" : "border-slate-200"
           }`}
-          style={{ transformStyle: "preserve-3d" }}
         >
-          <Search size={16} className="shrink-0 text-slate-400" />
+          <Search size={15} className="shrink-0 text-slate-400" />
 
           <input
             value={value}
@@ -88,20 +75,23 @@ export function AdSpySearchBar({
               if (event.key === "Enter") onSearch();
               if (event.key === "Escape") onCloseSuggestions();
             }}
-            placeholder="Search an advertiser or keyword…"
-            className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400"
-            aria-label="Search advertiser or keyword"
-            role="combobox"
-            aria-expanded={showSuggestions}
-            aria-controls="adspy-autocomplete-list"
-            aria-autocomplete="list"
+            placeholder="Search advertiser or keyword…"
+            className="min-w-0 flex-1 bg-transparent text-sm font-medium text-slate-900 outline-none placeholder:text-slate-400"
             autoComplete="off"
+            role="combobox"
+            aria-expanded={show}
+            aria-controls="adspy-autocomplete-list"
           />
 
           {selectedPageId ? (
-            <span className="hidden rounded-full border border-blue-100 bg-blue-50 px-2 py-1 text-[9px] font-bold text-blue-700 sm:inline">
+            <span className="hidden shrink-0 items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-[9px] font-bold text-blue-700 sm:inline-flex">
+              <Check size={10} />
               Exact
             </span>
+          ) : null}
+
+          {autocompleteLoading ? (
+            <Loader2 size={13} className="shrink-0 animate-spin text-blue-600" />
           ) : null}
 
           {value ? (
@@ -111,104 +101,102 @@ export function AdSpySearchBar({
                 onCloseSuggestions();
                 onChange("");
               }}
-              aria-label="Clear search"
-              title="Clear search"
-              className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-800"
+              aria-label="Clear"
+              title="Clear"
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700"
             >
-              <img src="/adspy/icons/close.svg" alt="" width="12" height="12" />
+              <X size={13} />
             </button>
           ) : null}
-        </motion.div>
+        </div>
 
-        {showSuggestions ? (
-          <motion.div
-            initial={{ opacity: 0, y: 6, scale: 0.99 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-            className="absolute left-0 right-0 top-[calc(100%+4px)] z-[10000] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_22px_70px_rgba(15,23,42,.14)]"
+        {show ? (
+          <div
+            id="adspy-autocomplete-list"
+            role="listbox"
+            className="absolute left-0 right-0 top-[calc(100%+5px)] z-[2147483000] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_22px_70px_rgba(15,23,42,.16)]"
           >
-            <div className="flex items-center justify-between border-b border-slate-100 px-3.5 py-2.5 text-[9px] font-bold uppercase tracking-[0.16em] text-slate-400">
-              <span>Suggestions</span>
-              {autocompleteLoading ? (
-                <span className="inline-flex items-center gap-1.5 normal-case tracking-normal text-slate-400">
-                  <Loader2 size={12} className="animate-spin" />
-                  indexing
-                </span>
-              ) : (
-                <span>{displayAdvertisers.length} matches</span>
-              )}
+            <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2.5">
+              <span className="text-[9px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                Advertisers
+              </span>
+              <span className="text-[9px] font-semibold text-slate-400">
+                {autocompleteLoading ? "Finding…" : `${advertisers.length} matches`}
+              </span>
             </div>
 
-            <button
-              type="button"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => {
-                onCloseSuggestions();
-                onSelectQuery();
-              }}
-              data-adspy-control="suggestion"
-              role="option"
-              aria-selected="false"
-              className="group flex w-full items-center gap-2.5 border-b border-slate-100 px-3.5 py-2.5 text-left transition hover:bg-blue-50/55"
-            >
-              <span data-adspy-control="suggestion-icon" className="grid h-8 w-8 place-items-center rounded-lg bg-slate-950 text-white shadow-sm">
-                <Sparkles size={13} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs font-bold text-slate-900">
-                  Search “{value.trim()}”
-                </span>
-                <span className="mt-0.5 block text-[10px] text-slate-400">
-                  {autocompleteLoading ? "Search now; advertiser index is updating in parallel" : "Search this exact phrase"}
-                </span>
-              </span>
-              <ArrowUpRight size={13} className="text-slate-300 transition group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-blue-600" />
-            </button>
-
-            <div className="px-3.5 pb-1.5 pt-2 text-[9px] font-bold uppercase tracking-[0.16em] text-slate-400">
-              Advertisers
-            </div>
-
-            {displayAdvertisers.length ? (
-              displayAdvertisers.map((advertiser) => (
-                <button
-                  key={advertiser.pageId || advertiser.id}
-                  type="button"
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => selectAdvertiser(advertiser)}
-                  data-adspy-control="suggestion"
-                  className="group flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left transition hover:bg-slate-50"
-                >
-                  <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-slate-100 text-slate-500 ring-1 ring-slate-200">
-                    {advertiser.profileImageUrl ? (
-                      <img src={advertiser.profileImageUrl} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <UserRound size={15} />
-                    )}
-                  </span>
-
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1 truncate text-xs font-bold text-slate-900">
-                      {advertiser.label}
-                      {advertiser.verification === "VERIFIED" ? (
-                        <span className="text-blue-600">✓</span>
-                      ) : null}
+            {advertisers.length > 0 ? (
+              <div className="max-h-[360px] overflow-y-auto py-1">
+                {advertisers.map((advertiser) => (
+                  <button
+                    key={advertiser.pageId || advertiser.id}
+                    type="button"
+                    role="option"
+                    aria-selected="false"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => selectAdvertiser(advertiser)}
+                    data-adspy-control="suggestion"
+                    className="group flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition hover:bg-blue-50"
+                  >
+                    <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50 text-slate-500">
+                      {advertiser.profileImageUrl ? (
+                        <img
+                          src={advertiser.profileImageUrl}
+                          alt=""
+                          loading="lazy"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <UserRound size={15} />
+                      )}
                     </span>
-                    <span className="mt-0.5 block truncate text-[10px] text-slate-400">
-                      {advertiser.category || "Advertiser"}
-                      {compact(advertiser.likes) ? ` · ${compact(advertiser.likes)} followers` : ""}
-                    </span>
-                  </span>
 
-                  <ArrowUpRight size={12} className="text-slate-300 transition group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-slate-800" />
-                </button>
-              ))
-            ) : (
-              <div className="px-3.5 pb-3.5 text-[10px] text-slate-400">
-                {autocompleteLoading ? "Finding indexed advertisers…" : "No indexed advertiser match yet."}
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1 truncate text-xs font-bold text-slate-900">
+                        {advertiser.label}
+                        {advertiser.verification?.toUpperCase().includes("VERIFIED") ? (
+                          <Check size={12} className="shrink-0 text-blue-600" />
+                        ) : null}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[10px] text-slate-400">
+                        {advertiser.category || "Advertiser"}
+                        {compact(advertiser.likes) ? ` · ${compact(advertiser.likes)} likes` : ""}
+                      </span>
+                    </span>
+
+                    <span className="shrink-0 text-[9px] font-semibold text-slate-300 transition group-hover:text-blue-600">
+                      Select
+                    </span>
+                  </button>
+                ))}
               </div>
-            )}
-          </motion.div>
+            ) : null}
+
+            {autocompleteLoading && advertisers.length === 0 ? (
+              <div className="px-3.5 py-3.5 text-[10px] leading-5 text-slate-400">
+                Finding advertisers…
+              </div>
+            ) : null}
+
+            {!autocompleteLoading && advertisers.length === 0 ? (
+              <button
+                type="button"
+                aria-label="Search exact phrase"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onCloseSuggestions();
+                  onSelectQuery();
+                }}
+                className="flex w-full items-center justify-between gap-3 border-t border-slate-100 px-3.5 py-3 text-left hover:bg-blue-50"
+              >
+                <span>
+                  <span className="block text-xs font-bold text-slate-800">Search exact phrase</span>
+                  <span className="mt-0.5 block text-[10px] text-slate-400">No matching advertiser was returned.</span>
+                </span>
+                <ArrowUpRight size={13} className="text-slate-300" />
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
@@ -217,24 +205,17 @@ export function AdSpySearchBar({
         onChange={(event) => onCountryChange(event.target.value.toUpperCase().slice(0, 2))}
         maxLength={2}
         aria-label="Country code"
-        className="h-10 rounded-xl border border-slate-200 bg-white px-2.5 text-center text-xs font-bold uppercase text-slate-800 shadow-sm outline-none transition focus:border-blue-300 focus:ring-4 focus:ring-blue-50"
+        className="h-10 rounded-xl border border-slate-200 bg-white px-2 text-center text-xs font-bold uppercase text-slate-800 outline-none focus:border-blue-300 focus:ring-4 focus:ring-blue-50"
       />
 
-      <motion.button
+      <button
         type="button"
-        onClick={() => {
-          onCloseSuggestions();
-          onSearch();
-        }}
+        onClick={onSearch}
         data-adspy-control="primary"
-        whileHover={{ y: -1, rotateX: -2, rotateY: 2 }}
-        whileTap={{ scale: 0.98 }}
-        transition={{ type: "spring", stiffness: 320, damping: 22 }}
-        className="h-10 rounded-xl bg-slate-950 px-3.5 text-[10px] font-bold text-white shadow-[0_10px_26px_rgba(15,23,42,.14)]"
-        style={{ transformStyle: "preserve-3d", perspective: 700 }}
+        className="h-10 rounded-xl bg-slate-950 px-3.5 text-[11px] font-bold text-white shadow-sm hover:bg-slate-800"
       >
-        <span>Search</span>
-      </motion.button>
+        Search
+      </button>
     </div>
   );
 }

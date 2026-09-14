@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { FILTERS } from "./adspy-types";
 
@@ -23,8 +23,10 @@ import { AdSpySearchBar } from "./components/AdSpySearchBar";
 import { AdSpyStats } from "./components/AdSpyStats";
 import { AdSpyToolbar } from "./components/AdSpyToolbar";
 import { AdSpy3DJokePulse } from "./components/AdSpy3DJokePulse";
-import { AdSpy3DCreativeReel } from "./components/AdSpy3DCreativeReel";
 import { AdSpy3DHero } from "@/components/ui/adspy/AdSpy3DHero";
+import { AdSpySpatialHeader } from "./components/AdSpySpatialHeader";
+import { AdSpySignalMatrix } from "./components/AdSpySignalMatrix";
+import { AdSpyTemporalFooter } from "./components/AdSpyTemporalFooter";
 
 type Platform = "meta" | "google" | "linkedin";
 type SearchMode = "advertiser" | "keyword";
@@ -121,6 +123,8 @@ type SearchResponse = {
   collectionJobId?: string | null;
   collectionJob?: Job | null;
   error?: string;
+  nextPageToken?: string | null;
+  dataSource?: string;
 };
 
 type TrackResponse = {
@@ -356,23 +360,6 @@ export function AdSpySection({ query = "", country = "IN", platform = "meta", on
   }, [country]);
 
   useEffect(() => {
-    if (!selectedAd) return;
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelectedAd(null);
-    };
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", onKeyDown);
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [selectedAd]);
-
-  useEffect(() => {
     if (!onResultCountChange) return;
     const timer = window.setTimeout(() => onResultCountChange(total), 0);
     return () => window.clearTimeout(timer);
@@ -422,17 +409,23 @@ export function AdSpySection({ query = "", country = "IN", platform = "meta", on
     if (!silent) setLoading(true);
     setError("");
 
-    try {
-      const url = new URL("/api/ad-intelligence/search", window.location.origin);
+    try {      const url = new URL("/api/ad-intelligence/search", window.location.origin);
       url.searchParams.set("q", q);
       url.searchParams.set("country", c || "IN");
       url.searchParams.set("platform", platform);
       url.searchParams.set("mode", mode);
       url.searchParams.set("page", String(nextPage));
-      url.searchParams.set("limit", "36");
-      if (searchPageId && platform === "meta" && mode === "advertiser") url.searchParams.set("pageId", searchPageId);
+      url.searchParams.set("limit", "25");
+      if (searchPageId && platform === "meta" && mode === "advertiser") {
+        url.searchParams.set("pageId", searchPageId);
+      }
 
-      const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+      const response = await fetch(url, {
+        cache: "no-store",
+        signal: controller.signal,
+        headers: { Accept: "application/json" },
+      });
+
       const data = (await response.json()) as SearchResponse;
       if (!response.ok || !data.success) throw new Error(data.error || "Search failed.");
       if (!mountedRef.current || requestId !== searchRequestRef.current) return data;
@@ -463,9 +456,7 @@ export function AdSpySection({ query = "", country = "IN", platform = "meta", on
     setError("");
 
     let jobId = existingJobId ?? job?.id ?? null;
-    const refreshPageId =
-      overridePageId !== undefined ? overridePageId : selectedPageId;
-
+    const refreshPageId = overridePageId !== undefined ? overridePageId : selectedPageId;
     try {
       if (!jobId || !isActiveJob(job?.status)) {
         const url = new URL("/api/ad-intelligence/refresh", window.location.origin);
@@ -473,9 +464,7 @@ export function AdSpySection({ query = "", country = "IN", platform = "meta", on
         url.searchParams.set("country", countryInput.trim().toUpperCase() || "IN");
         url.searchParams.set("platform", platform);
         url.searchParams.set("mode", mode);
-        if (refreshPageId && platform === "meta" && mode === "advertiser") {
-          url.searchParams.set("pageId", refreshPageId);
-        }
+        if (refreshPageId && platform === "meta" && mode === "advertiser") url.searchParams.set("pageId", refreshPageId);
 
         const response = await fetch(url, { method: "POST", cache: "no-store" });
         const data = (await response.json()) as { success: boolean; job?: Job; error?: string };
@@ -519,7 +508,7 @@ export function AdSpySection({ query = "", country = "IN", platform = "meta", on
         delay = Math.min(3200, Math.max(700, Math.round(delay * 1.45)));
       }
 
-      throw new Error("Collection is taking longer than expected. The results page remains available while the job finishes.");
+      throw new Error("Background sync is still running. Live results remain available.");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       if (mountedRef.current) setError(err instanceof Error ? err.message : "Refresh failed.");
@@ -556,14 +545,11 @@ export function AdSpySection({ query = "", country = "IN", platform = "meta", on
         // Tracking state is optional and must never block search results.
       }
     })();
-    const active = Boolean(result.isRefreshing || isActiveJob(result.collectionJob?.status));
-    if (active && result.collectionJob?.id) {
-      void refreshAndPoll(result.collectionJob.id, overridePageId ?? selectedPageId);
-      return;
-    }
-    if (Number(result.total ?? 0) === 0 || Number(result.summary?.totalAds ?? 0) === 0) {
-      void refreshAndPoll(result.collectionJobId ?? null, overridePageId ?? selectedPageId);
-    }
+    // User-facing results are immediate; freshness is a silent second lane.
+    void refreshAndPoll(
+      result.collectionJob?.id ?? result.collectionJobId ?? null,
+      overridePageId ?? selectedPageId,
+    );
   }, [countryInput, fetchSearch, input, onCountryChange, onPlatformChange, onQueryChange, platform, refreshAndPoll, selectedPageId]);
 
   useEffect(() => {
@@ -643,7 +629,7 @@ export function AdSpySection({ query = "", country = "IN", platform = "meta", on
           setAutocompleteLoading(false);
         }
       }
-    }, 90);
+    }, 70);
 
     return () => {
       alive = false;
@@ -714,11 +700,12 @@ export function AdSpySection({ query = "", country = "IN", platform = "meta", on
   }, [onQueryChange]);
 
   const headline = selectedPageId ? `Verified Meta advertiser search` : `Competitive ad intelligence`;
-  const statusLabel = refreshing ? "Collecting fresh creatives" : job?.status === "complete" ? "Dataset current" : "Search the live intelligence index";
+  const statusLabel = refreshing ? "Updating library" : job?.status === "complete" ? "Up to date" : "Search the library";
 
   return (
     <section data-adspy-root data-adspy-v8 className="mx-auto w-full max-w-[1380px] space-y-4 pb-10">
       <div className="relative z-[100] overflow-visible rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+        <AdSpySpatialHeader />
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-center">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-blue-600"><Sparkles size={13} /> AdSpy Intelligence</div>
@@ -785,11 +772,25 @@ export function AdSpySection({ query = "", country = "IN", platform = "meta", on
         <AdSpyLoadingIntelligence compact={refreshing} loading />
       ) : null}
 
-      <AdSpyStats summary={{ ...summary, totalAds: summary.totalAds || total }} />
+      <AdSpyStats summary={{ ...summary, totalAds: total }} />
+      {submittedQuery ? (
+        <AdSpySignalMatrix
+          total={total}
+          active={summary.activeAds}
+          video={summary.videoAds}
+          creators={summary.creatorAds}
+        />
+      ) : null}
+
+      {submittedQuery ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px]">
+          <span className="font-bold uppercase tracking-[0.16em] text-slate-400">Live dataset</span>
+          <span className="font-semibold text-slate-700">{total.toLocaleString("en-IN")} total ads · {visibleAds.length} shown on this page</span>
+        </div>
+      ) : null}
 
       {submittedQuery ? <AdSpy3DJokePulse /> : null}
-      {visibleAds.length ? <AdSpy3DCreativeReel ads={visibleAds} onInspect={setSelectedAd} /> : null}
-
+      
       {visibleAds.length ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {visibleAds.map((ad) => (
@@ -808,19 +809,25 @@ export function AdSpySection({ query = "", country = "IN", platform = "meta", on
         </div>
       )}
 
-      {totalPages > 1 ? <div className="flex items-center justify-center gap-3"><button type="button" disabled={page <= 1} onClick={() => { const next = Math.max(1, page - 1); setPage(next); void fetchSearch(next, true); }} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 disabled:opacity-40"><ChevronLeft size={16} /></button><span className="text-xs font-semibold text-slate-500">Page {page} of {totalPages}</span><button type="button" disabled={page >= totalPages} onClick={() => { const next = Math.min(totalPages, page + 1); setPage(next); void fetchSearch(next, true); }} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 disabled:opacity-40"><ChevronRight size={16} /></button></div> : null}
+      {totalPages > 1 ? <div className="flex items-center justify-center gap-3"><button type="button" disabled={page <= 1} onClick={() => { const next = Math.max(1, page - 1); setPage(next); void fetchSearch(next, false); }} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 disabled:opacity-40"><ChevronLeft size={16} /></button><span className="text-xs font-semibold text-slate-500">Page {page} of {totalPages}</span><button type="button" disabled={page >= totalPages} onClick={() => { const next = Math.min(totalPages, page + 1); setPage(next); void fetchSearch(next, false); }} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 disabled:opacity-40"><ChevronRight size={16} /></button></div> : null}
 
       {submittedQuery ? (
         <>
           <AdSpyAnalysis query={submittedQuery} country={countryInput} platform={platform} />
           <AdSpyHistory query={submittedQuery} country={countryInput} platform={platform} />
+          <AdSpyTemporalFooter
+            total={total}
+            page={page}
+            totalPages={totalPages}
+            lastUpdatedAt={lastUpdatedAt}
+          />
         </>
       ) : null}
 
       {selectedAd && typeof document !== "undefined"
         ? createPortal(
-<div
-          className="fixed inset-0 z-[10000] flex items-end justify-center bg-slate-950/60 p-2 backdrop-blur-md sm:p-4 md:items-center"
+        <div
+          className="fixed inset-0 z-[2147483000] flex items-end justify-center bg-slate-950/60 p-2 backdrop-blur-md sm:p-4 md:items-center"
           role="dialog"
           aria-modal="true"
           aria-label="Creative inspection"
@@ -950,8 +957,9 @@ export function AdSpySection({ query = "", country = "IN", platform = "meta", on
               </div>
             </div>
           </div>
-        </div>
-          , document.body)
+        </div>,
+        document.body,
+      )
         : null}
     </section>
   );

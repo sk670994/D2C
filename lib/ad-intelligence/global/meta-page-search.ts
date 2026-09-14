@@ -1,5 +1,15 @@
 import "server-only";
 
+import { existsSync } from "node:fs";
+import path from "node:path";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Page,
+} from "playwright-core";
+import chromiumPack from "@sparticuz/chromium-min";
+
 export type MetaPageSearchResult = {
   pageId: string;
   name: string;
@@ -13,275 +23,724 @@ export type MetaPageSearchResult = {
   igFollowers?: number | null;
 };
 
-type SearchApiPageResult = {
-  page_id?: string | number | null;
-  name?: string | null;
-  category?: string | null;
-  image_uri?: string | null;
-  image_url?: string | null;
-  verification?: string | null;
-  entity_type?: string | null;
-  ig_username?: string | null;
-  page_alias?: string | null;
-  likes?: number | null;
-  ig_followers?: number | null;
+type Candidate = MetaPageSearchResult;
+
+type SuggestionSession = {
+  context: BrowserContext;
+  page: Page;
+  country: string;
+  requestCount: number;
+  busy: Promise<void> | null;
+  lastUsedAt: number;
 };
-
-type SearchApiResponse = {
-  page_results?: SearchApiPageResult[];
-};
-
-const ENDPOINT =
-  "https://www.searchapi.io/api/v1/search";
-
-const TIMEOUT_MS = 5_000;
-const CACHE_TTL_MS = 45_000;
-const CACHE_MAX_ENTRIES = 250;
 
 type CacheEntry = {
   expiresAt: number;
-  promise?: Promise<MetaPageSearchResult[]>;
-  value?: MetaPageSearchResult[];
+  value: Candidate[];
 };
 
-const cache = new Map<string, CacheEntry>();
+const META_LIBRARY_URL = "https://www.facebook.com/ads/library/";
+const DEFAULT_COUNTRY = "IN";
+const NAV_TIMEOUT_MS = 8_000;
+const SUGGESTION_WAIT_MS = 900;
+const OVERALL_TIMEOUT_MS = 4_500;
+const CACHE_TTL_MS = 30_000;
+const CACHE_MAX = 180;
+const SESSION_MAX_REQUESTS = 80;
+const SESSION_IDLE_MS = 2 * 60_000;
+const MAX_SUGGESTIONS = 8;
 
-function getApiKey(): string | null {
-  const key = process.env.SEARCHAPI_API_KEY?.trim();
-  return key || null;
-}
+const cache = new Map<string, CacheEntry>();
+const sessions = new Map<string, SuggestionSession>();
+
+let browser: Browser | null = null;
+let browserPromise: Promise<Browser> | null = null;
 
 function normalizeCountry(value: string): string {
-  const result = value.trim().toLowerCase();
-  return /^[a-z]{2}$/.test(result) ? result : "in";
+  const country = value.trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(country) ? country : DEFAULT_COUNTRY;
 }
 
-function trimCache(): void {
-  if (cache.size <= CACHE_MAX_ENTRIES) {
-    return;
+function normalizeQuery(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function normalize(value: string): string {
+  return value
+    .toLocaleLowerCase()
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function relevanceScore(name: string, query: string): number {
+  const n = normalize(name);
+  const q = normalize(query);
+  if (!n || !q) return -1;
+
+  if (n === q) return 10000;
+  if (n.startsWith(q)) return 9000 - Math.max(0, n.length - q.length);
+  if (n.includes(q)) return 7000 - n.indexOf(q);
+
+  const tokens = q.split(" ").filter(Boolean);
+  if (tokens.length && tokens.every((token) => n.includes(token))) {
+    return 5000 - Math.max(0, n.length - q.length);
   }
 
+  return -1;
+}
+
+function trimCache() {
   const now = Date.now();
 
   for (const [key, entry] of cache) {
-    if (entry.expiresAt <= now) {
-      cache.delete(key);
-    }
-
-    if (cache.size <= CACHE_MAX_ENTRIES) {
-      break;
-    }
+    if (entry.expiresAt <= now) cache.delete(key);
   }
 
-  while (cache.size > CACHE_MAX_ENTRIES) {
-    const firstKey = cache.keys().next().value;
-    if (firstKey === undefined) {
-      break;
-    }
-    cache.delete(firstKey);
+  while (cache.size > CACHE_MAX) {
+    const first = cache.keys().next().value;
+    if (first === undefined) break;
+    cache.delete(first);
   }
 }
 
-async function fetchPages(
-  query: string,
-  country: string,
-): Promise<MetaPageSearchResult[]> {
-  const apiKey = getApiKey();
+function cacheKey(query: string, country: string) {
+  return `${country}|${normalize(query)}`;
+}
 
-  if (!apiKey || query.length < 2) {
-    return [];
+function localChromeExecutable(): string {
+  const candidates = [
+    process.env.CHROME_EXECUTABLE_PATH,
+    process.env.EDGE_EXECUTABLE_PATH,
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+  ].filter((value): value is string => Boolean(value?.trim()));
+
+  for (const candidate of candidates) {
+    try {
+      const resolved = path.resolve(candidate);
+      if (existsSync(resolved)) return resolved;
+    } catch {
+      // Continue.
+    }
   }
 
-  const params = new URLSearchParams({
-    engine: "meta_ad_library_page_search",
-    q: query,
-    country: normalizeCountry(country),
+  throw new Error(
+    "No local Chrome or Edge executable found. Set CHROME_EXECUTABLE_PATH or EDGE_EXECUTABLE_PATH.",
+  );
+}
+
+async function getBrowser(): Promise<Browser> {
+  if (browser?.isConnected()) return browser;
+
+  browser = null;
+
+  if (!browserPromise) {
+    browserPromise = (async () => {
+      const local =
+        process.platform === "win32" || process.env.IS_LOCAL === "true";
+
+      const executablePath = local
+        ? localChromeExecutable()
+        : await chromiumPack.executablePath(
+            process.env.CHROMIUM_PACK_URL?.trim() || undefined,
+          );
+
+      const args = local
+        ? ["--disable-dev-shm-usage", "--disable-gpu"]
+        : [
+            ...chromiumPack.args,
+            "--disable-dev-shm-usage",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+          ];
+
+      const next = await chromium.launch({
+        executablePath,
+        args,
+        headless: true,
+      });
+
+      next.on("disconnected", () => {
+        if (browser === next) browser = null;
+      });
+
+      browser = next;
+      return next;
+    })().finally(() => {
+      browserPromise = null;
+    });
+  }
+
+  return browserPromise;
+}
+
+async function acceptCookies(page: Page) {
+  const labels = [
+    "Allow all cookies",
+    "Accept all",
+    "Allow essential and optional cookies",
+    "Only allow essential cookies",
+  ];
+
+  for (const label of labels) {
+    try {
+      const button = page.getByRole("button", {
+        name: label,
+        exact: true,
+      }).first();
+
+      if (await button.isVisible()) {
+        await button.click({ timeout: 300 });
+        return;
+      }
+    } catch {
+      // Ignore.
+    }
+  }
+}
+
+function addCandidate(
+  map: Map<string, Candidate>,
+  candidate: Partial<Candidate>,
+  query: string,
+) {
+  const pageId = String(candidate.pageId ?? "").trim();
+  const name = String(candidate.name ?? "").replace(/\s+/g, " ").trim();
+  const score = relevanceScore(name, query);
+
+  if (!/^\d+$/.test(pageId) || !name || score < 0) return;
+
+  const normalizedCandidate: Candidate = {
+    pageId,
+    name,
+    category: candidate.category ?? null,
+    imageUrl: candidate.imageUrl ?? null,
+    verification: candidate.verification ?? null,
+    entityType: candidate.entityType ?? null,
+    igUsername: candidate.igUsername ?? null,
+    pageAlias: candidate.pageAlias ?? null,
+    likes:
+      typeof candidate.likes === "number" && Number.isFinite(candidate.likes)
+        ? candidate.likes
+        : null,
+    igFollowers:
+      typeof candidate.igFollowers === "number" &&
+      Number.isFinite(candidate.igFollowers)
+        ? candidate.igFollowers
+        : null,
+  };
+
+  const existing = map.get(pageId);
+  if (!existing) {
+    map.set(pageId, normalizedCandidate);
+  }
+}
+
+function extractCandidatesFromJSON(
+  payload: unknown,
+  query: string,
+): Candidate[] {
+  const found = new Map<string, Candidate>();
+  const visited = new Set<object>();
+  const MAX_NODES = 30_000;
+
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    if (found.size >= MAX_SUGGESTIONS) return;
+    if (visited.has(value as object)) return;
+    if (visited.size >= MAX_NODES) return;
+
+    visited.add(value as object);
+
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+
+    const object = value as Record<string, unknown>;
+
+    const pageId =
+      object.page_id ??
+      object.pageId ??
+      object.view_all_page_id ??
+      object.pageID ??
+      object.id;
+
+    const name =
+      object.page_name ??
+      object.pageName ??
+      object.name ??
+      object.title;
+
+    if (pageId != null && typeof name === "string") {
+      addCandidate(
+        found,
+        {
+          pageId: String(pageId),
+          name,
+          category:
+            (object.category as string | null | undefined) ??
+            (object.page_category as string | null | undefined) ??
+            null,
+          imageUrl:
+            (object.image_uri as string | null | undefined) ??
+            (object.image_url as string | null | undefined) ??
+            (object.profile_picture_uri as string | null | undefined) ??
+            (object.profile_picture_url as string | null | undefined) ??
+            null,
+          verification:
+            (object.verification as string | null | undefined) ??
+            (object.verification_status as string | null | undefined) ??
+            null,
+          entityType:
+            (object.entity_type as string | null | undefined) ??
+            null,
+          igUsername:
+            (object.ig_username as string | null | undefined) ??
+            null,
+          pageAlias:
+            (object.page_alias as string | null | undefined) ??
+            null,
+          likes:
+            typeof object.likes === "number" ? object.likes : null,
+          igFollowers:
+            typeof object.ig_followers === "number"
+              ? object.ig_followers
+              : null,
+        },
+        query,
+      );
+    }
+
+    for (const child of Object.values(object)) visit(child);
+  };
+
+  visit(payload);
+  return [...found.values()];
+}
+
+async function extractCandidatesFromDOM(
+  page: Page,
+  query: string,
+): Promise<Candidate[]> {
+  const rows = await page.evaluate((searchQuery) => {
+    const normalize = (value: string) =>
+      value
+        .toLocaleLowerCase()
+        .normalize("NFKC")
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const q = normalize(searchQuery);
+    const output: Array<Record<string, string | null>> = [];
+
+    const visible = (el: Element) => {
+      const node = el as HTMLElement;
+      return Boolean(node.offsetWidth || node.offsetHeight || node.getClientRects().length);
+    };
+
+    const score = (name: string) => {
+      const n = normalize(name);
+      if (n === q) return 10000;
+      if (n.startsWith(q)) return 9000;
+      if (n.includes(q)) return 7000;
+      const tokens = q.split(" ").filter(Boolean);
+      return tokens.length && tokens.every((t) => n.includes(t)) ? 5000 : -1;
+    };
+
+    const readId = (el: Element): string | null => {
+      const attrs = [
+        "data-page-id",
+        "data-pageid",
+        "data-id",
+        "data-object-id",
+      ];
+
+      for (const attr of attrs) {
+        const value = el.getAttribute(attr);
+        if (value && /^\d+$/.test(value)) return value;
+      }
+
+      const hrefs = [
+        ...Array.from(el.matches("a[href]") ? [el] : []),
+        ...Array.from(el.querySelectorAll("a[href]")),
+      ]
+        .map((a) => a.getAttribute("href") ?? "")
+        .filter(Boolean);
+
+      for (const href of hrefs) {
+        const match =
+          href.match(/(?:view_all_page_id|page_id)=(\d+)/i) ??
+          href.match(/facebook\.com\/profile\.php\?id=(\d+)/i);
+
+        if (match?.[1]) return match[1];
+      }
+
+      return null;
+    };
+
+    for (const el of Array.from(
+      document.querySelectorAll(
+        '[role="option"],[role="listbox"] [role="option"],[role="listbox"] a,[role="menuitem"],a[href*="view_all_page_id"]',
+      ),
+    )) {
+      if (!visible(el)) continue;
+
+      const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+      if (!text) continue;
+
+      const firstLine =
+        (el.textContent ?? "")
+          .split(/\r?\n/)
+          .map((v) => v.trim())
+          .find(Boolean) ?? text;
+
+      const name =
+        el.querySelector("strong,b,h3,h4")?.textContent?.trim() ??
+        firstLine;
+
+      if (!name || score(name) < 0) continue;
+
+      const pageId = readId(el);
+      if (!pageId) continue;
+
+      const img = el.querySelector("img") as HTMLImageElement | null;
+
+      output.push({
+        pageId,
+        name,
+        imageUrl: img?.currentSrc ?? img?.src ?? null,
+        category: null,
+        verification: null,
+        entityType: null,
+        igUsername: null,
+        pageAlias: null,
+      });
+    }
+
+    return output;
+  }, query);
+
+  const result = new Map<string, Candidate>();
+
+  for (const row of rows) {
+    addCandidate(result, row, query);
+  }
+
+  return [...result.values()];
+}
+
+async function extractNetworkCandidates(
+  payloads: unknown[],
+  query: string,
+): Promise<Candidate[]> {
+  const result = new Map<string, Candidate>();
+
+  for (const payload of payloads) {
+    for (const candidate of extractCandidatesFromJSON(payload, query)) {
+      result.set(candidate.pageId, candidate);
+    }
+  }
+
+  return [...result.values()];
+}
+
+async function createSuggestionSession(
+  browserInstance: Browser,
+  country: string,
+): Promise<SuggestionSession> {
+  const context = await browserInstance.newContext({
+    locale: "en-IN",
+    viewport: {
+      width: 1280,
+      height: 900,
+    },
   });
 
-  const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    TIMEOUT_MS,
+  const page = await context.newPage();
+  page.setDefaultTimeout(2_000);
+
+  const session: SuggestionSession = {
+    context,
+    page,
+    country,
+    requestCount: 0,
+    busy: null,
+    lastUsedAt: Date.now(),
+  };
+
+  await page.goto(
+    `${META_LIBRARY_URL}?active_status=all&ad_type=all&country=${encodeURIComponent(
+      country,
+    )}&media_type=all&is_targeted_country=false`,
+    {
+      waitUntil: "domcontentloaded",
+      timeout: NAV_TIMEOUT_MS,
+    },
   );
 
+  await acceptCookies(page);
+  return session;
+}
+
+async function getSuggestionSession(
+  browserInstance: Browser,
+  country: string,
+): Promise<SuggestionSession> {
+  const existing = sessions.get(country);
+
+  if (
+    existing &&
+    existing.requestCount < SESSION_MAX_REQUESTS &&
+    Date.now() - existing.lastUsedAt < SESSION_IDLE_MS &&
+    existing.page.isClosed() === false
+  ) {
+    return existing;
+  }
+
+  if (existing) {
+    await existing.context.close().catch(() => undefined);
+    sessions.delete(country);
+  }
+
+  const created = await createSuggestionSession(browserInstance, country);
+  sessions.set(country, created);
+  return created;
+}
+
+async function findVisibleMetaSearchInput(page: Page) {
+  const selectors = [
+    'input[type="search"]:visible',
+    'input[role="searchbox"]:visible',
+    'input[aria-label*="search" i]:visible',
+    'input[placeholder*="search" i]:visible',
+    'input[type="text"]:visible',
+    'input:not([type="hidden"]):visible',
+  ];
+
+  for (const selector of selectors) {
+    try {
+      const locator = page.locator(selector);
+      const count = Math.min(await locator.count(), 8);
+
+      for (let index = 0; index < count; index += 1) {
+        const candidate = locator.nth(index);
+        if (!(await candidate.isVisible())) continue;
+
+        const box = await candidate.boundingBox().catch(() => null);
+        if (!box || box.width < 160 || box.height < 18) continue;
+
+        return candidate;
+      }
+    } catch {
+      // Try next candidate selector.
+    }
+  }
+
+  return null;
+}
+
+async function runInteractiveLookup(
+  session: SuggestionSession,
+  query: string,
+): Promise<Candidate[]> {
+  const page = session.page;
+  session.requestCount += 1;
+  session.lastUsedAt = Date.now();
+
+  const payloads: unknown[] = [];
+
+  const onResponse = async (response: {
+    url(): string;
+    headers(): Record<string, string>;
+    json(): Promise<unknown>;
+  }) => {
+    const url = response.url();
+
+    if (
+      !url.includes("facebook.com") ||
+      !/(graphql|ajax|api|ads\/library)/i.test(url)
+    ) {
+      return;
+    }
+
+    const contentType = response.headers()["content-type"] ?? "";
+    if (!contentType.includes("json")) return;
+
+    try {
+      payloads.push(await response.json());
+    } catch {
+      // Ignore non-JSON responses.
+    }
+  };
+
+  page.on("response", onResponse);
+
   try {
-    const response = await fetch(
-      `${ENDPOINT}?${params.toString()}`,
-      {
-        method: "GET",
-        signal: controller.signal,
-        cache: "no-store",
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-      },
-    );
+    let input = await findVisibleMetaSearchInput(page);
 
-    if (!response.ok) {
-      const message =
-        response.status === 429
-          ? "rate_limited"
-          : `http_${response.status}`;
+    // Meta sometimes hydrates its search shell after DOMContentLoaded.
+    if (!input) {
+      await page.waitForTimeout(700);
+      input = await findVisibleMetaSearchInput(page);
+    }
 
-      console.warn(
-        "[MetaPageSearch] provider unavailable",
-        {
-          status: response.status,
-          reason: message,
-        },
-      );
+    // If the current page is still a pre-hydration shell, navigate directly
+    // to the same public Ad Library query and look again.
+    if (!input) {
+      try {
+        const url = new URL(META_LIBRARY_URL);
+        url.searchParams.set("active_status", "all");
+        url.searchParams.set("ad_type", "all");
+        url.searchParams.set("country", session.country);
+        url.searchParams.set("is_targeted_country", "false");
+        url.searchParams.set("media_type", "all");
+        url.searchParams.set("search_type", "keyword_unordered");
+        url.searchParams.set("q", query);
 
+        await page.goto(url.toString(), {
+          waitUntil: "domcontentloaded",
+          timeout: NAV_TIMEOUT_MS,
+        });
+
+        await page.waitForTimeout(500);
+        input = await findVisibleMetaSearchInput(page);
+      } catch (error) {
+        console.warn("[MetaPageSearch] query navigation fallback failed", error);
+      }
+    }
+
+    if (!input) {
+      console.warn("[MetaPageSearch] no usable Meta search input", {
+        url: page.url(),
+        title: await page.title().catch(() => ""),
+      });
       return [];
     }
 
-    const data =
-      (await response.json()) as SearchApiResponse;
+    await input.click({ timeout: 1_500 });
+    await input.fill("");
+    await input.pressSequentially(query, { delay: 5 });
 
-    const seen = new Set<string>();
+    // Short typeahead window: suggestions are driven by Meta's own events.
+    await page.waitForTimeout(650);
 
-    return (data.page_results ?? [])
-      .map((page) => ({
-        pageId: String(page.page_id ?? "").trim(),
-        name: String(page.name ?? "").trim(),
-        category: page.category ?? null,
-        imageUrl:
-          page.image_uri ??
-          page.image_url ??
-          null,
-        verification: page.verification ?? null,
-        entityType: page.entity_type ?? null,
-        igUsername: page.ig_username ?? null,
-        pageAlias: page.page_alias ?? null,
-        likes:
-          typeof page.likes === "number" &&
-          Number.isFinite(page.likes)
-            ? page.likes
-            : null,
-        igFollowers:
-          typeof page.ig_followers === "number" &&
-          Number.isFinite(page.ig_followers)
-            ? page.ig_followers
-            : null,
-      }))
-      .filter((page) => {
-        if (
-          !page.pageId ||
-          !page.name ||
-          seen.has(page.pageId)
-        ) {
-          return false;
-        }
+    const network = await extractNetworkCandidates(payloads, query);
+    const dom = await extractCandidatesFromDOM(page, query);
 
-        seen.add(page.pageId);
-        return true;
-      });
-  } catch (error) {
-    if (
-      error instanceof DOMException &&
-      error.name === "AbortError"
-    ) {
-      console.warn("[MetaPageSearch] timeout");
-    } else {
-      console.error(
-        "[MetaPageSearch] request failed",
-        error,
-      );
+    const merged = new Map<string, Candidate>();
+
+    for (const candidate of [...dom, ...network]) {
+      const existing = merged.get(candidate.pageId);
+
+      if (!existing) {
+        merged.set(candidate.pageId, candidate);
+      } else {
+        merged.set(candidate.pageId, {
+          ...existing,
+          imageUrl: existing.imageUrl ?? candidate.imageUrl,
+          category: existing.category ?? candidate.category,
+          verification: existing.verification ?? candidate.verification,
+          likes: existing.likes ?? candidate.likes,
+          igFollowers: existing.igFollowers ?? candidate.igFollowers,
+          igUsername: existing.igUsername ?? candidate.igUsername,
+          pageAlias: existing.pageAlias ?? candidate.pageAlias,
+        });
+      }
     }
+
+    return [...merged.values()]
+      .map((candidate) => ({
+        candidate,
+        score: relevanceScore(candidate.name, query),
+      }))
+      .filter(({ score }) => score >= 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, MAX_SUGGESTIONS)
+      .map(({ candidate }) => candidate);
+  } finally {
+    page.off("response", onResponse);
+  }
+}
+
+async function lookupMetaPages(
+  query: string,
+  country: string,
+): Promise<Candidate[]> {
+  const browserInstance = await getBrowser();
+  const session = await getSuggestionSession(browserInstance, country);
+
+  let resolveBusy!: () => void;
+  const previous = session.busy;
+
+  const gate = new Promise<void>((resolve) => {
+    resolveBusy = resolve;
+  });
+
+  session.busy = previous ? previous.then(() => gate) : gate;
+
+  await previous;
+
+  try {
+    return await runInteractiveLookup(session, query);
+  } catch (error) {
+    console.warn("[MetaPageSearch] interactive public lookup failed", error);
+
+    await session.context.close().catch(() => undefined);
+    sessions.delete(country);
 
     return [];
   } finally {
-    clearTimeout(timeout);
+    resolveBusy();
+    if (session.busy === gate) {
+      session.busy = null;
+    }
   }
 }
 
 export async function searchMetaPages(
   query: string,
-  country = "IN",
+  country = DEFAULT_COUNTRY,
 ): Promise<MetaPageSearchResult[]> {
-  const normalizedQuery =
-    query.replace(/\s+/g, " ").trim();
+  const normalizedQuery = normalizeQuery(query);
+  const normalizedCountry = normalizeCountry(country);
 
-  const normalizedCountry =
-    normalizeCountry(country);
+  if (normalizedQuery.length < 2) return [];
 
-  if (normalizedQuery.length < 2) {
-    return [];
+  const key = cacheKey(normalizedQuery, normalizedCountry);
+  const cached = cache.get(key);
+
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
   }
 
-  /*
-   * Autocomplete searches are prefix-oriented. Cache the normalized
-   * first five characters so "foxtal", "foxtale", etc. share one
-   * upstream request during active typing.
-   */
-  const prefixKey =
-    normalizedQuery
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "")
-      .slice(0, 5);
-
-  const key =
-    `${normalizedCountry}|${prefixKey}`;
-
-  const now = Date.now();
-  const existing = cache.get(key);
-
-  if (
-    existing &&
-    existing.expiresAt > now
-  ) {
-    if (existing.promise) {
-      return existing.promise;
-    }
-
-    return existing.value ?? [];
-  }
-
-  const promise = fetchPages(
-    normalizedQuery,
-    normalizedCountry,
-  );
+  const value = await Promise.race([
+    lookupMetaPages(normalizedQuery, normalizedCountry),
+    new Promise<Candidate[]>((resolve) =>
+      setTimeout(() => resolve([]), OVERALL_TIMEOUT_MS),
+    ),
+  ]);
 
   cache.set(key, {
-    expiresAt: now + CACHE_TTL_MS,
-    promise,
+    expiresAt: Date.now() + CACHE_TTL_MS,
+    value,
   });
-
   trimCache();
 
-  try {
-    const value = await promise;
-
-    cache.set(key, {
-      expiresAt: Date.now() + CACHE_TTL_MS,
-      value,
-    });
-
-    return value;
-  } catch {
-    cache.delete(key);
-    return [];
-  }
+  return value;
 }
 
-export function normalizeAdvertiserName(
-  value: string,
-): string {
-  return value
-    .toLocaleLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+export function normalizeAdvertiserName(value: string): string {
+  return normalize(value);
 }
 
-export function inferDomain(
-  page: MetaPageSearchResult,
-): string | null {
-  const username = page.igUsername;
-
-  if (!username) {
-    return null;
-  }
-
-  return `https://instagram.com/${encodeURIComponent(username)}`;
+export function inferDomain(page: MetaPageSearchResult): string | null {
+  return page.igUsername
+    ? `https://instagram.com/${encodeURIComponent(page.igUsername)}`
+    : null;
 }

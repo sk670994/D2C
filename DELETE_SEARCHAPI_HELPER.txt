@@ -1,0 +1,2 @@
+Delete this legacy file if present:
+lib/ad-intelligence/live/meta-searchapi.ts

@@ -33,7 +33,7 @@ import {
 const META_LIBRARY_URL = "https://www.facebook.com/ads/library/";
 const DEFAULT_COUNTRY = "IN";
 const QUICK_MAX_SCROLLS = 14;
-const QUICK_TARGET = 24;
+const QUICK_TARGET = 25;
 const QUICK_STABLE_ROUNDS = 3;
 const DEEP_MAX_SCROLLS = 360;
 const DEEP_TARGET = 1200;
@@ -466,7 +466,10 @@ async function scrollToRevealMore(page: Page): Promise<{
   }));
 }
 
-async function scrapeOnce(input: AdSearchInput): Promise<CompetitorAd[]> {
+async function scrapeOnce(
+  input: AdSearchInput,
+  onBatch?: (ads: CompetitorAd[]) => Promise<void> | void,
+): Promise<CompetitorAd[]> {
   const pageUrl = buildLibraryUrl(input);
   const quick = input.collectionDepth !== "deep";
   const maxScrolls = quick ? QUICK_MAX_SCROLLS : DEEP_MAX_SCROLLS;
@@ -500,6 +503,7 @@ async function scrapeOnce(input: AdSearchInput): Promise<CompetitorAd[]> {
     }
 
     const collected = new Map<string, CompetitorAd>();
+    const pendingBatch: CompetitorAd[] = [];
     let stableRounds = 0;
     let previousCount = 0;
     let previousScrollHeight = 0;
@@ -519,7 +523,13 @@ async function scrapeOnce(input: AdSearchInput): Promise<CompetitorAd[]> {
 
         if (!collected.has(ad.id)) {
           collected.set(ad.id, ad);
+          pendingBatch.push(ad);
           added += 1;
+
+          if (onBatch && pendingBatch.length >= 25) {
+            const batch = pendingBatch.splice(0, 25);
+            await onBatch(batch);
+          }
         }
       }
 
@@ -590,6 +600,11 @@ async function scrapeOnce(input: AdSearchInput): Promise<CompetitorAd[]> {
       if (ad && isRelevant(ad, input)) collected.set(ad.id, ad);
     }
 
+    if (onBatch && pendingBatch.length > 0) {
+      const batch = pendingBatch.splice(0, pendingBatch.length);
+      await onBatch(batch);
+    }
+
     return dedupeAds(Array.from(collected.values())).sort((a, b) => {
       const active = Number(Boolean(b.isActive)) - Number(Boolean(a.isActive));
       if (active) return active;
@@ -598,6 +613,26 @@ async function scrapeOnce(input: AdSearchInput): Promise<CompetitorAd[]> {
   } finally {
     if (context) await context.close().catch(() => undefined);
   }
+}
+
+
+export async function collectMetaAdsInBatches(
+  input: AdSearchInput,
+  onBatch: (ads: CompetitorAd[]) => Promise<void> | void,
+): Promise<number> {
+  const normalized: AdSearchInput = {
+    ...input,
+    query: input.query.trim(),
+    country: (input.country ?? DEFAULT_COUNTRY).trim().toUpperCase(),
+    mode: input.mode === "keyword" ? "keyword" : "advertiser",
+    collectionDepth: input.collectionDepth === "quick" ? "quick" : "deep",
+    advertiserPageId: input.advertiserPageId?.trim() || null,
+  };
+
+  if (normalized.query.length < 2) return 0;
+
+  const ads = await scrapeOnce(normalized, onBatch);
+  return ads.length;
 }
 
 export const deepMetaProvider: AdProvider = {

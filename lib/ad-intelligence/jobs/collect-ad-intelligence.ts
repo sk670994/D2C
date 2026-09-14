@@ -3,10 +3,15 @@ import "server-only";
 import { adProviders } from "@/lib/ad-intelligence/providers";
 import type { AdPlatform, CompetitorAd } from "@/lib/ad-intelligence/types";
 import type { AdSearchMode, CollectionDepth } from "@/lib/ad-intelligence/provider";
-import { getCollectionJob, markTrackedBrandCollected, updateCollectionJob } from "@/lib/ad-intelligence/global/store";
+import {
+  getCollectionJob,
+  markTrackedBrandCollected,
+  updateCollectionJob,
+} from "@/lib/ad-intelligence/global/store";
 import { processAdChunk } from "./process-ad-chunk";
+import { collectMetaAdsInBatches } from "@/lib/ad-intelligence/providers/deep-meta";
 
-const CHUNK_SIZE = 50;
+const CHUNK_SIZE = 25;
 
 type Phase = "quick" | "deep";
 
@@ -27,9 +32,23 @@ type State = {
   persistedAds: number;
 };
 
-export async function collectAdIntelligence(data: CollectionEvent): Promise<State & { jobId: string }> {
+function uniqueBatch(ads: CompetitorAd[], seen: Set<string>): CompetitorAd[] {
+  const unique: CompetitorAd[] = [];
+  for (const ad of ads) {
+    const id = String(ad.id ?? "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    unique.push(ad);
+  }
+  return unique;
+}
+
+export async function collectAdIntelligence(
+  data: CollectionEvent,
+): Promise<State & { jobId: string }> {
   const job = await getCollectionJob(data.jobId);
   if (!job) throw new Error(`Collection job ${data.jobId} was not found.`);
+
   if (job.status === "complete") {
     return {
       jobId: job.id,
@@ -39,34 +58,46 @@ export async function collectAdIntelligence(data: CollectionEvent): Promise<Stat
     };
   }
 
-  const initialDepth: Phase = data.platform === "meta" && data.collectionDepth === "quick" ? "quick" : "deep";
-  const state: State = { discoveredAds: 0, normalizedAds: 0, persistedAds: 0 };
+  const initialDepth: Phase =
+    data.platform === "meta" && data.collectionDepth === "quick"
+      ? "quick"
+      : "deep";
 
-  const persist = async (phase: Phase, ads: CompetitorAd[]) => {
+  const state: State = {
+    discoveredAds: 0,
+    normalizedAds: 0,
+    persistedAds: 0,
+  };
+
+  const seenIds = new Set<string>();
+
+  const persist = async (phase: Phase, incoming: CompetitorAd[]) => {
+    const ads = uniqueBatch(incoming, seenIds);
+    if (!ads.length) return;
+
     state.discoveredAds += ads.length;
-    if (!ads.length) {
+
+    for (let offset = 0; offset < ads.length; offset += CHUNK_SIZE) {
+      const chunk = ads.slice(offset, offset + CHUNK_SIZE);
+      const result = await processAdChunk({ ads: chunk });
+
+      state.normalizedAds += chunk.length;
+      state.persistedAds += Number(result.insertedOrUpdated ?? 0);
+
       await updateCollectionJob(data.jobId, {
-        status: phase === "quick" ? "scraping" : "enriching",
-        stage: phase === "quick" ? "scraping" : "enriching",
+        status: phase === "deep" ? "enriching" : "scraping",
+        stage: phase === "deep" ? "enriching" : "scraping",
         discoveredAds: state.discoveredAds,
         normalizedAds: state.normalizedAds,
         persistedAds: state.persistedAds,
       });
-      return;
-    }
 
-    const totalChunks = Math.ceil(ads.length / CHUNK_SIZE);
-    for (let offset = 0; offset < ads.length; offset += CHUNK_SIZE) {
-      const chunk = ads.slice(offset, offset + CHUNK_SIZE);
-      const result = await processAdChunk({ ads: chunk });
-      state.normalizedAds += chunk.length;
-      state.persistedAds += Number(result.insertedOrUpdated ?? 0);
-      const finalChunk = Math.floor(offset / CHUNK_SIZE) + 1 === totalChunks;
-      await updateCollectionJob(data.jobId, {
-        status: phase === "deep" && finalChunk ? "finalizing" : "enriching",
-        stage: phase === "deep" && finalChunk ? "finalizing" : "enriching",
+      console.info("[AdIntelligenceJob] batch persisted", {
+        jobId: data.jobId,
+        query: data.query,
+        phase,
+        batchSize: chunk.length,
         discoveredAds: state.discoveredAds,
-        normalizedAds: state.normalizedAds,
         persistedAds: state.persistedAds,
       });
     }
@@ -83,20 +114,9 @@ export async function collectAdIntelligence(data: CollectionEvent): Promise<Stat
       persistedAds: 0,
     });
 
-    const provider = adProviders[data.platform];
-    if (!provider) throw new Error(`No provider configured for ${data.platform}.`);
-
-    const collect = async (phase: Phase) => {
-      const result = await provider.search({
-        query: data.query,
-        country: data.country,
-        platform: data.platform,
-        mode: data.mode,
-        collectionDepth: phase,
-        advertiserPageId: data.advertiserPageId ?? null,
-      });
-      return result.ads ?? [];
-    };
+    if (!adProviders[data.platform]) {
+      throw new Error(`No provider configured for ${data.platform}.`);
+    }
 
     console.info("[AdIntelligenceJob] start", {
       jobId: data.jobId,
@@ -108,21 +128,54 @@ export async function collectAdIntelligence(data: CollectionEvent): Promise<Stat
       advertiserPageId: data.advertiserPageId ?? null,
     });
 
-    const quickAds = await collect(initialDepth);
-    await persist(initialDepth, quickAds);
+    if (data.platform === "meta") {
+      const streamInput: {
+        query: string;
+        country: string;
+        platform: AdPlatform;
+        mode: AdSearchMode;
+        collectionDepth: CollectionDepth;
+        advertiserPageId: string | null;
+      } = {
+            query: data.query,
+            country: data.country,
+            platform: data.platform,
+            mode: data.mode,
+            collectionDepth: initialDepth,
+            advertiserPageId: data.advertiserPageId ?? null,
+          };
 
-    // Meta uses a quick-first UX: persist useful results, then broaden the same job in the background.
-    if (data.platform === "meta" && initialDepth === "quick") {
-      await updateCollectionJob(data.jobId, {
-        status: "scraping",
-        stage: "scraping",
-        discoveredAds: state.discoveredAds,
-        normalizedAds: state.normalizedAds,
-        persistedAds: state.persistedAds,
+      await collectMetaAdsInBatches(streamInput, async (batch) => {
+        await persist(initialDepth, batch);
       });
 
-      const deepAds = await collect("deep");
-      await persist("deep", deepAds);
+      if (initialDepth === "quick") {
+        await updateCollectionJob(data.jobId, {
+          status: "scraping",
+          stage: "scraping",
+          discoveredAds: state.discoveredAds,
+          normalizedAds: state.normalizedAds,
+          persistedAds: state.persistedAds,
+        });
+
+        await collectMetaAdsInBatches(
+          { ...streamInput, collectionDepth: "deep" },
+          async (batch) => {
+            await persist("deep", batch);
+          },
+        );
+      }
+    } else {
+      const result = await adProviders[data.platform]!.search({
+        query: data.query,
+        country: data.country,
+        platform: data.platform,
+        mode: data.mode,
+        collectionDepth: initialDepth,
+        advertiserPageId: data.advertiserPageId ?? null,
+      });
+
+      await persist(initialDepth, result.ads ?? []);
     }
 
     await updateCollectionJob(data.jobId, {
@@ -143,7 +196,9 @@ export async function collectAdIntelligence(data: CollectionEvent): Promise<Stat
 
     return { jobId: data.jobId, ...state };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Collection failed.";
+    const message =
+      error instanceof Error ? error.message : "Collection failed.";
+
     await updateCollectionJob(data.jobId, {
       status: "failed",
       stage: "failed",
@@ -152,7 +207,10 @@ export async function collectAdIntelligence(data: CollectionEvent): Promise<Stat
       normalizedAds: state.normalizedAds,
       persistedAds: state.persistedAds,
       completedAt: new Date().toISOString(),
-    }).catch((updateError) => console.error("[AdIntelligenceJob] failed-state update failed", updateError));
+    }).catch((updateError) => {
+      console.error("[AdIntelligenceJob] failed-state update failed", updateError);
+    });
+
     throw error;
   }
 }
