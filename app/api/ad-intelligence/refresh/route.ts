@@ -2,135 +2,404 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
+
 import type { AdPlatform } from "@/lib/ad-intelligence/types";
 import type { CollectionDepth } from "@/lib/ad-intelligence/provider";
 import type { CollectionEvent } from "@/lib/ad-intelligence/jobs/collect-ad-intelligence";
-import { buildAdvertiserCollectionKey, getOrCreateAdvertiserCollectionJob } from "@/lib/ad-intelligence/global/page-aware-store";
-import { claimCollectionDispatch, getCollectionJob, updateCollectionJob } from "@/lib/ad-intelligence/global/store";
+
+import {
+  buildAdvertiserCollectionKey,
+  getOrCreateAdvertiserCollectionJob,
+} from "@/lib/ad-intelligence/global/page-aware-store";
+
+import {
+  getCollectionJob,
+  updateCollectionJob,
+} from "@/lib/ad-intelligence/global/store";
+
 import { dispatchAdSpyCollection } from "@/lib/ad-intelligence/jobs/dispatch-adspy-collection";
 import { checkRateLimit } from "@/lib/rate-limit";
+
+import {
+  enqueueAdSpyRequest,
+  getDurableRunByCollectionJob,
+  getOrCreateDurableRun,
+} from "@/lib/ad-intelligence/durable-run";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ACTIVE_STATUSES = new Set(["queued", "scraping", "normalizing", "enriching", "finalizing", "deep_queued", "deep"]);
-const STALE_AFTER_MS = 3 * 60_000;
+const ACTIVE_JOB_STATUSES = new Set([
+  "queued",
+  "scraping",
+  "normalizing",
+  "enriching",
+  "finalizing",
+  "deep_queued",
+  "deep",
+]);
+
+const ACTIVE_RUN_STATUSES = new Set([
+  "queued",
+  "running",
+  "retrying",
+]);
+
 const MIN_REFRESH_INTERVAL_MS = 10 * 60_000;
 
 function normalizePlatform(value: string | null): AdPlatform {
-  return value === "google" || value === "linkedin" ? value : "meta";
+  return value === "google" || value === "linkedin"
+    ? value
+    : "meta";
 }
 
-function normalizeMode(value: string | null): "advertiser" | "keyword" {
-  return value === "keyword" ? "keyword" : "advertiser";
+function normalizeMode(
+  value: string | null,
+): "advertiser" | "keyword" {
+  return value === "keyword"
+    ? "keyword"
+    : "advertiser";
 }
 
-function isStale(job: { status: string; updatedAt: string }) {
-  if (!ACTIVE_STATUSES.has(job.status)) return false;
-  const updated = new Date(job.updatedAt).getTime();
-  return !Number.isFinite(updated) || Date.now() - updated > STALE_AFTER_MS;
-}
-
-function mapJob(job: Awaited<ReturnType<typeof getOrCreateAdvertiserCollectionJob>>) {
+function mapJob(job: any) {
   return {
     id: job.id,
     status: job.status,
     stage: job.stage,
-    discoveredAds: Number(job.discoveredAds ?? 0),
-    normalizedAds: Number(job.normalizedAds ?? 0),
-    persistedAds: Number(job.persistedAds ?? 0),
-    errorMessage: job.errorMessage ?? null,
+    discoveredAds: Number(
+      job.discoveredAds ?? 0,
+    ),
+    normalizedAds: Number(
+      job.normalizedAds ?? 0,
+    ),
+    persistedAds: Number(
+      job.persistedAds ?? 0,
+    ),
+    errorMessage:
+      job.errorMessage ?? null,
   };
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const auth = await createServerAuthClient();
-    const userId = await getVerifiedUserId(auth);
-    if (!userId) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+function mapRun(run: any) {
+  if (!run) return null;
 
-    const rate = checkRateLimit(`adspy-refresh:${userId}`, 8, 60_000);
-    if (!rate.allowed) {
-      return NextResponse.json({ success: false, error: "Too many refresh requests." }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } });
+  return {
+    id: run.id,
+    status: run.status,
+    stage: run.stage,
+    discoveredAds:
+      run.discoveredAds,
+    normalizedAds:
+      run.normalizedAds,
+    persistedAds:
+      run.persistedAds,
+    queuedRequests:
+      run.queuedRequests,
+    runningRequests:
+      run.runningRequests,
+    completedRequests:
+      run.completedRequests,
+    failedRequests:
+      run.failedRequests,
+    attempt: run.attempt,
+    heartbeatAt:
+      run.heartbeatAt,
+    errorMessage:
+      run.errorMessage,
+  };
+}
+
+export async function POST(
+  request: NextRequest,
+) {
+  try {
+    const auth =
+      await createServerAuthClient();
+
+    const userId =
+      await getVerifiedUserId(
+        auth,
+      );
+
+    if (!userId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Unauthorized",
+        },
+        { status: 401 },
+      );
     }
 
-    const params = request.nextUrl.searchParams;
-    const query = (params.get("q") ?? "").replace(/\s+/g, " ").trim();
-    const country = (params.get("country") ?? "IN").trim().toUpperCase();
-    const platform = normalizePlatform(params.get("platform"));
-    const mode = normalizeMode(params.get("mode"));
-    const rawPageId = (params.get("pageId") ?? "").trim();
-    const pageId = platform === "meta" && mode === "advertiser" && /^\d+$/.test(rawPageId) ? rawPageId : null;
+    const rate = checkRateLimit(
+      `adspy-refresh:${userId}`,
+      8,
+      60_000,
+    );
 
-    if (query.length < 2) return NextResponse.json({ success: false, error: "Enter at least 2 characters." }, { status: 400 });
-    if (!/^[A-Z]{2}$/.test(country)) return NextResponse.json({ success: false, error: "Invalid country code." }, { status: 400 });
+    if (!rate.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Too many refresh requests.",
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After":
+              String(
+                rate.retryAfterSeconds,
+              ),
+          },
+        },
+      );
+    }
 
-    let job = await getOrCreateAdvertiserCollectionJob({
-      query,
-      country,
-      platform,
-      mode,
-      userId,
+    const params =
+      request.nextUrl.searchParams;
+
+    const query =
+      (
+        params.get("q") ??
+        ""
+      )
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const country =
+      (
+        params.get("country") ??
+        "IN"
+      )
+        .trim()
+        .toUpperCase();
+
+    const platform =
+      normalizePlatform(
+        params.get("platform"),
+      );
+
+    const mode =
+      normalizeMode(
+        params.get("mode"),
+      );
+
+    const rawPageId =
+      (
+        params.get("pageId") ??
+        ""
+      ).trim();
+
+    const pageId =
+      platform === "meta" &&
+      mode === "advertiser" &&
+      /^\d+$/.test(rawPageId)
+        ? rawPageId
+        : null;
+
+    if (query.length < 2) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Enter at least 2 characters.",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (!/^[A-Z]{2}$/.test(country)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Invalid country code.",
+        },
+        { status: 400 },
+      );
+    }
+
+    let job =
+      await getOrCreateAdvertiserCollectionJob(
+        {
+          query,
+          country,
+          platform,
+          mode,
+          userId,
+          advertiserPageId:
+            pageId,
+        },
+      );
+
+    const collectionKey =
+      buildAdvertiserCollectionKey({
+        query: job.query,
+        country: job.country,
+        platform: job.platform,
+        mode: job.mode,
+        pageId,
+      });
+
+    const existingRun =
+      await getDurableRunByCollectionJob(
+        job.id,
+        userId,
+      );
+
+    if (
+      ACTIVE_JOB_STATUSES.has(
+        job.status,
+      ) &&
+      existingRun &&
+      ACTIVE_RUN_STATUSES.has(
+        existingRun.status,
+      )
+    ) {
+      return NextResponse.json({
+        success: true,
+        job: mapJob(job),
+        durableRun:
+          mapRun(existingRun),
+        isRefreshing: true,
+        advertiserPageId: pageId,
+      });
+    }
+
+    const lastRequestedAt =
+      new Date(
+        job.lastRequestedAt,
+      ).getTime();
+
+    if (
+      ["complete","exhausted","failed","stale"].includes(
+        job.status,
+      ) &&
+      Number.isFinite(
+        lastRequestedAt,
+      ) &&
+      Date.now() -
+          lastRequestedAt <
+        MIN_REFRESH_INTERVAL_MS
+    ) {
+      return NextResponse.json({
+        success: true,
+        job: mapJob(job),
+        durableRun:
+          mapRun(existingRun),
+        isRefreshing: false,
+        advertiserPageId: pageId,
+      });
+    }
+
+    job =
+      await updateCollectionJob(
+        job.id,
+        {
+          status: "queued",
+          stage: "queued",
+          errorMessage: null,
+          completedAt: null,
+          discoveredAds: 0,
+          normalizedAds: 0,
+          persistedAds: 0,
+          startedAt: null,
+        },
+      );
+
+    const run =
+      await getOrCreateDurableRun({
+        userId,
+        collectionJobId:
+          job.id,
+        collectionKey,
+        query: job.query,
+        country: job.country,
+        platform: job.platform,
+        mode: job.mode,
+        advertiserPageId:
+          pageId,
+      });
+
+    const collectionDepth:
+      CollectionDepth =
+      platform === "meta"
+        ? "quick"
+        : "deep";
+
+    const payload: Omit<
+      CollectionEvent,
+      "requestId"
+    > = {
+      jobId: job.id,
+      query: job.query,
+      country: job.country,
+      platform: job.platform,
+      mode: job.mode,
+      collectionKey,
+      collectionDepth,
+      advertiserPageId: pageId,
+      runId: run.id,
+    };
+
+    const queueRequest =
+      await enqueueAdSpyRequest({
+        runId: run.id,
+        uniqueKey:
+          `${collectionKey}:initial`,
+        requestType: "initial",
+        payload,
+        priority: 100,
+        maxAttempts: 5,
+      });
+
+    const message: CollectionEvent = {
+      ...payload,
+      requestId:
+        queueRequest.id,
+    };
+
+    await dispatchAdSpyCollection(
+      message,
+      `${collectionKey}:initial:${run.id}`,
+    );
+
+    const freshJob =
+      (await getCollectionJob(
+        job.id,
+        userId,
+      )) ?? job;
+
+    const freshRun =
+      await getDurableRunByCollectionJob(
+        job.id,
+        userId,
+      );
+
+    return NextResponse.json({
+      success: true,
+      job: mapJob(freshJob),
+      durableRun:
+        mapRun(freshRun),
+      isRefreshing: true,
       advertiserPageId: pageId,
     });
-
-    const staleBeforeRequest = isStale(job);
-    if (staleBeforeRequest) {
-      job = await updateCollectionJob(job.id, {
-        status: "stale",
-        stage: "stale",
-        errorMessage: "Previous collection worker stopped reporting progress and was replaced.",
-        completedAt: new Date().toISOString(),
-      });
-      // A stale job is immediately eligible for a replacement dispatch.
-      job = await updateCollectionJob(job.id, {
-        status: "queued",
-        stage: "queued",
-        errorMessage: null,
-        completedAt: null,
-        discoveredAds: 0,
-        normalizedAds: 0,
-        persistedAds: 0,
-      });
-    } else if (ACTIVE_STATUSES.has(job.status)) {
-      return NextResponse.json({ success: true, job: mapJob(job), isRefreshing: true, advertiserPageId: pageId });
-    } else if ((job.status === "complete" || job.status === "exhausted" || job.status === "failed" || job.status === "stale") && Date.now() - new Date(job.lastRequestedAt).getTime() >= MIN_REFRESH_INTERVAL_MS) {
-      job = await updateCollectionJob(job.id, {
-        status: "queued",
-        stage: "queued",
-        errorMessage: null,
-        completedAt: null,
-        discoveredAds: 0,
-        normalizedAds: 0,
-        persistedAds: 0,
-      });
-    }
-
-    if (job.status === "queued") {
-      const claimed = await claimCollectionDispatch(job.id);
-      if (claimed) {
-        const latest = (await getCollectionJob(job.id, userId)) ?? job;
-        const collectionDepth: CollectionDepth = platform === "meta" ? "quick" : "deep";
-        const payload: CollectionEvent = {
-          jobId: latest.id,
-          query: latest.query,
-          country: latest.country,
-          platform: latest.platform,
-          mode: latest.mode,
-          collectionKey: buildAdvertiserCollectionKey({ query: latest.query, country: latest.country, platform: latest.platform, mode: latest.mode, pageId }),
-          collectionDepth,
-          advertiserPageId: pageId,
-        };
-
-        await dispatchAdSpyCollection(payload, `${payload.collectionKey}:quick`);
-        console.info("[ADSPY_COLLECTION_START]", { jobId: payload.jobId, query: payload.query, country: payload.country, platform: payload.platform, page: pageId ?? null, phase: "quick" });
-      }
-    }
-
-    const freshJob = (await getCollectionJob(job.id, userId)) ?? job;
-    return NextResponse.json({ success: true, job: mapJob(freshJob), isRefreshing: ACTIVE_STATUSES.has(freshJob.status), advertiserPageId: pageId });
   } catch (error) {
-    console.error("[AdSpy refresh]", error);
-    return NextResponse.json({ success: false, error: error instanceof Error ? error.message : "Background refresh failed." }, { status: 500 });
+    console.error(
+      "[AdSpy refresh]",
+      error,
+    );
+
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Background refresh failed.",
+      },
+      { status: 500 },
+    );
   }
 }

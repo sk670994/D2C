@@ -45,8 +45,8 @@ const CTA_VALUES = [
   "Shop Now", "Learn More", "Sign Up", "Buy Now", "Install Now", "Book Now",
   "Contact Us", "Get Offer", "Apply Now", "Download", "Subscribe", "Order Now",
   "Message Now", "Send Message", "Get Directions", "Call Now", "Watch More",
-  "Listen Now", "Play Game", "Use App", "à¤…à¤­à¥€ à¤–à¤°à¥€à¤¦à¥‡à¤‚", "à¤”à¤° à¤œà¤¾à¤¨à¥‡à¤‚", "à¤¸à¤¾à¤‡à¤¨ à¤…à¤ª à¤•à¤°à¥‡à¤‚",
-  "à¤…à¤­à¥€ à¤‡à¤‚à¤¸à¥à¤Ÿà¥‰à¤² à¤•à¤°à¥‡à¤‚", "à¤¸à¤‚à¤¦à¥‡à¤¶ à¤­à¥‡à¤œà¥‡à¤‚",
+  "Listen Now", "Play Game", "Use App", "अभी खरीदें", "और जानें", "साइन अप करें",
+  "अभी इंस्टॉल करें", "संदेश भेजें",
 ] as const;
 
 type RawCard = {
@@ -171,47 +171,12 @@ function isLikelyChallenge(text: string): boolean {
   ].some((x) => t.includes(x));
 }
 
-async function evaluateStable<T>(
-  page: Page,
-  evaluator: () => T,
-  attempts = 4,
-): Promise<T> {
-  let lastError: unknown = null;
-
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      return await page.evaluate(evaluator);
-    } catch (error) {
-      lastError = error;
-
-      const message =
-        error instanceof Error ? error.message : String(error);
-
-      const retryable =
-        message.includes("Execution context was destroyed") ||
-        message.includes("Cannot find context with specified id") ||
-        message.includes("Target page, context or browser has been closed") ||
-        message.includes("Most likely because of a navigation");
-
-      if (!retryable || attempt >= attempts) {
-        throw error;
-      }
-
-      await page.waitForLoadState("domcontentloaded").catch(() => undefined);
-      await page.waitForTimeout(400 * attempt);
-    }
-  }
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("Stable page evaluation failed.");
-}
 async function extractVisibleCards(page: Page): Promise<RawCard[]> {
-  return evaluateStable(page, () => {
+  return page.evaluate(() => {
     const clean = (v: string) => v.replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim();
-    const getId = (v: string) => v.match(/(?:Library ID|à¤²à¤¾à¤‡à¤¬à¥à¤°à¥‡à¤°à¥€ ID):\s*(\d+)/i)?.[1] ?? null;
+    const getId = (v: string) => v.match(/(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i)?.[1] ?? null;
     const countIds = (el: Element) => {
-      const all = (el.textContent ?? "").match(/(?:Library ID|à¤²à¤¾à¤‡à¤¬à¥à¤°à¥‡à¤°à¥€ ID):\s*\d+/gi) ?? [];
+      const all = (el.textContent ?? "").match(/(?:Library ID|लाइब्रेरी ID):\s*\d+/gi) ?? [];
       return new Set(all.map((x) => x.match(/(\d+)/)?.[1] ?? "")).size;
     };
     const cards = new Map<string, Element>();
@@ -287,7 +252,7 @@ function destinationFromLinks(links: RawCard["links"]): string | null {
 function inferHeadline(lines: string[], primaryText: string | null, cta: string | null): string | null {
   for (const line of lines) {
     if (!line || line === primaryText || line === cta) continue;
-    if (/^(Library ID|à¤²à¤¾à¤‡à¤¬à¥à¤°à¥‡à¤°à¥€ ID):\s*\d+$/i.test(line)) continue;
+    if (/^(Library ID|लाइब्रेरी ID):\s*\d+$/i.test(line)) continue;
     if (/^(Active|Inactive|Image|Video|Carousel)$/i.test(line)) continue;
     if (/^\d+:\d{2}\s*\/\s*\d+:\d{2}$/.test(line)) continue;
     if (/^\d{1,2}\s+[A-Za-z]+\s+\d{4}/i.test(line)) continue;
@@ -403,7 +368,7 @@ function dedupeAds(ads: CompetitorAd[]): CompetitorAd[] {
 }
 
 async function clickPaginationControls(page: Page): Promise<number> {
-  return evaluateStable(page, () => {
+  return page.evaluate(() => {
     const candidates = Array.from(
       document.querySelectorAll<HTMLButtonElement>(
         'button, [role="button"], a[role="button"]',
@@ -453,7 +418,7 @@ async function scrollToRevealMore(page: Page): Promise<{
   scrollHeight: number;
   maxScrollTop: number;
 }> {
-  return evaluateStable(page, () => {
+  return page.evaluate(() => {
     const beforeY = window.scrollY;
     const beforeHeight = document.documentElement.scrollHeight;
 
@@ -531,7 +496,6 @@ async function scrapeOnce(
 
     await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
     await page.waitForTimeout(INITIAL_WAIT);
-    await page.waitForLoadState('load', { timeout: 10000 }).catch(() => undefined);
 
     const bodyText = await page.locator("body").innerText().catch(() => "");
     if (isLikelyChallenge(bodyText)) {
