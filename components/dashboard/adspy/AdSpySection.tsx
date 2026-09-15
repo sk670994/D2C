@@ -311,13 +311,13 @@ export function AdSpySection({
 
   const loadSuggestions = useCallback(async (queryValue: string) => {
     const q = queryValue.trim();
-    if (!q || mode !== "advertiser") {
+    if (q.length < 2 || mode !== "advertiser") {
       setSuggestions([]);
       setSuggestionOpen(false);
       return;
     }
 
-    const key = `${countryInput.trim().toUpperCase() || "IN"}|${q.toLocaleLowerCase()}`;
+    const key = `${platform}|${countryInput.trim().toUpperCase() || "IN"}|${q.toLocaleLowerCase()}`;
     const cached = cacheGet<AutocompleteAdvertiser[]>(autocompleteCache as Map<string, { expiresAt: number; [key: string]: unknown }>, key, "advertisers");
     if (cached) {
       setSuggestions(cached);
@@ -336,6 +336,7 @@ export function AdSpySection({
       const url = new URL("/api/ad-intelligence/autocomplete", window.location.origin);
       url.searchParams.set("q", q);
       url.searchParams.set("country", countryInput.trim().toUpperCase() || "IN");
+      url.searchParams.set("platform", platform);
       const response = await fetch(url, { cache: "no-store", signal: controller.signal, headers: { Accept: "application/json" } });
       const data = (await response.json()) as { success: boolean; advertisers?: AutocompleteAdvertiser[]; error?: string };
       if (!response.ok || !data.success) throw new Error(data.error || "Advertiser lookup failed.");
@@ -354,7 +355,7 @@ export function AdSpySection({
     } finally {
       if (mountedRef.current) setAutocompleteLoading(false);
     }
-  }, [countryInput, input, mode]);
+  }, [countryInput, input, mode, platform]);
 
   useEffect(() => {
     if (mode !== "advertiser") return;
@@ -369,6 +370,7 @@ export function AdSpySection({
       const url = new URL("/api/ad-intelligence/refresh", window.location.origin);
       url.searchParams.set("q", q);
       url.searchParams.set("country", countryInput.trim().toUpperCase() || "IN");
+      url.searchParams.set("platform", platform);
       url.searchParams.set("platform", platform);
       url.searchParams.set("mode", mode);
       const pageId = overridePageId !== undefined ? overridePageId : selectedPageId;

@@ -1,4 +1,4 @@
-﻿export type Platform =
+export type Platform =
   | "meta"
   | "google"
   | "linkedin";
