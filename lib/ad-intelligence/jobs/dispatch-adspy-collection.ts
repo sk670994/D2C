@@ -1,7 +1,6 @@
 import "server-only";
 
 import { send } from "@vercel/queue";
-
 import type { CollectionEvent } from "./collect-ad-intelligence";
 import { collectAdIntelligence } from "./collect-ad-intelligence";
 
@@ -11,52 +10,18 @@ export function getAdSpyDispatchMode(): AdSpyDispatchMode {
   return process.env.VERCEL ? "queue" : "inline";
 }
 
-export async function dispatchAdSpyCollection(
-  payload: CollectionEvent,
-  idempotencyKey: string,
-): Promise<{
-  mode: AdSpyDispatchMode;
-}> {
+export async function dispatchAdSpyCollection(payload: CollectionEvent, idempotencyKey: string): Promise<{ mode: AdSpyDispatchMode }> {
   const mode = getAdSpyDispatchMode();
-
   if (mode === "queue") {
-    await send("adspy-collection", payload, {
-      idempotencyKey,
-      retentionSeconds: 24 * 60 * 60,
-    });
-
-    return {
-      mode,
-    };
+    await send("adspy-collection", payload, { idempotencyKey, retentionSeconds: 24 * 60 * 60 });
+    return { mode };
   }
 
-  /*
-   * Local development:
-   *
-   * Do not require Vercel Queue/OIDC.
-   * Run the exact same collector implementation inline.
-   *
-   * This is intentionally fire-and-forget so the refresh endpoint
-   * remains responsive.
-   */
-  void collectAdIntelligence(payload).catch((error) => {
-    console.error("[AdSpy Dispatch] Inline collection failed:", {
-      jobId: payload.jobId,
-      query: payload.query,
-      platform: payload.platform,
-      mode: payload.mode,
-      error:
-        error instanceof Error
-          ? {
-              name: error.name,
-              message: error.message,
-              stack: error.stack,
-            }
-          : error,
+  setTimeout(() => {
+    void collectAdIntelligence(payload).catch((error) => {
+      console.error("[AdSpy Dispatch] Inline collection failed", { jobId: payload.jobId, phase: payload.collectionDepth, error: error instanceof Error ? error.message : error });
     });
-  });
+  }, 0);
 
-  return {
-    mode,
-  };
+  return { mode };
 }

@@ -1,4 +1,4 @@
-export type Platform =
+﻿export type Platform =
   | "meta"
   | "google"
   | "linkedin";
@@ -196,6 +196,7 @@ export type Ad = {
 };
 
 export type AutocompleteAdvertiser = {
+  source: "indexed" | "meta_public";
   id: string;
 
   pageId: string;

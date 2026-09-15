@@ -1,142 +1,53 @@
 "use client";
 
-import { FILTERS } from "./adspy-types";
-
-/* eslint-disable @next/next/no-img-element */
-
-import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  ArrowUpRight,
+  Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CircleAlert,
+  Clock3,
+  ExternalLink,
+  History,
+  Image as ImageIcon,
   Loader2,
+  Play,
   Search,
   Sparkles,
+  UserRound,
+  Video,
   X,
 } from "lucide-react";
-import { AdSpyAnalysis } from "./AdSpyAnalysis";
-import { AdSpyHistory } from "./components/AdSpyHistory";
-import { AdSpyCreativeCard } from "./components/AdSpyCreativeCard";
-import { AdSpyLoadingIntelligence } from "./components/AdSpyLoadingIntelligence";
-import { AdSpySearchBar } from "./components/AdSpySearchBar";
-import { AdSpyStats } from "./components/AdSpyStats";
-import { AdSpyToolbar } from "./components/AdSpyToolbar";
-import { AdSpy3DJokePulse } from "./components/AdSpy3DJokePulse";
-import { AdSpy3DHero } from "@/components/ui/adspy/AdSpy3DHero";
-import { AdSpySpatialHeader } from "./components/AdSpySpatialHeader";
-import { AdSpySignalMatrix } from "./components/AdSpySignalMatrix";
-import { AdSpyTemporalFooter } from "./components/AdSpyTemporalFooter";
+import type {
+  Ad,
+  AutocompleteAdvertiser,
+  Intelligence,
+  Job,
+  Platform,
+  SearchMode,
+  SearchResponse,
+  FilterId,
+  Summary,
+} from "./adspy-types";
 
-type Platform = "meta" | "google" | "linkedin";
-type SearchMode = "advertiser" | "keyword";
+const PAGE_SIZE = 25;
+const AUTOCOMPLETE_DEBOUNCE_MS = 130;
+const SEARCH_CACHE_TTL_MS = 12_000;
+const AUTOCOMPLETE_CACHE_TTL_MS = 20_000;
+const SEARCH_CACHE_MAX = 18;
+const AUTOCOMPLETE_CACHE_MAX = 100;
+const POLL_START_MS = 450;
+const POLL_MAX_MS = 3000;
+const STALE_STATUSES = new Set(["queued", "scraping", "normalizing", "enriching", "finalizing", "deep_queued", "deep"]);
+const TERMINAL_STATUSES = new Set(["complete", "exhausted", "failed", "cancelled"]);
 
-type Ad = {
-  id: string;
-  platform: Platform;
-  advertiserName?: string | null;
-  creatorName?: string | null;
-  country?: string | null;
-  creativeType?: string | null;
-  imageUrl?: string | null;
-  videoUrl?: string | null;
-  thumbnailUrl?: string | null;
-  primaryText?: string | null;
-  headline?: string | null;
-  description?: string | null;
-  callToAction?: string | null;
-  firstSeen?: string | null;
-  lastSeen?: string | null;
-  isActive?: boolean | null;
-  publisherPlatforms?: string[];
-  landingPage?: string | null;
-  sourceUrl?: string | null;
-  productName?: string | null;
-  offer?: string | null;
-  runningDays?: number | null;
-};
+const searchCache = new Map<string, { expiresAt: number; response: SearchResponse }>();
+const autocompleteCache = new Map<string, { expiresAt: number; advertisers: AutocompleteAdvertiser[] }>();
 
-type AutocompleteAdvertiser = {
-  id: string;
-  pageId: string;
-  label: string;
-  type: "advertiser";
-  domain?: string | null;
-  profileUrl?: string | null;
-  profileImageUrl?: string | null;
-  category?: string | null;
-  verification?: string | null;
-  likes?: number | null;
-  igFollowers?: number | null;
-};
-
-type Job = {
-  id: string;
-  status: string;
-  stage: string;
-  discoveredAds: number;
-  normalizedAds: number;
-  persistedAds: number;
-  errorMessage?: string | null;
-};
-
-type Summary = {
-  totalAds: number;
-  activeAds: number;
-  inactiveAds: number;
-  videoAds: number;
-  imageAds: number;
-  carouselAds: number;
-  creatorAds: number;
-  averageRunningDays: number;
-  longestRunningDays: number;
-};
-
-type Intelligence = {
-  topCreators: Array<{ label: string; count: number }>;
-  topOffers: Array<{ label: string; count: number }>;
-  topHooks: Array<{ label: string; count: number }>;
-  longestRunningAd: {
-    advertiserName?: string | null;
-    headline?: string | null;
-    runningDays?: number | null;
-  } | null;
-  reach: { status: "unavailable"; reason: string };
-};
-
-type SearchResponse = {
-  success: boolean;
-  query?: string;
-  country?: string;
-  platform?: Platform;
-  mode?: SearchMode;
-  pageId?: string | null;
-  ads?: Ad[];
-  total?: number;
-  page?: number;
-  limit?: number;
-  totalPages?: number;
-  summary?: Summary;
-  intelligence?: Intelligence | null;
-  lastUpdatedAt?: string | null;
-  isRefreshing?: boolean;
-  collectionJobId?: string | null;
-  collectionJob?: Job | null;
-  error?: string;
-  nextPageToken?: string | null;
-  dataSource?: string;
-};
-
-type TrackResponse = {
-  success: boolean;
-  tracked?: boolean;
-  jobId?: string | null;
-  dispatched?: boolean;
-  error?: string;
-  job?: Job | null;
-};
-
-const EMPTY_SUMMARY: Summary = {
+const EMPTY: Summary = {
   totalAds: 0,
   activeAds: 0,
   inactiveAds: 0,
@@ -148,138 +59,49 @@ const EMPTY_SUMMARY: Summary = {
   longestRunningDays: 0,
 };
 
-type FilterId = (typeof FILTERS)[number][0];
-
-const ACTIVE_STATUSES = new Set(["queued", "scraping", "normalizing", "enriching", "finalizing"]);
-
-const SEARCH_CACHE_TTL_MS = 15_000;
-const SEARCH_CACHE_MAX = 12;
-
-const searchCache = new Map<
-  string,
-  {
-    expiresAt: number;
-    response: SearchResponse;
-  }
->();
-
-function searchCacheKey(params: {
-  query: string;
-  country: string;
-  platform: Platform;
-  mode: SearchMode;
-  pageId?: string | null;
-  page: number;
-}): string {
-  return [
-    params.query.trim().toLowerCase(),
-    params.country.trim().toUpperCase(),
-    params.platform,
-    params.mode,
-    params.pageId ?? "",
-    params.page,
-  ].join("|");
+function searchKey(input: { query: string; country: string; platform: Platform; mode: SearchMode; pageId?: string | null; page: number }) {
+  return [input.query.trim().toLowerCase(), input.country.trim().toUpperCase(), input.platform, input.mode, input.pageId ?? "", input.page].join("|");
 }
 
-function readSearchCache(key: string): SearchResponse | null {
-  const entry = searchCache.get(key);
-  if (!entry) return null;
-  if (entry.expiresAt <= Date.now()) {
-    searchCache.delete(key);
+function cacheGet<T>(cache: Map<string, { expiresAt: number; [key: string]: unknown }>, key: string, field: string): T | null {
+  const entry = cache.get(key);
+  if (!entry || entry.expiresAt <= Date.now()) {
+    cache.delete(key);
     return null;
   }
-  return entry.response;
+  return (entry[field] as T | undefined) ?? null;
 }
 
-function writeSearchCache(key: string, response: SearchResponse): void {
-  searchCache.set(key, {
-    expiresAt: Date.now() + SEARCH_CACHE_TTL_MS,
-    response,
-  });
-
-  while (searchCache.size > SEARCH_CACHE_MAX) {
-    const oldest = searchCache.keys().next().value;
-    if (!oldest) break;
-    searchCache.delete(oldest);
+function cacheWrite(cache: Map<string, { expiresAt: number; [key: string]: unknown }>, key: string, value: unknown, field: string, ttl: number, max: number) {
+  cache.set(key, { expiresAt: Date.now() + ttl, [field]: value });
+  while (cache.size > max) {
+    const first = cache.keys().next().value;
+    if (!first) break;
+    cache.delete(first);
   }
 }
 
-const AUTOCOMPLETE_CACHE_TTL_MS = 20_000;
-const AUTOCOMPLETE_CACHE_MAX = 80;
-
-const autocompleteCache = new Map<
-  string,
-  {
-    expiresAt: number;
-    advertisers: AutocompleteAdvertiser[];
-  }
->();
-
-function readAutocompleteCache(key: string) {
-  const entry = autocompleteCache.get(key);
-  if (!entry) return null;
-  if (entry.expiresAt <= Date.now()) {
-    autocompleteCache.delete(key);
-    return null;
-  }
-  return entry.advertisers;
-}
-
-function writeAutocompleteCache(
-  key: string,
-  advertisers: AutocompleteAdvertiser[],
-) {
-  autocompleteCache.set(key, {
-    expiresAt: Date.now() + AUTOCOMPLETE_CACHE_TTL_MS,
-    advertisers,
-  });
-
-  while (autocompleteCache.size > AUTOCOMPLETE_CACHE_MAX) {
-    const oldest = autocompleteCache.keys().next().value;
-    if (!oldest) break;
-    autocompleteCache.delete(oldest);
-  }
-}
-
-function readBestPrefixAutocompleteCache(
-  platform: Platform,
-  country: string,
-  query: string,
-): AutocompleteAdvertiser[] | null {
-  const normalized = query.trim().toLowerCase();
-  if (normalized.length < 3) return null;
-
-  let bestQuery = "";
-  let bestResults: AutocompleteAdvertiser[] | null = null;
-
-  for (const [key, entry] of autocompleteCache.entries()) {
-    if (entry.expiresAt <= Date.now()) continue;
-
-    const [entryPlatform, entryCountry, entryQuery] = key.split("|");
-    if (entryPlatform !== platform || entryCountry !== country) continue;
-    if (!normalized.startsWith(entryQuery)) continue;
-    if (entryQuery.length <= bestQuery.length) continue;
-
-    bestQuery = entryQuery;
-    bestResults = entry.advertisers;
-  }
-
-  if (!bestResults?.length) return null;
-
-  return bestResults.filter((advertiser) =>
-    advertiser.label.toLowerCase().includes(normalized),
-  );
-}
-
-
-function dateLabel(value?: string | null) {
-  if (!value) return "—";
+function safeDate(value?: string | null) {
+  if (!value) return null;
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function safeUrl(value?: string | null) {
+function formatDate(value?: string | null) {
+  const date = safeDate(value);
+  return date ? date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "Not publicly available";
+}
+
+function formatNumber(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
+
+function labelize(value?: string | null) {
+  return String(value ?? "unknown").replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function safeExternalUrl(value?: string | null) {
   if (!value) return null;
   try {
     const url = new URL(value);
@@ -289,9 +111,32 @@ function safeUrl(value?: string | null) {
   }
 }
 
+function statusCopy(status?: string | null) {
+  switch (status) {
+    case "queued": return "Preparing library update";
+    case "scraping": return "Updating library";
+    case "normalizing": return "Preparing new creatives";
+    case "enriching": return "Checking recent observations";
+    case "deep_queued": return "Continuing library update";
+    case "deep": return "Indexing more creatives";
+    case "exhausted": return "Library is up to date";
+    case "complete": return "Library update complete";
+    case "stale": return "Restarting a stalled update";
+    case "failed": return "Library update stopped";
+    default: return "Updating library";
+  }
+}
 
-function isActiveJob(status?: string | null) {
-  return Boolean(status && ACTIVE_STATUSES.has(status));
+function isActive(job?: Job | null) {
+  return Boolean(job && STALE_STATUSES.has(job.status));
+}
+
+function visibleMeta(ad: Ad) {
+  if (ad.offer) return ad.offer;
+  if (ad.productName) return ad.productName;
+  if (ad.callToAction) return ad.callToAction;
+  if (ad.creatorName) return `Creator: ${ad.creatorName}`;
+  return labelize(ad.creativeType);
 }
 
 export type AdSpySectionProps = {
@@ -302,665 +147,650 @@ export type AdSpySectionProps = {
   onCountryChange?: (country: string) => void;
   onPlatformChange?: (platform: Platform) => void;
   onResultCountChange?: (count: number) => void;
-  initialSuggestionCatalog?: unknown[];
 };
 
-
-function proxyMediaUrl(value: string): string {
-  return `/api/ad-intelligence/media?url=${encodeURIComponent(value)}`;
-}
-
-
-export function AdSpySection({ query = "", country = "IN", platform = "meta", onQueryChange, onCountryChange, onPlatformChange, onResultCountChange }: AdSpySectionProps) {
+export function AdSpySection({
+  query = "",
+  country = "IN",
+  platform = "meta",
+  onQueryChange,
+  onCountryChange,
+  onPlatformChange,
+  onResultCountChange,
+}: AdSpySectionProps) {
   const [input, setInput] = useState(query);
   const [countryInput, setCountryInput] = useState(country.toUpperCase());
   const [mode, setMode] = useState<SearchMode>("advertiser");
+  const [suggestions, setSuggestions] = useState<AutocompleteAdvertiser[]>([]);
   const [suggestionOpen, setSuggestionOpen] = useState(false);
+  const [activeSuggestion, setActiveSuggestion] = useState(0);
   const [autocompleteLoading, setAutocompleteLoading] = useState(false);
-  const [autocompleteAdvertisers, setAutocompleteAdvertisers] = useState<AutocompleteAdvertiser[]>([]);
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [ads, setAds] = useState<Ad[]>([]);
-  const [summary, setSummary] = useState<Summary>(EMPTY_SUMMARY);
+  const [summary, setSummary] = useState<Summary>(EMPTY);
+  const [intelligence, setIntelligence] = useState<Intelligence | null>(null);
   const [job, setJob] = useState<Job | null>(null);
-  const [filter, setFilter] = useState<FilterId>("all");
+  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
-  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [tracked, setTracked] = useState(false);
   const [error, setError] = useState("");
   const [selectedAd, setSelectedAd] = useState<Ad | null>(null);
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [filter, setFilter] = useState<FilterId>("all");
+  const [announcement, setAnnouncement] = useState("");
 
   const searchAbortRef = useRef<AbortController | null>(null);
-  const pollAbortRef = useRef<AbortController | null>(null);
+  const autocompleteAbortRef = useRef<AbortController | null>(null);
+  const pollTimerRef = useRef<number | null>(null);
+  const pollingJobRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
-  const lastPolledPersistedRef = useRef(-1);
-  const searchRequestRef = useRef(0);
+  const searchGenerationRef = useRef(0);
+  const modalCloseRef = useRef<HTMLButtonElement | null>(null);
+  const beforeModalFocusedRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       searchAbortRef.current?.abort();
-      pollAbortRef.current?.abort();
+      autocompleteAbortRef.current?.abort();
+      if (pollTimerRef.current !== null) window.clearTimeout(pollTimerRef.current);
     };
   }, []);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setInput(query), 0);
-    return () => window.clearTimeout(timer);
-  }, [query]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setCountryInput(country.toUpperCase()), 0);
-    return () => window.clearTimeout(timer);
-  }, [country]);
-
-  useEffect(() => {
-    if (!onResultCountChange) return;
-    const timer = window.setTimeout(() => onResultCountChange(total), 0);
-    return () => window.clearTimeout(timer);
+    onResultCountChange?.(total);
   }, [onResultCountChange, total]);
 
-  const fetchSearch = useCallback(async (nextPage = 1, silent = false, overrideQuery?: string, overridePageId?: string | null) => {
-    const q = (overrideQuery ?? input).trim();
-    const searchPageId =
-      overridePageId !== undefined ? overridePageId : selectedPageId;
-    const c = countryInput.trim().toUpperCase();
+  const filteredAds = useMemo(() => {
+    switch (filter) {
+      case "active": return ads.filter((ad) => ad.isActive === true);
+      case "video": return ads.filter((ad) => ad.creativeType?.toLowerCase().includes("video"));
+      case "image": return ads.filter((ad) => ad.creativeType?.toLowerCase().includes("image"));
+      case "carousel": return ads.filter((ad) => ad.creativeType?.toLowerCase().includes("carousel"));
+      case "creator": return ads.filter((ad) => Boolean(ad.creatorName));
+      case "longest": return [...ads].sort((a, b) => Number(b.runningDays ?? 0) - Number(a.runningDays ?? 0));
+      default: return ads;
+    }
+  }, [ads, filter]);
+
+  const announce = useCallback((value: string) => {
+    setAnnouncement(value);
+    window.setTimeout(() => setAnnouncement(""), 1800);
+  }, []);
+
+  const setQuery = useCallback((value: string) => {
+    setInput(value);
+    onQueryChange?.(value);
+  }, [onQueryChange]);
+
+  const loadSearch = useCallback(async (nextPage = 1, options?: { silent?: boolean; prefetch?: boolean; overrideQuery?: string; overridePageId?: string | null }) => {
+    const q = (options?.overrideQuery ?? input).trim();
+    const pageId = options?.overridePageId !== undefined ? options.overridePageId : selectedPageId;
+    const c = countryInput.trim().toUpperCase() || "IN";
     if (q.length < 2) {
-      setAds([]); setTotal(0); setTotalPages(0); setSummary(EMPTY_SUMMARY); setJob(null); setLastUpdatedAt(null); return null;
+      if (!options?.prefetch) {
+        setAds([]);
+        setTotal(0);
+        setTotalPages(0);
+        setSummary(EMPTY);
+        setIntelligence(null);
+        setJob(null);
+      }
+      return null;
     }
 
-    const cacheKey = searchCacheKey({
-      query: q,
-      country: c || "IN",
-      platform,
-      mode,
-      pageId: searchPageId,
-      page: nextPage,
-    });
-
-    if (!silent) {
-      const cached = readSearchCache(cacheKey);
-      if (cached) {
+    const key = searchKey({ query: q, country: c, platform, mode, pageId, page: nextPage });
+    const cached = cacheGet<SearchResponse>(searchCache as Map<string, { expiresAt: number; [key: string]: unknown }>, key, "response");
+    if (cached) {
+      if (!options?.prefetch) {
         setAds(cached.ads ?? []);
         setTotal(Number(cached.total ?? 0));
         setPage(Number(cached.page ?? nextPage));
         setTotalPages(Number(cached.totalPages ?? 0));
-        setSummary(cached.summary ?? EMPTY_SUMMARY);
+        setSummary(cached.summary ?? EMPTY);
+        setIntelligence(cached.intelligence ?? null);
         setJob(cached.collectionJob ?? null);
-        setLastUpdatedAt(cached.lastUpdatedAt ?? null);
-        setRefreshing(Boolean(
-          cached.isRefreshing ||
-          isActiveJob(cached.collectionJob?.status),
-        ));
-        setLoading(false);
-        return cached;
+        setRefreshing(Boolean(cached.isRefreshing || isActive(cached.collectionJob)));
+        setUpdatedAt(cached.lastUpdatedAt ?? null);
       }
+      return cached;
     }
 
-    const requestId = ++searchRequestRef.current;
+    const generation = ++searchGenerationRef.current;
     searchAbortRef.current?.abort();
     const controller = new AbortController();
     searchAbortRef.current = controller;
-    if (!silent) setLoading(true);
+    if (!options?.silent && !options?.prefetch) setLoading(true);
     setError("");
 
-    try {      const url = new URL("/api/ad-intelligence/search", window.location.origin);
+    try {
+      const url = new URL("/api/ad-intelligence/search", window.location.origin);
       url.searchParams.set("q", q);
-      url.searchParams.set("country", c || "IN");
+      url.searchParams.set("country", c);
       url.searchParams.set("platform", platform);
       url.searchParams.set("mode", mode);
       url.searchParams.set("page", String(nextPage));
-      url.searchParams.set("limit", "25");
-      if (searchPageId && platform === "meta" && mode === "advertiser") {
-        url.searchParams.set("pageId", searchPageId);
-      }
+      url.searchParams.set("limit", String(PAGE_SIZE));
+      if (pageId && platform === "meta" && mode === "advertiser") url.searchParams.set("pageId", pageId);
 
-      const response = await fetch(url, {
-        cache: "no-store",
-        signal: controller.signal,
-        headers: { Accept: "application/json" },
-      });
-
+      const response = await fetch(url, { cache: "no-store", signal: controller.signal, headers: { Accept: "application/json" } });
       const data = (await response.json()) as SearchResponse;
       if (!response.ok || !data.success) throw new Error(data.error || "Search failed.");
-      if (!mountedRef.current || requestId !== searchRequestRef.current) return data;
+      if (!mountedRef.current || generation !== searchGenerationRef.current) return data;
 
-      writeSearchCache(cacheKey, data);
-      setAds(data.ads ?? []);
-      setTotal(Number(data.total ?? 0));
-      setPage(Number(data.page ?? nextPage));
-      setTotalPages(Number(data.totalPages ?? 0));
-      setSummary(data.summary ?? EMPTY_SUMMARY);
-      setJob(data.collectionJob ?? null);
-      setLastUpdatedAt(data.lastUpdatedAt ?? null);
-      setRefreshing(Boolean(data.isRefreshing || isActiveJob(data.collectionJob?.status)));
+      cacheWrite(searchCache as Map<string, { expiresAt: number; [key: string]: unknown }>, key, data, "response", SEARCH_CACHE_TTL_MS, SEARCH_CACHE_MAX);
+
+      if (!options?.prefetch) {
+        setAds(data.ads ?? []);
+        setTotal(Number(data.total ?? 0));
+        setPage(Number(data.page ?? nextPage));
+        setTotalPages(Number(data.totalPages ?? 0));
+        setSummary(data.summary ?? EMPTY);
+        setIntelligence(data.intelligence ?? null);
+        setJob(data.collectionJob ?? null);
+        setRefreshing(Boolean(data.isRefreshing || isActive(data.collectionJob)));
+        setUpdatedAt(data.lastUpdatedAt ?? null);
+        // Page 2 is loaded on explicit pagination; avoid recursive search callbacks.
+      }
       return data;
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return null;
-      if (mountedRef.current) setError(err instanceof Error ? err.message : "Search failed.");
+    } catch (searchError) {
+      if (searchError instanceof DOMException && searchError.name === "AbortError") return null;
+      if (mountedRef.current && generation === searchGenerationRef.current && !options?.prefetch) {
+        setError(searchError instanceof Error ? searchError.message : "Search failed.");
+      }
       return null;
     } finally {
-      if (mountedRef.current && requestId === searchRequestRef.current && !silent) setLoading(false);
+      if (mountedRef.current && generation === searchGenerationRef.current && !options?.silent && !options?.prefetch) setLoading(false);
     }
   }, [countryInput, input, mode, platform, selectedPageId]);
 
-  const refreshAndPoll = useCallback(async (existingJobId?: string | null, overridePageId?: string | null) => {
-    const q = input.trim();
-    if (q.length < 2) return;
-    setRefreshing(true);
-    setError("");
+  const loadSuggestions = useCallback(async (queryValue: string) => {
+    const q = queryValue.trim();
+    if (!q || mode !== "advertiser") {
+      setSuggestions([]);
+      setSuggestionOpen(false);
+      return;
+    }
 
-    let jobId = existingJobId ?? job?.id ?? null;
-    const refreshPageId = overridePageId !== undefined ? overridePageId : selectedPageId;
+    const key = `${countryInput.trim().toUpperCase() || "IN"}|${q.toLocaleLowerCase()}`;
+    const cached = cacheGet<AutocompleteAdvertiser[]>(autocompleteCache as Map<string, { expiresAt: number; [key: string]: unknown }>, key, "advertisers");
+    if (cached) {
+      setSuggestions(cached);
+      setSuggestionOpen(cached.length > 0);
+      setActiveSuggestion(0);
+      return;
+    }
+
+    autocompleteAbortRef.current?.abort();
+    const controller = new AbortController();
+    autocompleteAbortRef.current = controller;
+    setAutocompleteLoading(true);
+
+    const requested = q.toLocaleLowerCase();
     try {
-      if (!jobId || !isActiveJob(job?.status)) {
-        const url = new URL("/api/ad-intelligence/refresh", window.location.origin);
-        url.searchParams.set("q", q);
-        url.searchParams.set("country", countryInput.trim().toUpperCase() || "IN");
-        url.searchParams.set("platform", platform);
-        url.searchParams.set("mode", mode);
-        if (refreshPageId && platform === "meta" && mode === "advertiser") url.searchParams.set("pageId", refreshPageId);
+      const url = new URL("/api/ad-intelligence/autocomplete", window.location.origin);
+      url.searchParams.set("q", q);
+      url.searchParams.set("country", countryInput.trim().toUpperCase() || "IN");
+      const response = await fetch(url, { cache: "no-store", signal: controller.signal, headers: { Accept: "application/json" } });
+      const data = (await response.json()) as { success: boolean; advertisers?: AutocompleteAdvertiser[]; error?: string };
+      if (!response.ok || !data.success) throw new Error(data.error || "Advertiser lookup failed.");
+      if (!mountedRef.current || controller.signal.aborted || input.trim().toLocaleLowerCase() !== requested) return;
 
-        const response = await fetch(url, { method: "POST", cache: "no-store" });
-        const data = (await response.json()) as { success: boolean; job?: Job; error?: string };
-        if (!response.ok || !data.success || !data.job) throw new Error(data.error || "Could not start collection.");
-        jobId = data.job.id;
-        setJob(data.job);
+      const advertisers = data.advertisers ?? [];
+      cacheWrite(autocompleteCache as Map<string, { expiresAt: number; [key: string]: unknown }>, key, advertisers, "advertisers", AUTOCOMPLETE_CACHE_TTL_MS, AUTOCOMPLETE_CACHE_MAX);
+      setSuggestions(advertisers);
+      setSuggestionOpen(advertisers.length > 0);
+      setActiveSuggestion(0);
+    } catch (autocompleteError) {
+      if (!(autocompleteError instanceof DOMException && autocompleteError.name === "AbortError")) {
+        setSuggestions([]);
+        setSuggestionOpen(false);
       }
+    } finally {
+      if (mountedRef.current) setAutocompleteLoading(false);
+    }
+  }, [countryInput, input, mode]);
 
-      if (!jobId) return;
-      pollAbortRef.current?.abort();
-      const controller = new AbortController();
-      pollAbortRef.current = controller;
-      lastPolledPersistedRef.current = -1;
-      const started = Date.now();
-      let delay = 450;
+  useEffect(() => {
+    if (mode !== "advertiser") return;
+    const timer = window.setTimeout(() => void loadSuggestions(input), AUTOCOMPLETE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [input, loadSuggestions, mode]);
 
-      while (Date.now() - started < 10 * 60_000) {
-        await new Promise((resolve) => window.setTimeout(resolve, delay));
-        if (controller.signal.aborted || !mountedRef.current) return;
+  const startRefresh = useCallback(async (overrideQuery?: string, overridePageId?: string | null) => {
+    const q = (overrideQuery ?? input).trim();
+    if (q.length < 2) return null;
+    try {
+      const url = new URL("/api/ad-intelligence/refresh", window.location.origin);
+      url.searchParams.set("q", q);
+      url.searchParams.set("country", countryInput.trim().toUpperCase() || "IN");
+      url.searchParams.set("platform", platform);
+      url.searchParams.set("mode", mode);
+      const pageId = overridePageId !== undefined ? overridePageId : selectedPageId;
+      if (pageId && platform === "meta" && mode === "advertiser") url.searchParams.set("pageId", pageId);
 
-        const response = await fetch(`/api/ad-intelligence/search/status/${encodeURIComponent(jobId)}`, { cache: "no-store", signal: controller.signal });
-        const data = await response.json() as { success: boolean; job?: Job; error?: string };
-        if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+      const response = await fetch(url, { method: "POST", cache: "no-store", headers: { Accept: "application/json" } });
+      const data = (await response.json()) as { success: boolean; job?: Job; error?: string };
+      if (!response.ok || !data.success || !data.job) throw new Error(data.error || "Could not start library update.");
+      setJob(data.job);
+      setRefreshing(isActive(data.job));
+      return data.job;
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : "Could not start library update.");
+      return null;
+    }
+  }, [countryInput, input, mode, platform, selectedPageId]);
+
+  const pollJob = useCallback((jobId: string) => {
+    if (pollingJobRef.current === jobId) return;
+    pollingJobRef.current = jobId;
+    let delay = POLL_START_MS;
+    let lastProgress = -1;
+
+    const step = async () => {
+      if (!mountedRef.current || pollingJobRef.current !== jobId) return;
+      try {
+        const response = await fetch(`/api/ad-intelligence/search/status/${encodeURIComponent(jobId)}`, { cache: "no-store", headers: { Accept: "application/json" } });
+        const data = (await response.json()) as { success: boolean; job?: Job & { stale?: boolean; hasMore?: boolean }; error?: string };
         if (!response.ok || !data.success || !data.job) throw new Error(data.error || "Collection status unavailable.");
-        const current = data.job;
-        setJob(current);
 
-        const persisted = Number(current.persistedAds ?? 0);
-        const changed = persisted !== lastPolledPersistedRef.current;
-        if (changed || isActiveJob(current.status) === false) {
-          lastPolledPersistedRef.current = persisted;
-          await fetchSearch(1, true, q, overridePageId ?? selectedPageId);
+        const nextJob = data.job;
+        if (nextJob.id !== pollingJobRef.current) return;
+        setJob(nextJob);
+        setRefreshing(isActive(nextJob));
+
+        const progress = Number(nextJob.persistedAds ?? 0) * 100_000 + Number(nextJob.discoveredAds ?? 0);
+        if (progress !== lastProgress) {
+          lastProgress = progress;
+          delay = POLL_START_MS;
+          void loadSearch(page, { silent: true, overrideQuery: submittedQuery, overridePageId: selectedPageId });
+        } else {
+          delay = Math.min(POLL_MAX_MS, Math.round(delay * 1.35));
         }
 
-        if (current.status === "complete") {
-          setRefreshing(false);
-          await fetchSearch(1, true, q, overridePageId ?? selectedPageId);
+        if (nextJob.stale) {
+          pollingJobRef.current = null;
+          const replacement = await startRefresh(submittedQuery, selectedPageId);
+          if (replacement?.id) {
+            setJob(replacement);
+            setRefreshing(isActive(replacement));
+          }
           return;
         }
-        if (current.status === "failed") throw new Error(current.errorMessage || "Collection failed.");
-        delay = Math.min(3200, Math.max(700, Math.round(delay * 1.45)));
+
+        if (TERMINAL_STATUSES.has(nextJob.status)) {
+          pollingJobRef.current = null;
+          setRefreshing(false);
+          void loadSearch(page, { silent: true, overrideQuery: submittedQuery, overridePageId: selectedPageId });
+          return;
+        }
+      } catch (pollError) {
+        if (mountedRef.current) setError(pollError instanceof Error ? pollError.message : "Collection status unavailable.");
       }
+      if (mountedRef.current && pollingJobRef.current === jobId) {
+        pollTimerRef.current = window.setTimeout(() => void step(), delay);
+      }
+    };
 
-      throw new Error("Background sync is still running. Live results remain available.");
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
-      if (mountedRef.current) setError(err instanceof Error ? err.message : "Refresh failed.");
-    } finally {
-      if (mountedRef.current) setRefreshing(false);
-    }
-  }, [countryInput, fetchSearch, input, job, mode, platform, selectedPageId]);
+    void step();
+  }, [loadSearch, page, selectedPageId, startRefresh, submittedQuery]);
 
-  const runSearch = useCallback(async (overrideQuery?: string, overridePageId?: string | null) => {
+  useEffect(() => {
+    if (job?.id && isActive(job)) pollJob(job.id);
+  }, [job, pollJob]);
+
+  const submit = useCallback(async (overrideQuery?: string, overridePageId?: string | null) => {
     const q = (overrideQuery ?? input).trim();
+    const pageId = overridePageId !== undefined ? overridePageId : selectedPageId;
     if (q.length < 2) {
       setError("Enter at least 2 characters.");
       return;
     }
-    onQueryChange?.(q);
-    onCountryChange?.(countryInput.trim().toUpperCase() || "IN");
-    onPlatformChange?.(platform);
-    setSuggestionOpen(false);
-    setPage(1);
-    const result = await fetchSearch(1, false, q, overridePageId);
-    if (!result) return;
     setSubmittedQuery(q);
-    void (async () => {
-      try {
-        const url = new URL("/api/ad-intelligence/track", window.location.origin);
-        url.searchParams.set("query", q);
-        url.searchParams.set("country", countryInput.trim().toUpperCase() || "IN");
-        url.searchParams.set("platform", platform);
-        const response = await fetch(url, { cache: "no-store" });
-        if (!response.ok || !mountedRef.current) return;
-        const data = await response.json() as { tracked?: boolean };
-        if (mountedRef.current) setTracked(Boolean(data.tracked));
-      } catch {
-        // Tracking state is optional and must never block search results.
-      }
-    })();
-    // User-facing results are immediate; freshness is a silent second lane.
-    void refreshAndPoll(
-      result.collectionJob?.id ?? result.collectionJobId ?? null,
-      overridePageId ?? selectedPageId,
-    );
-  }, [countryInput, fetchSearch, input, onCountryChange, onPlatformChange, onQueryChange, platform, refreshAndPoll, selectedPageId]);
+    setPage(1);
+    setSelectedPageId(pageId ?? null);
+    setSuggestionOpen(false);
+    setError("");
+    announce("Searching the indexed creative library");
 
-  useEffect(() => {
-    const q = input.trim();
-    if (q.length < 2 || mode !== "advertiser" || platform !== "meta") {
+    const [result, refreshed] = await Promise.all([
+      loadSearch(1, { overrideQuery: q, overridePageId: pageId }),
+      startRefresh(q, pageId),
+    ]);
+    const latestJob = refreshed ?? (result?.collectionJob ?? null);
+    if (latestJob) {
+      setJob(latestJob);
+      setRefreshing(isActive(latestJob));
+      if (isActive(latestJob)) pollJob(latestJob.id);
+    }
+  }, [announce, input, loadSearch, pollJob, selectedPageId, startRefresh]);
+
+  const selectAdvertiser = useCallback((advertiser: AutocompleteAdvertiser) => {
+    setQuery(advertiser.label);
+    setSelectedPageId(advertiser.pageId);
+    setSubmittedQuery(advertiser.label);
+    setSuggestions([]);
+    setSuggestionOpen(false);
+    setActiveSuggestion(0);
+    announce(`${advertiser.label} selected`);
+    void submit(advertiser.label, advertiser.pageId);
+  }, [announce, setQuery, submit]);
+
+  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!suggestionOpen) return;
+      setActiveSuggestion((current) => Math.min(current + 1, suggestions.length - 1));
       return;
     }
-
-    const normalizedCountry = countryInput.trim().toUpperCase() || "IN";
-    const cacheKey = `${platform}|${normalizedCountry}|${q.toLowerCase()}`;
-    const controller = new AbortController();
-    let alive = true;
-
-    const prefixCached = readBestPrefixAutocompleteCache(
-      platform,
-      normalizedCountry,
-      q,
-    );
-
-    if (prefixCached?.length && mountedRef.current) {
-      setAutocompleteAdvertisers(prefixCached);
-      setAutocompleteLoading(true);
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveSuggestion((current) => Math.max(current - 1, 0));
+      return;
     }
+    if (event.key === "Escape") {
+      setSuggestionOpen(false);
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (suggestionOpen && suggestions[activeSuggestion]) {
+        selectAdvertiser(suggestions[activeSuggestion]);
+      } else {
+        void submit();
+      }
+    }
+  }, [activeSuggestion, selectAdvertiser, submit, suggestionOpen, suggestions]);
 
-    const timer = window.setTimeout(async () => {
-      const cached = readAutocompleteCache(cacheKey);
+  const openAd = useCallback((ad: Ad) => {
+    beforeModalFocusedRef.current = document.activeElement as HTMLElement | null;
+    setSelectedAd(ad);
+  }, []);
 
-      if (cached) {
-        if (alive && mountedRef.current) {
-          setAutocompleteAdvertisers(cached);
-          setAutocompleteLoading(false);
-        }
+  useEffect(() => {
+    if (!selectedAd) return;
+    modalCloseRef.current?.focus();
+    const previous = beforeModalFocusedRef.current;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSelectedAd(null);
+        previous?.focus();
         return;
       }
-
-      if (alive && mountedRef.current) {
-        setAutocompleteLoading(true);
+      if (event.key !== "Tab") return;
+      const modal = document.querySelector<HTMLElement>("[data-adspy-modal]");
+      if (!modal) return;
+      const focusable = Array.from(modal.querySelectorAll<HTMLElement>('button,a[href],input,select,textarea,[tabindex]:not([tabindex="-1"])')).filter((element) => !element.hasAttribute("disabled"));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
-
-      try {
-        const url = new URL("/api/ad-intelligence/autocomplete", window.location.origin);
-        url.searchParams.set("q", q);
-        url.searchParams.set("country", countryInput.trim().toUpperCase() || "IN");
-        url.searchParams.set("platform", platform);
-
-        const response = await fetch(url, {
-          cache: "no-store",
-          signal: controller.signal,
-          headers: { Accept: "application/json" },
-        });
-
-        const data = (await response.json()) as {
-          advertisers?: AutocompleteAdvertiser[];
-        };
-
-        if (!response.ok) throw new Error("Autocomplete request failed.");
-
-        const advertisers = data.advertisers ?? [];
-        writeAutocompleteCache(cacheKey, advertisers);
-
-        if (alive && mountedRef.current) {
-          setAutocompleteAdvertisers(advertisers);
-        }
-      } catch (error) {
-        if (
-          error instanceof DOMException &&
-          error.name === "AbortError"
-        ) {
-          return;
-        }
-
-        if (alive && mountedRef.current) {
-          setAutocompleteAdvertisers([]);
-        }
-      } finally {
-        if (alive && mountedRef.current) {
-          setAutocompleteLoading(false);
-        }
-      }
-    }, 70);
-
-    return () => {
-      alive = false;
-      controller.abort();
-      window.clearTimeout(timer);
     };
-  }, [countryInput, input, mode, platform]);
+    document.addEventListener("keydown", onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [selectedAd]);
 
-  const handleTrack = useCallback(async () => {
-    const q = input.trim();
-    if (q.length < 2) return;
-    try {
-      if (tracked) {
-        const url = new URL("/api/ad-intelligence/track", window.location.origin);
-        url.searchParams.set("query", q); url.searchParams.set("country", countryInput.trim().toUpperCase() || "IN"); url.searchParams.set("platform", platform);
-        const response = await fetch(url, { method: "DELETE" });
-        const data = await response.json() as { success: boolean; error?: string };
-        if (!response.ok || !data.success) throw new Error(data.error || "Could not stop tracking.");
-        setTracked(false);
-        return;
-      }
-
-      const response = await fetch("/api/ad-intelligence/track", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: q, country: countryInput.trim().toUpperCase() || "IN", platform }),
-      });
-      const data = await response.json() as TrackResponse;
-      if (!response.ok || !data.success) throw new Error(data.error || "Could not start tracking.");
-      setTracked(true);
-      if (data.job) setJob(data.job);
-      if (data.jobId) void refreshAndPoll(data.jobId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Tracking failed.");
-    } finally {
-      }
-  }, [countryInput, input, platform, refreshAndPoll, tracked]);
-
-  const visibleAds = useMemo(() => {
-    const sorted = [...ads];
-    switch (filter) {
-      case "active": return sorted.filter((ad) => ad.isActive !== false);
-      case "video": return sorted.filter((ad) => ad.creativeType === "video");
-      case "image": return sorted.filter((ad) => ad.creativeType === "image");
-      case "carousel": return sorted.filter((ad) => ad.creativeType === "carousel");
-      case "creator": return sorted.filter((ad) => Boolean(ad.creatorName));
-      case "longest": return sorted.sort((a, b) => Number(b.runningDays ?? 0) - Number(a.runningDays ?? 0));
-      default: return sorted;
-    }
-  }, [ads, filter]);
-
-  const handleSelectAdvertiser = useCallback((advertiser: AutocompleteAdvertiser) => {
-    const label = advertiser.label.trim();
-    setInput(label);
-    setAutocompleteAdvertisers([]);
-    setSelectedPageId(advertiser.pageId);
-    setSuggestionOpen(false);
-    onQueryChange?.(label);
-    void runSearch(label, advertiser.pageId);
-  }, [onQueryChange, runSearch]);
-
-  const handleSelectQuery = useCallback((q: string) => {
-    setInput(q);
-    setAutocompleteAdvertisers([]);
-    setSelectedPageId(null);
-    setSuggestionOpen(false);
-    onQueryChange?.(q);
-  }, [onQueryChange]);
-
-  const headline = selectedPageId ? `Verified Meta advertiser search` : `Competitive ad intelligence`;
-  const statusLabel = refreshing ? "Updating library" : job?.status === "complete" ? "Up to date" : "Search the library";
+  const currentPage = page;
+  const firstResult = total === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+  const lastResult = Math.min(total, currentPage * PAGE_SIZE);
 
   return (
-    <section data-adspy-root data-adspy-v8 className="mx-auto w-full max-w-[1380px] space-y-4 pb-10">
-      <div className="relative z-[100] overflow-visible rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-        <AdSpySpatialHeader />
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-center">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-blue-600"><Sparkles size={13} /> AdSpy Intelligence</div>
-            <h1 className="mt-3 max-w-3xl text-3xl font-semibold tracking-[-0.04em] text-slate-950 md:text-4xl">{headline}</h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">Search a brand or keyword, inspect the creative system, and let the collector broaden the dataset in the background without replacing usable results.</p>
-            <div className="mt-5 flex flex-wrap items-center gap-2">
-              <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold ${refreshing ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-600"}`}><Activity size={13} className={refreshing ? "animate-pulse" : ""} />{statusLabel}</span>
-              {lastUpdatedAt ? <span className="text-xs text-slate-400">Updated {dateLabel(lastUpdatedAt)}</span> : null}
-            </div>
-          </div>
-          <AdSpy3DHero />
-        </div>
-
-        <div className="relative z-[1000] mt-5 isolate">
-          <AdSpySearchBar
-            value={input}
-            country={countryInput}
-            platform={platform}
-            mode={mode}
-            advertisers={autocompleteAdvertisers}
-            autocompleteLoading={autocompleteLoading}
-            suggestionsOpen={suggestionOpen}
-            selectedPageId={selectedPageId}
-            onChange={(value) => {
-              setInput(value);
-              if (selectedPageId) setSelectedPageId(null);
-              setSuggestionOpen(true);
-            }}
-            onSearch={() => void runSearch()}
-            onSelectAdvertiser={handleSelectAdvertiser}
-            onSelectQuery={() => handleSelectQuery(input.trim())}
-            onFocus={() => setSuggestionOpen(true)}
-            onCloseSuggestions={() => setSuggestionOpen(false)}
-            onCountryChange={setCountryInput}
-          />
-        </div>
-
-        <div className="mt-2">
-          <AdSpyToolbar
-            mode={mode}
-            platform={platform}
-            filter={filter}
-            tracked={tracked}
-            refreshing={refreshing}
-            disabled={input.trim().length < 2}
-            onModeChange={(value) => {
-              setMode(value);
-              setSelectedPageId(null);
-            }}
-            onFilterChange={setFilter}
-            onRefresh={() => void refreshAndPoll(job?.id ?? null)}
-            onTrack={() => void handleTrack()}
-          />
-        </div>
+    <section className="adspy-shell">
+      <div className="adspy-field" aria-hidden="true">
+        <span className="adspy-field-grid" />
+        <span className="adspy-field-node adspy-field-node-a" />
+        <span className="adspy-field-node adspy-field-node-b" />
+        <span className="adspy-field-node adspy-field-node-c" />
       </div>
 
-      {error ? <div className="flex items-start justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span>{error}</span><button type="button" onClick={() => setError("")}><X size={16} /></button></div> : null}
+      <div className="adspy-content">
+        <header className="adspy-hero">
+          <div className="adspy-eyebrow"><span className="adspy-eyebrow-dot" /> Competitive intelligence</div>
+          <div className="adspy-hero-row">
+            <div>
+              <h1>See what this advertiser has been testing.</h1>
+              <p>Find real public creatives, watch the library build over time, and inspect the evidence behind each signal.</p>
+            </div>
+            <div className="adspy-spatial-orbit" aria-hidden="true">
+              <span className="orbit-ring orbit-ring-one" />
+              <span className="orbit-ring orbit-ring-two" />
+              <span className="orbit-core"><Activity size={20} /></span>
+            </div>
+          </div>
+        </header>
 
-      {refreshing && job ? (
-        <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800"><div className="flex items-center gap-2 font-semibold"><Loader2 size={15} className="animate-spin" />Background collection in progress</div><div className="mt-1 text-xs text-blue-700">Discovered {job.discoveredAds} · persisted {job.persistedAds}. Results update automatically as new creatives arrive.</div></div>
-      ) : null}
-
-      {(loading || refreshing) ? (
-        <AdSpyLoadingIntelligence compact={refreshing} loading />
-      ) : null}
-
-      <AdSpyStats summary={{ ...summary, totalAds: total }} />
-      {submittedQuery ? (
-        <AdSpySignalMatrix
-          total={total}
-          active={summary.activeAds}
-          video={summary.videoAds}
-          creators={summary.creatorAds}
-        />
-      ) : null}
-
-      {submittedQuery ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px]">
-          <span className="font-bold uppercase tracking-[0.16em] text-slate-400">Live dataset</span>
-          <span className="font-semibold text-slate-700">{total.toLocaleString("en-IN")} total ads · {visibleAds.length} shown on this page</span>
-        </div>
-      ) : null}
-
-      {submittedQuery ? <AdSpy3DJokePulse /> : null}
-      
-      {visibleAds.length ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-          {visibleAds.map((ad) => (
-            <AdSpyCreativeCard
-              key={`${ad.platform}:${ad.id}`}
-              ad={ad}
-              onInspect={() => setSelectedAd(ad)}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-sm">
-          {loading || refreshing ? <Loader2 size={24} className="mx-auto animate-spin text-slate-400" /> : <Search size={24} className="mx-auto text-slate-300" />}
-          <h3 className="mt-4 text-base font-semibold text-slate-900">{input.trim().length < 2 ? "Start with an advertiser or keyword" : refreshing ? "Collecting observable creatives…" : "No ads in the current index"}</h3>
-          <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-500">{input.trim().length < 2 ? "Search a brand first. Selecting an autocomplete advertiser uses the exact Meta Page ID when available." : "A successful API response with zero rows means the index did not have matching ads yet; refresh to start a fresh collection."}</p>
-        </div>
-      )}
-
-      {totalPages > 1 ? <div className="flex items-center justify-center gap-3"><button type="button" disabled={page <= 1} onClick={() => { const next = Math.max(1, page - 1); setPage(next); void fetchSearch(next, false); }} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 disabled:opacity-40"><ChevronLeft size={16} /></button><span className="text-xs font-semibold text-slate-500">Page {page} of {totalPages}</span><button type="button" disabled={page >= totalPages} onClick={() => { const next = Math.min(totalPages, page + 1); setPage(next); void fetchSearch(next, false); }} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 disabled:opacity-40"><ChevronRight size={16} /></button></div> : null}
-
-      {submittedQuery ? (
-        <>
-          <AdSpyAnalysis query={submittedQuery} country={countryInput} platform={platform} />
-          <AdSpyHistory query={submittedQuery} country={countryInput} platform={platform} />
-          <AdSpyTemporalFooter
-            total={total}
-            page={page}
-            totalPages={totalPages}
-            lastUpdatedAt={lastUpdatedAt}
-          />
-        </>
-      ) : null}
-
-      {selectedAd && typeof document !== "undefined"
-        ? createPortal(
-        <div
-          className="fixed inset-0 z-[2147483000] flex items-end justify-center bg-slate-950/60 p-2 backdrop-blur-md sm:p-4 md:items-center"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Creative inspection"
-        >
-          <div className="max-h-[94vh] w-full max-w-5xl overflow-hidden rounded-[24px] border border-white/60 bg-white shadow-[0_30px_100px_rgba(15,23,42,.28)]">
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-4 py-3.5 sm:px-5">
-              <div className="min-w-0">
-                <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-blue-600">Creative inspection</div>
-                <h2 className="mt-1 truncate text-base font-semibold text-slate-950 sm:text-lg">
-                  {selectedAd.headline || selectedAd.productName || "Untitled creative"}
-                </h2>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  {selectedAd.advertiserName || "Unknown advertiser"}
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setSelectedAd(null)}
-                title="Close"
-                aria-label="Close"
-                className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-950"
-              >
-                <img src="/adspy/icons/close.svg" alt="" width="12" height="12" />
-              </button>
+        <div className="adspy-search-wrap">
+          <div className="adspy-searchbar" role="search">
+            <Search size={17} aria-hidden="true" />
+            <div className="adspy-input-stack">
+              <input
+                value={input}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setQuery(value);
+                  if (selectedPageId && value.trim() !== submittedQuery.trim()) setSelectedPageId(null);
+                  setSuggestionOpen(mode === "advertiser" && value.trim().length > 0);
+                }}
+                onFocus={() => suggestions.length > 0 && setSuggestionOpen(true)}
+                onKeyDown={handleKeyDown}
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={suggestionOpen}
+                aria-controls="adspy-suggestions"
+                aria-activedescendant={suggestionOpen && suggestions[activeSuggestion] ? `adspy-suggestion-${activeSuggestion}` : undefined}
+                placeholder={mode === "advertiser" ? "Search advertiser" : "Search keyword"}
+                autoComplete="off"
+              />
+              {selectedPageId && mode === "advertiser" && <span className="adspy-exact-chip"><Check size={11} /> Page ID selected</span>}
             </div>
 
-            <div className="grid max-h-[calc(94vh-73px)] overflow-y-auto lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,.85fr)]">
-              <div className="border-b border-slate-100 bg-slate-50 p-3 sm:p-5 lg:border-b-0 lg:border-r">
-                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                  {safeUrl(selectedAd.videoUrl) ? (
-                    <video
-                      src={safeUrl(selectedAd.videoUrl)!}
-                      controls
-                      playsInline
-                      preload="metadata"
-                      poster={safeUrl(selectedAd.thumbnailUrl || selectedAd.imageUrl) ?? undefined}
-                      className="max-h-[62vh] w-full bg-slate-950 object-contain"
-                    />
-                  ) : safeUrl(selectedAd.thumbnailUrl || selectedAd.imageUrl) ? (
-                    <img
-                      src={safeUrl(selectedAd.thumbnailUrl || selectedAd.imageUrl)!}
-                      alt=""
-                      referrerPolicy="no-referrer"
-                      onError={(event) => {
-                        const target = event.currentTarget;
-                        if (!target.dataset.proxyTried) {
-                          target.dataset.proxyTried = "1";
-                          target.src = proxyMediaUrl(safeUrl(selectedAd.thumbnailUrl || selectedAd.imageUrl)!);
-                        }
-                      }}
-                      className="max-h-[62vh] w-full object-contain"
-                    />
-                  ) : (
-                    <div className="grid min-h-[360px] place-items-center text-sm text-slate-400">
-                      Media unavailable
-                    </div>
-                  )}
-                </div>
+            <label className="adspy-country">
+              <span className="sr-only">Country</span>
+              <select value={countryInput} onChange={(event) => { const value = event.target.value.toUpperCase(); setCountryInput(value); onCountryChange?.(value); setSelectedPageId(null); }}>
+                <option value="IN">IN</option>
+                <option value="US">US</option>
+                <option value="GB">GB</option>
+                <option value="AE">AE</option>
+                <option value="AU">AU</option>
+                <option value="CA">CA</option>
+              </select>
+              <ChevronDown size={13} aria-hidden="true" />
+            </label>
+
+            <select className="adspy-mode" value={mode} onChange={(event) => { const nextMode = event.target.value as SearchMode; setMode(nextMode); setSelectedPageId(null); setSuggestions([]); setSuggestionOpen(false); }} aria-label="Search mode">
+              <option value="advertiser">Advertiser</option>
+              <option value="keyword">Keyword</option>
+            </select>
+
+            <button className="adspy-primary-button" type="button" onClick={() => void submit()} disabled={loading}>
+              {loading ? <Loader2 size={15} className="adspy-spin" /> : <Search size={15} />}
+              Search
+            </button>
+
+            {suggestionOpen && mode === "advertiser" && (
+              <div className="adspy-suggestions" id="adspy-suggestions" role="listbox" aria-label="Advertisers">
+                {autocompleteLoading && suggestions.length === 0 && <div className="adspy-suggestion-loading"><Loader2 size={14} className="adspy-spin" /> Finding advertisers</div>}
+                {suggestions.map((suggestion, index) => (
+                  <button
+                    type="button"
+                    key={`${suggestion.pageId}-${suggestion.label}`}
+                    id={`adspy-suggestion-${index}`}
+                    role="option"
+                    aria-selected={index === activeSuggestion}
+                    className={`adspy-suggestion ${index === activeSuggestion ? "active" : ""}`}
+                    onMouseEnter={() => setActiveSuggestion(index)}
+                    onClick={() => selectAdvertiser(suggestion)}
+                  >
+                    {suggestion.profileImageUrl ? <img src={suggestion.profileImageUrl} alt="" loading="lazy" /> : <span className="adspy-avatar-fallback">{suggestion.label.slice(0, 1).toUpperCase()}</span>}
+                    <span className="adspy-suggestion-main">
+                      <strong>{suggestion.label}</strong>
+                      <span>{suggestion.category ?? "Advertiser"}{suggestion.igFollowers ? ` · ${formatNumber(suggestion.igFollowers)} followers` : ""}</span>
+                    </span>
+                    <span className="adspy-suggestion-source">{suggestion.source === "meta_public" ? "Meta" : "Indexed"}</span>
+                  </button>
+                ))}
+                {!autocompleteLoading && suggestions.length === 0 && (
+                  <div className="adspy-suggestion-empty"><Search size={14} /> Search exact phrase</div>
+                )}
               </div>
+            )}
+          </div>
+        </div>
 
-              <div className="space-y-4 p-4 sm:p-5">
-                <div>
-                  <div className="text-[9px] font-bold uppercase tracking-[0.18em] text-slate-400">Primary text</div>
-                  <p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-slate-700">
-                    {selectedAd.primaryText || selectedAd.description || "No copy captured."}
-                  </p>
-                </div>
+        <div className="adspy-status-row" aria-live="polite">
+          <div className="adspy-status-copy">
+            {refreshing && <><span className="adspy-status-dot" />{statusCopy(job?.status)}</>}
+            {!refreshing && submittedQuery && updatedAt && <>Last observed {formatDate(updatedAt)}</>}
+            {!refreshing && !submittedQuery && <>Search indexed public observations</>}
+          </div>
+          {refreshing && job && <div className="adspy-progress">{job.persistedAds.toLocaleString("en-IN")} indexed · {job.discoveredAds.toLocaleString("en-IN")} discovered</div>}
+        </div>
 
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {[
-                    ["Advertiser", selectedAd.advertiserName],
-                    ["Creator", selectedAd.creatorName],
-                    ["Creative type", selectedAd.creativeType],
-                    ["Status", selectedAd.isActive === false ? "Inactive" : "Active"],
-                    ["First seen", dateLabel(selectedAd.firstSeen)],
-                    ["Last seen", dateLabel(selectedAd.lastSeen)],
-                    ["Running", selectedAd.runningDays != null ? `${selectedAd.runningDays} days` : "—"],
-                    ["CTA", selectedAd.callToAction],
-                    ["Product", selectedAd.productName],
-                    ["Offer", selectedAd.offer],
-                    ["Country", selectedAd.country],
-                    ["Publishers", selectedAd.publisherPlatforms?.join(", ")],
-                  ].map(([label, value]) => (
-                    <div key={label} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                      <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">{label}</div>
-                      <div className="mt-1 break-words text-xs font-semibold leading-5 text-slate-800">
-                        {value || "—"}
+        {error && (
+          <div className="adspy-alert" role="alert">
+            <CircleAlert size={16} />
+            <span>{error}</span>
+            <button type="button" onClick={() => setError("")} aria-label="Dismiss error"><X size={15} /></button>
+          </div>
+        )}
+
+        {submittedQuery && (
+          <>
+            <div className="adspy-results-head">
+              <div>
+                <span className="adspy-results-kicker">{selectedPageId ? "Exact Meta advertiser" : mode === "keyword" ? "Keyword search" : "Indexed advertiser search"}</span>
+                <h2>{submittedQuery}</h2>
+              </div>
+              <div className="adspy-result-count">{total ? `${firstResult.toLocaleString("en-IN")}–${lastResult.toLocaleString("en-IN")} of ${total.toLocaleString("en-IN")}` : "No indexed creatives yet"}</div>
+            </div>
+
+            <div className="adspy-filter-row" aria-label="Creative filters">
+              {( [
+                ["all", "All"], ["active", "Active"], ["video", "Video"], ["image", "Image"], ["carousel", "Carousel"], ["creator", "Creators"], ["longest", "Longest running"],
+              ] as const).map(([id, label]) => (
+                <button key={id} type="button" className={filter === id ? "active" : ""} onClick={() => setFilter(id)}>{label}</button>
+              ))}
+            </div>
+
+            {loading ? (
+              <div className="adspy-grid adspy-skeleton-grid" aria-label="Loading indexed creatives">
+                {Array.from({ length: 8 }).map((_, index) => <div className="adspy-card-skeleton" key={index}><div className="adspy-skeleton-media" /><div className="adspy-skeleton-line wide" /><div className="adspy-skeleton-line" /></div>)}
+              </div>
+            ) : filteredAds.length ? (
+              <div className="adspy-grid">
+                {filteredAds.map((ad) => {
+                  const media = ad.thumbnailUrl ?? ad.imageUrl;
+                  const sourceUrl = safeExternalUrl(ad.sourceUrl);
+                  return (
+                    <article className="adspy-card" key={`${ad.platform}-${ad.id}`} onClick={() => openAd(ad)} tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openAd(ad); } }}>
+                      <div className="adspy-card-media">
+                        {media ? <img src={media} alt="" loading="lazy" decoding="async" /> : <div className="adspy-no-media"><ImageIcon size={24} /></div>}
+                        <span className={`adspy-active-badge ${ad.isActive === true ? "active" : ad.isActive === false ? "inactive" : "unknown"}`}>{ad.isActive === true ? "Active" : ad.isActive === false ? "Inactive" : "Unknown"}</span>
+                        {ad.creativeType?.toLowerCase().includes("video") && <span className="adspy-media-badge"><Video size={12} /> Video</span>}
+                        {ad.creativeType?.toLowerCase().includes("carousel") && <span className="adspy-media-badge"><ImageIcon size={12} /> Carousel</span>}
+                        <button type="button" className="adspy-inspect-float" onClick={(event) => { event.stopPropagation(); openAd(ad); }} aria-label={`Inspect ${ad.advertiserName ?? "creative"}`}><ArrowUpRight size={15} /></button>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                      <div className="adspy-card-body">
+                        <div className="adspy-card-advertiser"><span>{ad.advertiserName ?? "Unknown advertiser"}</span>{ad.advertiserId && <span className="adspy-pageid">Meta · {ad.advertiserId}</span>}</div>
+                        <div className="adspy-card-meta"><span>{labelize(ad.creativeType)}</span><span>First seen {formatDate(ad.firstSeen)}</span></div>
+                        <div className="adspy-card-footer"><span>{ad.runningDays ? `${ad.runningDays} day${ad.runningDays === 1 ? "" : "s"} running` : "Duration unavailable"}</span>{visibleMeta(ad) && <span className="adspy-card-offer">{visibleMeta(ad)}</span>}</div>
+                        {sourceUrl && <a href={sourceUrl} target="_blank" rel="noreferrer" className="adspy-source-link" onClick={(event) => event.stopPropagation()}><ExternalLink size={12} /> Source</a>}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="adspy-empty">
+                <Sparkles size={21} />
+                <h3>Nothing indexed for this advertiser yet.</h3>
+                <p>Existing observations appear immediately. New public creatives will join the library as they are collected.</p>
+              </div>
+            )}
 
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <div className="rounded-xl border border-slate-100 bg-white p-3">
-                    <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Landing page</div>
-                    {safeUrl(selectedAd.landingPage) ? (
-                      <a
-                        href={safeUrl(selectedAd.landingPage)!}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-1 block break-words text-xs font-semibold text-blue-600 hover:text-blue-800"
-                      >
-                        {selectedAd.landingPage}
-                      </a>
-                    ) : (
-                      <div className="mt-1 text-xs font-semibold text-slate-700">—</div>
-                    )}
-                  </div>
+            <div className="adspy-pagination">
+              <span>25 creatives per page</span>
+              <div className="adspy-pagination-controls">
+                <button type="button" onClick={() => { const next = Math.max(1, page - 1); setPage(next); void loadSearch(next, { overrideQuery: submittedQuery, overridePageId: selectedPageId }); }} disabled={page <= 1}><ChevronLeft size={15} /> Previous</button>
+                <span>Page {page}{totalPages ? ` of ${totalPages}` : ""}</span>
+                <button type="button" onClick={() => { const next = page + 1; setPage(next); void loadSearch(next, { overrideQuery: submittedQuery, overridePageId: selectedPageId }); }} disabled={totalPages > 0 ? page >= totalPages : ads.length < PAGE_SIZE}><span>Next</span><ChevronRight size={15} /></button>
+              </div>
+            </div>
 
-                  <div className="rounded-xl border border-slate-100 bg-white p-3">
-                    <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Source</div>
-                    {safeUrl(selectedAd.sourceUrl) ? (
-                      <a
-                        href={safeUrl(selectedAd.sourceUrl)!}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-1 block text-xs font-semibold text-blue-600 hover:text-blue-800"
-                      >
-                        Open public source ↗
-                      </a>
-                    ) : (
-                      <div className="mt-1 text-xs font-semibold text-slate-700">—</div>
-                    )}
-                  </div>
-                </div>
+            <section className="adspy-intelligence" aria-label="Competitive intelligence">
+              <div className="adspy-section-heading"><div><span className="adspy-results-kicker">Evidence layer</span><h2>What the observed library says</h2></div><span className="adspy-evidence-chip"><Activity size={13} /> {summary.totalAds.toLocaleString("en-IN")} observed creatives</span></div>
+              <div className="adspy-stat-grid">
+                <div><span>Active</span><strong>{summary.activeAds.toLocaleString("en-IN")}</strong><small>{summary.videoAds.toLocaleString("en-IN")} video</small></div>
+                <div><span>Average running</span><strong>{summary.averageRunningDays.toFixed(1)}d</strong><small>Longest {summary.longestRunningDays}d</small></div>
+                <div><span>Creators</span><strong>{summary.creatorAds.toLocaleString("en-IN")}</strong><small>{summary.carouselAds.toLocaleString("en-IN")} carousel</small></div>
+                <div><span>Formats</span><strong>{summary.videoAds + summary.imageAds + summary.carouselAds}</strong><small>{summary.imageAds.toLocaleString("en-IN")} image</small></div>
+              </div>
+              <div className="adspy-intelligence-grid">
+                <div className="adspy-intelligence-panel"><div className="adspy-panel-title"><History size={15} /> Messaging patterns</div>{intelligence?.topHooks?.length ? <div className="adspy-chip-list">{intelligence.topHooks.slice(0, 5).map((item) => <span key={item.label}>{item.label} <b>{item.count}</b></span>)}</div> : <p>Not enough observed text evidence yet.</p>}</div>
+                <div className="adspy-intelligence-panel"><div className="adspy-panel-title"><Clock3 size={15} /> Persistence</div><p>{intelligence?.longestRunningAd?.headline ? <><strong>{intelligence.longestRunningAd.headline}</strong><br />{intelligence.longestRunningAd.runningDays ?? summary.longestRunningDays} days observed.</> : "Historical duration appears once enough observations have accumulated."}</p></div>
+                <div className="adspy-intelligence-panel"><div className="adspy-panel-title"><UserRound size={15} /> Creators</div>{intelligence?.topCreators?.length ? <div className="adspy-chip-list">{intelligence.topCreators.slice(0, 5).map((item) => <span key={item.label}>{item.label} <b>{item.count}</b></span>)}</div> : <p>No creator pattern is established in the indexed evidence.</p>}</div>
+                <div className="adspy-intelligence-panel"><div className="adspy-panel-title"><CircleAlert size={15} /> Performance data</div><p>Public Meta sources used here do not provide reliable per-ad reach, CTR, spend or ROAS. Those fields stay unavailable rather than being inferred.</p></div>
+              </div>
+            </section>
+          </>
+        )}
+      </div>
+
+      <div className="sr-only" aria-live="polite">{announcement}</div>
+
+      {selectedAd && (
+        <div className="adspy-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedAd(null); }}>
+          <div className="adspy-modal" role="dialog" aria-modal="true" aria-labelledby="adspy-modal-title" data-adspy-modal>
+            <div className="adspy-modal-head">
+              <div><span className="adspy-results-kicker">Creative evidence</span><h2 id="adspy-modal-title">{selectedAd.advertiserName ?? "Unknown advertiser"}</h2></div>
+              <button ref={modalCloseRef} type="button" className="adspy-icon-button" aria-label="Close inspect dialog" title="Close" onClick={() => { setSelectedAd(null); beforeModalFocusedRef.current?.focus(); }}><X size={17} /></button>
+            </div>
+            <div className="adspy-modal-body">
+              <div className="adspy-modal-media">
+                {selectedAd.videoUrl ? <video controls playsInline preload="metadata" poster={selectedAd.thumbnailUrl ?? selectedAd.imageUrl ?? undefined} src={safeExternalUrl(selectedAd.videoUrl) ?? undefined} /> : selectedAd.imageUrl ? <img src={selectedAd.imageUrl} alt="" /> : <div className="adspy-no-media large"><ImageIcon size={28} /></div>}
+              </div>
+              <div className="adspy-evidence-grid">
+                <div><span>Meta Page ID</span><strong>{selectedAd.advertiserId ?? "Not publicly available"}</strong></div>
+                <div><span>Creative type</span><strong>{labelize(selectedAd.creativeType)}</strong></div>
+                <div><span>Status</span><strong>{selectedAd.isActive === true ? "Active" : selectedAd.isActive === false ? "Inactive" : "Not publicly available"}</strong></div>
+                <div><span>First seen</span><strong>{formatDate(selectedAd.firstSeen)}</strong></div>
+                <div><span>Last seen</span><strong>{formatDate(selectedAd.lastSeen)}</strong></div>
+                <div><span>Running duration</span><strong>{selectedAd.runningDays ? `${selectedAd.runningDays} days` : "Not publicly available"}</strong></div>
+                <div><span>Creator</span><strong>{selectedAd.creatorName ?? "Not publicly available"}</strong></div>
+                <div><span>Offer</span><strong>{selectedAd.offer ?? "Not publicly available"}</strong></div>
+              </div>
+              <div className="adspy-evidence-copy"><span>Primary text</span><p>{selectedAd.primaryText ?? "Not publicly available"}</p></div>
+              <div className="adspy-evidence-copy"><span>Headline</span><p>{selectedAd.headline ?? "Not publicly available"}</p></div>
+              <div className="adspy-evidence-copy"><span>CTA</span><p>{selectedAd.callToAction ?? "Not publicly available"}</p></div>
+              <div className="adspy-evidence-copy"><span>Markets</span><p>{selectedAd.markets?.length ? selectedAd.markets.map((market) => market.countryName ?? market.countryCode ?? "Unknown").join(" · ") : "Not publicly available"}</p></div>
+              <div className="adspy-evidence-copy"><span>Languages</span><p>{selectedAd.languages?.length ? selectedAd.languages.map((language) => language.name).join(" · ") : "Not publicly available"}</p></div>
+              <div className="adspy-evidence-copy"><span>Provenance</span><pre>{JSON.stringify(selectedAd.dataProvenance ?? {}, null, 2)}</pre></div>
+              <div className="adspy-modal-actions">
+                {safeExternalUrl(selectedAd.sourceUrl) && <a className="adspy-secondary-button" href={safeExternalUrl(selectedAd.sourceUrl)!} target="_blank" rel="noreferrer"><ExternalLink size={14} /> Open source</a>}
+                {selectedAd.videoUrl && <span className="adspy-secondary-note"><Play size={13} /> Video evidence loads only when inspected</span>}
               </div>
             </div>
           </div>
-        </div>,
-        document.body,
-      )
-        : null}
+        </div>
+      )}
     </section>
   );
 }
+
+export default AdSpySection;

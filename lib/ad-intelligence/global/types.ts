@@ -2,43 +2,14 @@ import type { AdPlatform, CompetitorAd } from "../types";
 
 export type DataSource = "provider" | "heuristic" | "derived" | "unavailable";
 
-export type GlobalLanguage = {
-  code: string;
-  name: string;
-  count: number;
-  share: number;
-  source: DataSource;
-};
-
-export type GlobalMarket = {
-  countryCode: string;
-  countryName: string | null;
-  stateName: string | null;
-  cityName: string | null;
-  regionName: string | null;
-  count: number;
-  share: number;
-  source: DataSource;
-};
+export type GlobalLanguage = { code: string; name: string; count: number; share: number; source: DataSource };
+export type GlobalMarket = { countryCode: string; countryName: string | null; stateName: string | null; cityName: string | null; regionName: string | null; count: number; share: number; source: DataSource };
 
 export type GlobalAdRecord = CompetitorAd & {
   brandId?: string | null;
   dataProvenance?: Record<string, DataSource>;
-  languages?: Array<{
-    code: string;
-    name: string;
-    source: DataSource;
-    confidence?: number | null;
-  }>;
-  markets?: Array<{
-    countryCode: string;
-    countryName?: string | null;
-    stateName?: string | null;
-    cityName?: string | null;
-    regionName?: string | null;
-    source: DataSource;
-    confidence?: number | null;
-  }>;
+  languages?: Array<{ code: string; name: string; source: DataSource; confidence?: number | null }>;
+  markets?: Array<{ countryCode: string; countryName?: string | null; stateName?: string | null; cityName?: string | null; regionName?: string | null; source: DataSource; confidence?: number | null }>;
 };
 
 export type GlobalSearchSummary = {
@@ -73,6 +44,11 @@ export type CollectionJobStatus =
   | "normalizing"
   | "enriching"
   | "finalizing"
+  | "deep_queued"
+  | "deep"
+  | "exhausted"
+  | "stale"
+  | "cancelled"
   | "complete"
   | "failed";
 
