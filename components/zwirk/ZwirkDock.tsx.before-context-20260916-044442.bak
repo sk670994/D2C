@@ -25,9 +25,6 @@ export function ZwirkDock() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-
-  const [entityContext, setEntityContext] =
-    useState<unknown>(null);
   const [queued, setQueued] = useState<string | null>(null);
 
   const isApp = ["/dashboard", "/adspy", "/brand-vault", "/records", "/zwirk"].some((path) => pathname.startsWith(path));
@@ -65,26 +62,6 @@ export function ZwirkDock() {
   }, []);
 
   useEffect(() => {
-    function onEntity(event: Event) {
-      const detail =
-        (event as CustomEvent<unknown>).detail ?? null;
-
-      setEntityContext(detail);
-    }
-
-    window.addEventListener(
-      "zooptrack:zwirk-entity",
-      onEntity
-    );
-
-    return () =>
-      window.removeEventListener(
-        "zooptrack:zwirk-entity",
-        onEntity
-      );
-  }, []);
-
-  useEffect(() => {
     if (!queued) return;
     const prompt = queued;
     setQueued(null);
@@ -106,9 +83,7 @@ export function ZwirkDock() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: next,
-          context: context || undefined,
-          pagePath: pathname,
-          entityContext
+          context: context || undefined
         })
       });
       const data = (await res.json()) as { reply?: string; error?: string };
@@ -137,10 +112,7 @@ export function ZwirkDock() {
             </div>
             <button type="button" onClick={() => setOpen(false)} aria-label="Close">×</button>
           </header>
-          <p className="zwirk-dock-context">
-            Context · {pageContext(pathname)}
-            {entityContext ? " · Entity linked" : ""}
-          </p>
+          <p className="zwirk-dock-context">Context · {pageContext(pathname)}</p>
           <div className="zwirk-dock-thread">
             {messages.length === 0 ? (
               <p className="muted-text">Ask why profit moved, what to pause, or what to test next. I will not invent metrics.</p>

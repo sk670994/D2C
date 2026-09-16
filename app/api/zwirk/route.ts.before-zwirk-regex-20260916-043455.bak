@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { routeZwirkIntent } from "@/lib/zwirk/reasoning/intent-router";
 import { buildSpecializedZwirkPrompt } from "@/lib/zwirk/prompts/context-prompt";
 import {
+  buildPageContext,
   buildZwirkContext,
   serializeZwirkContext,
 } from "@/lib/zwirk/context/context-builder";
@@ -436,9 +437,7 @@ export async function POST(
         : "";
 
     const entityContext =
-      body.entityContext;
-
-    if (
+      body.entityContext;if (
       messages.length === 0
     ) {
       return NextResponse.json(
@@ -540,123 +539,32 @@ export async function POST(
           undefined,
         adSpyContext
       );
-    const zwirkPageType =
-      pagePath.startsWith("/adspy")
-        ? "adspy"
-        : pagePath.startsWith("/brand-vault")
-          ? "brand_vault"
-          : pagePath.startsWith("/zwirk")
-            ? "zwirk"
-            : pagePath.startsWith("/dashboard")
-              ? "dashboard"
-              : pagePath.startsWith("/decision-loop")
-                ? "decision_loop"
-                : pagePath.startsWith("/pricing")
-                  ? "pricing"
-                  : pagePath.startsWith("/faq")
-                    ? "faq"
-                    : "dashboard";
 
-    const pageContext =
-      {
-        page:
-          zwirkPageType as Parameters<
-            typeof buildZwirkContext
-          >[0]["page"],
+    const pageContext = buildPageContext({
+      pathname: pagePath,
+      entity: entityContext,
+    });
 
-        label:
-          zwirkPageType === "adspy"
-            ? "AdSpy"
-            : zwirkPageType === "brand_vault"
-              ? "Brand Vault"
-              : zwirkPageType === "zwirk"
-                ? "ZWIRK Workspace"
-                : zwirkPageType === "dashboard"
-                  ? "Growth Dashboard"
-                  : zwirkPageType === "decision_loop"
-                    ? "Decision Loop"
-                    : zwirkPageType === "pricing"
-                      ? "Pricing"
-                      : zwirkPageType === "faq"
-                        ? "FAQ"
-                        : "Zooptrack",
+    const zwirkIntent = routeZwirkIntent(
+      messages[messages.length - 1]?.content ?? "",
+      pageContext
+    );
 
-        description:
-          `Current Zooptrack page: ${pagePath || "/"}`,
-
-        entity:
-          entityContext &&
-          typeof entityContext === "object"
-            ? entityContext as Parameters<
-                typeof buildZwirkContext
-              >[0]["entity"]
-            : null,
-      } satisfies Parameters<
-        typeof buildZwirkContext
-      >[0];
-
-    const zwirkIntent =
-      routeZwirkIntent(
-        messages[messages.length - 1]
-          ?.content ?? ""
-      );
-
-    const workspaceContext =
-      {
-        brandVault:
-          brandVault
-            ? {
-                brand_name:
-                  brandVault.brand_name,
-                website_url:
-                  brandVault.website_url,
-                tone:
-                  brandVault.tone,
-                audience:
-                  brandVault.audience,
-                do_not_say:
-                  brandVault.do_not_say,
-                hero_product:
-                  brandVault.hero_product,
-                main_objection:
-                  brandVault.main_objection,
-                competitor_focus:
-                  brandVault.competitor_focus,
-              }
-            : null,
-
-        dashboard:
-          contextValue ??
-          null,
-
-        competitiveContext:
-          competitorContext ??
-          null,
-
-        adSpyContext:
-          adSpyContext ??
-          null,
-
-        history:
-          null,
-
-        experiments:
-          null,
-      } satisfies Parameters<
-        typeof buildZwirkContext
-      >[1];
-
-    const zwirkContext =
-      buildZwirkContext(
-        pageContext,
-        workspaceContext,
-        zwirkIntent
-      );
+    const zwirkContext = buildZwirkContext({
+      pathname: pagePath,
+      pageContext,
+      entity: entityContext,
+      dashboardContext: contextValue,
+      competitorContext,
+      adSpyContext,
+    });
 
     const specializedPrompt =
-      buildSpecializedZwirkPrompt(
-        zwirkContext
-      );
+      buildSpecializedZwirkPrompt({
+        intent: zwirkIntent,
+        pageContext,
+        context: zwirkContext,
+      });
 
     const canonicalContext =
       serializeZwirkContext(

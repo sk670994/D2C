@@ -1,0 +1,1137 @@
+﻿/* === ZWIRK IMG3 CINEMATIC SYSTEM === */
+html:has(.zwirk-v3-page),
+body:has(.zwirk-v3-page) {
+  background: #030507 !important;
+}
+
+body:has(.zwirk-v3-page) {
+  overflow: hidden !important;
+}
+
+.zwirk-v3-page {
+  position: relative;
+  width: 100vw;
+  height: 100svh;
+  min-height: 720px;
+  overflow: hidden;
+  color: #f6f5ef;
+  background: #030507;
+  isolation: isolate;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.zwirk-v3-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.zwirk-v3-overlay a,
+.zwirk-v3-overlay button,
+.zwirk-v3-overlay input {
+  pointer-events: auto;
+}
+
+.zwirk-v3-scene {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  background: #030507;
+}
+
+.zwirk-v3-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.zwirk-v3-scene::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 54% 46%, transparent 0 28%, rgba(0,0,0,.07) 49%, rgba(0,0,0,.66) 100%),
+    linear-gradient(180deg, rgba(0,0,0,.48), transparent 16%, transparent 72%, rgba(0,0,0,.64));
+}
+
+.zwirk-v3-scene::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .08;
+  background-image:
+    linear-gradient(rgba(255,255,255,.16) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.16) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: radial-gradient(circle at 54% 48%, black, transparent 75%);
+}
+
+.zwirk-v3-nav {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 74px;
+  display: grid;
+  grid-template-columns: 230px 1fr auto;
+  align-items: center;
+  padding: 0 40px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  background: linear-gradient(180deg, rgba(1,3,5,.76), rgba(1,3,5,.18));
+  backdrop-filter: blur(8px);
+  z-index: 50;
+}
+
+.zwirk-v3-logo {
+  color: #f2f2ed;
+  font-size: 14px;
+  letter-spacing: .27em;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.zwirk-v3-nav nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 34px;
+}
+
+.zwirk-v3-nav nav a {
+  position: relative;
+  color: rgba(243,244,240,.7);
+  text-decoration: none;
+  font-size: 12px;
+  transition: 160ms ease;
+}
+
+.zwirk-v3-nav nav a:hover,
+.zwirk-v3-nav nav a.active {
+  color: #fff;
+}
+
+.zwirk-v3-nav nav a.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -23px;
+  height: 2px;
+  background: #ff8e53;
+  box-shadow: 0 0 16px rgba(255,130,72,.62);
+}
+
+.zwirk-v3-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.zwirk-v3-search {
+  height: 38px;
+  min-width: 330px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 11px;
+  color: rgba(243,244,239,.56);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 999px;
+  background: rgba(4,7,9,.42);
+  font-size: 11px;
+  text-align: left;
+  backdrop-filter: blur(18px);
+}
+
+.zwirk-v3-search span {
+  font-size: 17px;
+  color: rgba(255,255,255,.45);
+}
+
+.zwirk-v3-search kbd {
+  margin-left: auto;
+  padding: 3px 7px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 6px;
+  color: rgba(255,255,255,.52);
+  font-size: 9px;
+  background: rgba(255,255,255,.04);
+}
+
+.zwirk-v3-avatar {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255,160,101,.5);
+  color: #fff5ea;
+  background: rgba(38,20,12,.42);
+  box-shadow: 0 0 24px rgba(255,117,48,.1);
+  font-size: 13px;
+}
+
+.zwirk-v3-hero {
+  position: absolute;
+  left: 54px;
+  top: 132px;
+  z-index: 30;
+  pointer-events: auto;
+}
+
+.zwirk-v3-kicker {
+  color: rgba(233,236,230,.72);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .27em;
+}
+
+.zwirk-v3-hero h1 {
+  margin: 17px 0 17px;
+  font-size: clamp(50px, 5.5vw, 85px);
+  line-height: .86;
+  font-weight: 520;
+  letter-spacing: -.055em;
+}
+
+.zwirk-v3-hero h1 span {
+  color: #ff943f;
+  text-shadow: 0 0 30px rgba(255,109,33,.18);
+}
+
+.zwirk-v3-hero p {
+  margin: 0;
+  color: rgba(226,231,228,.68);
+  font-size: 15px;
+  line-height: 1.48;
+}
+
+.zwirk-v3-cta {
+  margin-top: 28px;
+  height: 46px;
+  padding: 0 22px;
+  border: 0;
+  border-radius: 13px;
+  background: #f7f6f0;
+  color: #111310;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 14px 50px rgba(0,0,0,.35);
+}
+
+.zwirk-v3-cta b {
+  margin-left: 16px;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.zwirk-v3-watch {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(224,228,225,.55);
+  font-size: 11px;
+}
+
+.zwirk-v3-watch span {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 50%;
+  font-size: 8px;
+}
+
+.zwirk-v3-left-stats {
+  position: absolute;
+  left: 54px;
+  bottom: 126px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  z-index: 30;
+}
+
+.zwirk-v3-left-stats div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.zwirk-v3-left-stats strong {
+  font-size: 21px;
+  font-weight: 500;
+  letter-spacing: -.02em;
+}
+
+.zwirk-v3-left-stats span {
+  color: rgba(202,210,211,.5);
+  font-size: 9px;
+}
+
+.zwirk-v3-right-copy {
+  position: absolute;
+  right: 44px;
+  top: 265px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding-left: 22px;
+  border-left: 1px solid rgba(255,142,77,.3);
+  z-index: 30;
+}
+
+.zwirk-v3-right-copy span {
+  color: #ff9d53;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .23em;
+}
+
+.zwirk-v3-bottom-left {
+  position: absolute;
+  left: 46px;
+  bottom: 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: rgba(210,217,215,.48);
+  font-size: 8px;
+  letter-spacing: .18em;
+  z-index: 30;
+}
+
+.zwirk-v3-bottom-left strong {
+  color: rgba(237,240,236,.73);
+  font-size: 8px;
+}
+
+.zwirk-v3-bottom-right {
+  position: absolute;
+  right: 44px;
+  bottom: 47px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: rgba(218,225,224,.48);
+  font-size: 8px;
+  letter-spacing: .18em;
+  z-index: 30;
+}
+
+.zwirk-v3-command {
+  position: absolute;
+  left: 50%;
+  bottom: 43px;
+  width: min(770px, 53vw);
+  transform: translateX(-50%);
+  z-index: 60;
+  pointer-events: auto;
+}
+
+.zwirk-v3-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  padding-left: 2px;
+}
+
+.zwirk-v3-tabs button {
+  border: 1px solid rgba(255,255,255,.08);
+  border-bottom: 0;
+  background: rgba(5,8,10,.78);
+  color: rgba(224,229,228,.48);
+  padding: 9px 17px;
+  border-radius: 11px 11px 0 0;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.zwirk-v3-tabs button.active {
+  color: #fff2e5;
+  background: rgba(20,13,10,.9);
+  border-color: rgba(255,148,92,.24);
+}
+
+.zwirk-v3-input-shell {
+  height: 76px;
+  display: grid;
+  grid-template-columns: 42px 1fr 52px;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid rgba(240,242,236,.17);
+  border-radius: 0 16px 16px 16px;
+  background: linear-gradient(180deg, rgba(7,10,13,.82), rgba(5,7,9,.9));
+  box-shadow:
+    0 25px 75px rgba(0,0,0,.46),
+    inset 0 0 0 1px rgba(255,255,255,.025);
+  backdrop-filter: blur(24px);
+}
+
+.zwirk-v3-spark {
+  display: grid;
+  place-items: center;
+  color: #ffe5c9;
+  font-size: 19px;
+}
+
+.zwirk-v3-input-shell form {
+  min-width: 0;
+}
+
+.zwirk-v3-input-shell input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #f6f6f1;
+  font-size: 15px;
+}
+
+.zwirk-v3-input-shell input::placeholder {
+  color: rgba(218,224,222,.4);
+}
+
+.zwirk-v3-send {
+  justify-self: end;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255,167,103,.38);
+  border-radius: 10px;
+  color: #fff5ec;
+  background: rgba(35,20,13,.72);
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.zwirk-v3-send:disabled {
+  opacity: .32;
+  cursor: default;
+}
+
+.zwirk-v3-starters {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 13px;
+}
+
+.zwirk-v3-starters button {
+  padding: 8px 13px;
+  border: 1px solid rgba(255,255,255,.11);
+  border-radius: 999px;
+  background: rgba(5,8,10,.58);
+  color: rgba(238,240,237,.7);
+  font-size: 9px;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+}
+
+.zwirk-v3-starters button:hover {
+  border-color: rgba(255,148,87,.35);
+  color: #fff;
+}
+
+.zwirk-v3-answer {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255,161,102,.13);
+  border-radius: 12px;
+  background: rgba(4,8,10,.58);
+  backdrop-filter: blur(18px);
+}
+
+.answer-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(255,162,101,.68);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .14em;
+}
+
+.answer-copy {
+  margin-top: 7px;
+  color: rgba(232,237,235,.72);
+  font-size: 10px;
+  line-height: 1.45;
+  max-height: 85px;
+  overflow: auto;
+}
+
+.pulse {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #ff9c5e;
+  box-shadow: 0 0 12px rgba(255,123,49,.85);
+}
+
+.pulse.thinking {
+  animation: zwirkV3Pulse .5s ease-in-out infinite alternate;
+}
+
+.zwirk-v3-error {
+  margin-top: 7px;
+  color: #ffac9d;
+  font-size: 8px;
+}
+
+.zwirk-v3-signal-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.zwirk-v3-signal {
+  position: absolute;
+  width: 250px;
+  min-height: 105px;
+  transform: translate(-50%, -50%);
+  padding: 13px 15px;
+  border: 1px solid rgba(225,231,231,.11);
+  border-radius: 13px;
+  text-align: left;
+  color: #f4f5f1;
+  background:
+    linear-gradient(180deg, rgba(7,12,15,.68), rgba(7,10,12,.83)),
+    radial-gradient(circle at 100% 0, rgba(255,137,71,.09), transparent 42%);
+  box-shadow:
+    0 20px 60px rgba(0,0,0,.34),
+    inset 0 0 0 1px rgba(255,255,255,.025);
+  backdrop-filter: blur(16px);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: 170ms ease;
+  z-index: 20;
+}
+
+.zwirk-v3-signal:nth-child(1),
+.zwirk-v3-signal:nth-child(3) {
+  transform: translate(-50%, -50%) rotate(-3deg);
+}
+
+.zwirk-v3-signal:nth-child(4),
+.zwirk-v3-signal:nth-child(6) {
+  transform: translate(-50%, -50%) rotate(2.5deg);
+}
+
+.zwirk-v3-signal:hover,
+.zwirk-v3-signal.focused {
+  transform: translate(-50%, -50%) scale(1.045) rotate(0deg) !important;
+  border-color: rgba(255,166,101,.38);
+  box-shadow:
+    0 28px 80px rgba(0,0,0,.44),
+    0 0 40px rgba(255,107,39,.11),
+    inset 0 0 0 1px rgba(255,180,125,.05);
+}
+
+.signal-top {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  gap: 7px;
+  color: rgba(204,214,215,.42);
+  font-size: 6px;
+  letter-spacing: .12em;
+}
+
+.signal-top i {
+  font-style: normal;
+  color: rgba(255,153,92,.38);
+}
+
+.signal-top em {
+  font-style: normal;
+}
+
+.signal-top b {
+  color: #7bc8da;
+  font-size: 6px;
+}
+
+.zwirk-v3-signal strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 16px;
+  font-weight: 520;
+  letter-spacing: -.02em;
+}
+
+.signal-metrics {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-top: 7px;
+  color: rgba(233,239,237,.74);
+  font-size: 9px;
+}
+
+.signal-metrics small {
+  color: rgba(195,209,211,.42);
+  font-size: 7px;
+}
+
+.signal-wave {
+  position: absolute;
+  right: 12px;
+  bottom: 13px;
+  height: 26px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.signal-wave i {
+  width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #67d0e6, rgba(76,146,166,.16));
+  animation: zwirkV3Wave .72s ease-in-out infinite alternate;
+}
+
+.signal-wave i:nth-child(1) { height: 8px; }
+.signal-wave i:nth-child(2) { height: 16px; animation-delay: .08s; }
+.signal-wave i:nth-child(3) { height: 11px; animation-delay: .15s; }
+.signal-wave i:nth-child(4) { height: 22px; animation-delay: .2s; }
+.signal-wave i:nth-child(5) { height: 14px; animation-delay: .1s; }
+.signal-wave i:nth-child(6) { height: 20px; animation-delay: .24s; }
+.signal-wave i:nth-child(7) { height: 9px; animation-delay: .18s; }
+
+.zwirk-v3-signal.focused .signal-wave i {
+  background: linear-gradient(180deg, #ffbb82, rgba(255,107,40,.2));
+}
+
+.zwirk-v3-scan {
+  position: absolute;
+  right: 68px;
+  bottom: 183px;
+  z-index: 12;
+  padding: 13px 17px;
+  border: 1px solid rgba(111,191,211,.16);
+  background: rgba(2,8,11,.4);
+  backdrop-filter: blur(14px);
+  color: rgba(181,224,234,.65);
+  font-size: 9px;
+  letter-spacing: .15em;
+  line-height: 1.65;
+}
+
+.zwirk-v3-scan b {
+  color: rgba(216,231,234,.8);
+  font-weight: 500;
+}
+
+.zwirk-v3-core-label {
+  position: absolute;
+  left: 54%;
+  top: 61%;
+  transform: translate(-50%, -50%);
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(235,238,233,.32);
+  font-size: 7px;
+  letter-spacing: .19em;
+  pointer-events: none;
+}
+
+.zwirk-v3-core-label span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #ff945b;
+  box-shadow: 0 0 12px rgba(255,123,49,.8);
+  animation: zwirkV3Pulse .8s ease-in-out infinite alternate;
+}
+
+.mode-thinking .zwirk-v3-core-label span {
+  animation-duration: .35s;
+}
+
+@keyframes zwirkV3Pulse {
+  from { opacity: .35; transform: scale(.76); }
+  to { opacity: 1; transform: scale(1.18); }
+}
+
+@keyframes zwirkV3Wave {
+  from { transform: scaleY(.55); opacity: .45; }
+  to { transform: scaleY(1.15); opacity: .95; }
+}
+
+@media (max-width: 1100px) {
+  .zwirk-v3-nav {
+    grid-template-columns: 150px 1fr auto;
+    padding: 0 20px;
+  }
+
+  .zwirk-v3-nav nav {
+    gap: 17px;
+  }
+
+  .zwirk-v3-nav nav a {
+    font-size: 10px;
+  }
+
+  .zwirk-v3-search {
+    min-width: 240px;
+  }
+
+  .zwirk-v3-hero {
+    left: 26px;
+  }
+
+  .zwirk-v3-hero h1 {
+    font-size: 54px;
+  }
+
+  .zwirk-v3-signal {
+    width: 190px;
+    min-height: 90px;
+  }
+
+  .zwirk-v3-signal strong {
+    font-size: 12px;
+  }
+
+  .zwirk-v3-command {
+    width: min(700px, 58vw);
+  }
+}
+
+@media (max-width: 800px) {
+  .zwirk-v3-page {
+    min-height: 100svh;
+    height: 100svh;
+  }
+
+  .zwirk-v3-nav {
+    height: 58px;
+    grid-template-columns: 1fr auto;
+  }
+
+  .zwirk-v3-nav nav,
+  .zwirk-v3-search {
+    display: none;
+  }
+
+  .zwirk-v3-logo {
+    font-size: 12px;
+  }
+
+  .zwirk-v3-hero {
+    top: 86px;
+    left: 18px;
+  }
+
+  .zwirk-v3-hero h1 {
+    font-size: 39px;
+  }
+
+  .zwirk-v3-hero p {
+    font-size: 11px;
+  }
+
+  .zwirk-v3-left-stats,
+  .zwirk-v3-right-copy,
+  .zwirk-v3-bottom-left,
+  .zwirk-v3-bottom-right {
+    display: none;
+  }
+
+  .zwirk-v3-signal {
+    width: 135px;
+    min-height: 77px;
+    padding: 9px;
+  }
+
+  .zwirk-v3-signal strong {
+    font-size: 9px;
+    margin-top: 5px;
+  }
+
+  .signal-metrics {
+    display: block;
+    margin-top: 4px;
+    font-size: 7px;
+  }
+
+  .signal-metrics small {
+    display: block;
+    margin-top: 2px;
+  }
+
+  .zwirk-v3-command {
+    width: calc(100vw - 24px);
+    bottom: 12px;
+  }
+
+  .zwirk-v3-input-shell {
+    height: 58px;
+  }
+
+  .zwirk-v3-input-shell input {
+    font-size: 11px;
+  }
+
+  .zwirk-v3-starters {
+    display: none;
+  }
+
+  .zwirk-v3-scan {
+    right: 15px;
+    bottom: 190px;
+  }
+}
+
+
+/* === ZWIRK FRAME POLISH V2 === */
+
+.zwirk-v3-page {
+  height: 100svh;
+  min-height: 680px;
+}
+
+/*
+ * Main composition:
+ * keep the living engine visually centered,
+ * reserve the left 28% for the hero,
+ * reserve the bottom 22% for the command console.
+ */
+
+.zwirk-v3-hero {
+  left: clamp(32px, 4vw, 58px);
+  top: clamp(112px, 16vh, 148px);
+  width: min(300px, 24vw);
+  max-width: 300px;
+}
+
+.zwirk-v3-hero h1 {
+  max-width: 310px;
+  font-size: clamp(43px, 5.1vw, 72px);
+  line-height: .86;
+  letter-spacing: -.052em;
+}
+
+.zwirk-v3-hero p {
+  max-width: 292px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.zwirk-v3-hero .zwirk-v3-cta {
+  margin-top: 22px;
+}
+
+/*
+ * Cards are pulled slightly inward and upward.
+ * This creates clean lanes between hero / creature / console.
+ */
+
+.zwirk-v3-signal {
+  width: clamp(205px, 17vw, 245px);
+  min-height: 96px;
+}
+
+.zwirk-v3-signal:nth-child(1) {
+  left: 43%;
+  top: 27%;
+  transform: translate(-50%, -50%) rotate(-2.2deg);
+}
+
+.zwirk-v3-signal:nth-child(2) {
+  left: 34%;
+  top: 48%;
+  transform: translate(-50%, -50%) rotate(1deg);
+}
+
+.zwirk-v3-signal:nth-child(3) {
+  left: 38%;
+  top: 69%;
+  transform: translate(-50%, -50%) rotate(-1.3deg);
+}
+
+.zwirk-v3-signal:nth-child(4) {
+  left: 71%;
+  top: 27%;
+  transform: translate(-50%, -50%) rotate(2deg);
+}
+
+.zwirk-v3-signal:nth-child(5) {
+  left: 73%;
+  top: 49%;
+  transform: translate(-50%, -50%) rotate(-1.5deg);
+}
+
+.zwirk-v3-signal:nth-child(6) {
+  left: 69%;
+  top: 69%;
+  transform: translate(-50%, -50%) rotate(1.5deg);
+}
+
+/*
+ * Do not allow lower signal cards to collide with
+ * the command console at normal desktop sizes.
+ */
+.zwirk-v3-command {
+  bottom: clamp(20px, 4.6vh, 43px);
+  width: min(770px, 58vw);
+}
+
+.zwirk-v3-input-shell {
+  height: clamp(64px, 7.2vh, 76px);
+}
+
+/*
+ * The right telemetry block stays in its lane.
+ */
+.zwirk-v3-right-copy {
+  right: clamp(24px, 3.2vw, 48px);
+  top: clamp(220px, 30vh, 270px);
+}
+
+/*
+ * Scanning HUD is moved above the command surface.
+ */
+.zwirk-v3-scan {
+  right: clamp(24px, 4.2vw, 72px);
+  bottom: clamp(170px, 22vh, 205px);
+}
+
+/*
+ * The left metrics should never sit on top of the hero paragraph.
+ */
+.zwirk-v3-left-stats {
+  left: clamp(32px, 4vw, 58px);
+  bottom: clamp(116px, 15vh, 142px);
+  gap: 15px;
+}
+
+.zwirk-v3-left-stats strong {
+  font-size: 18px;
+}
+
+.zwirk-v3-left-stats span {
+  font-size: 8px;
+}
+
+/*
+ * Keep the central creature visually dominant without
+ * allowing the lower UI to eat into it.
+ */
+.zwirk-v3-core-label {
+  left: 54%;
+  top: 54%;
+}
+
+/*
+ * 1300x800-ish viewport: this is the composition shown
+ * in the user's screenshot.
+ */
+@media (min-width: 1000px) and (max-height: 850px) {
+  .zwirk-v3-nav {
+    height: 64px;
+  }
+
+  .zwirk-v3-nav nav {
+    gap: 25px;
+  }
+
+  .zwirk-v3-hero {
+    top: 118px;
+  }
+
+  .zwirk-v3-hero h1 {
+    font-size: 58px;
+    max-width: 285px;
+  }
+
+  .zwirk-v3-hero p {
+    font-size: 11px;
+    max-width: 275px;
+  }
+
+  .zwirk-v3-hero .zwirk-v3-cta {
+    margin-top: 17px;
+  }
+
+  .zwirk-v3-signal {
+    width: 220px;
+    min-height: 91px;
+  }
+
+  .zwirk-v3-signal strong {
+    font-size: 14px;
+  }
+
+  .signal-metrics {
+    font-size: 8px;
+  }
+
+  .signal-metrics small {
+    font-size: 6.5px;
+  }
+
+  .zwirk-v3-command {
+    bottom: 18px;
+    width: min(690px, 53vw);
+  }
+
+  .zwirk-v3-input-shell {
+    height: 66px;
+  }
+
+  .zwirk-v3-starters {
+    margin-top: 8px;
+  }
+
+  .zwirk-v3-starters button {
+    padding: 7px 11px;
+    font-size: 8px;
+  }
+
+  .zwirk-v3-scan {
+    bottom: 168px;
+  }
+
+  .zwirk-v3-bottom-left,
+  .zwirk-v3-bottom-right {
+    bottom: 24px;
+  }
+}
+
+/*
+ * 1100px-ish width: move the two middle cards away
+ * from the hero while preserving the 3D organism.
+ */
+@media (min-width: 801px) and (max-width: 1100px) {
+  .zwirk-v3-hero {
+    left: 22px;
+    width: 260px;
+  }
+
+  .zwirk-v3-hero h1 {
+    font-size: 48px;
+    max-width: 250px;
+  }
+
+  .zwirk-v3-hero p {
+    font-size: 11px;
+    max-width: 245px;
+  }
+
+  .zwirk-v3-signal {
+    width: 175px;
+    min-height: 86px;
+  }
+
+  .zwirk-v3-signal:nth-child(2) {
+    left: 37%;
+  }
+
+  .zwirk-v3-signal:nth-child(3) {
+    left: 38%;
+  }
+
+  .zwirk-v3-signal:nth-child(5),
+  .zwirk-v3-signal:nth-child(6) {
+    left: 71%;
+  }
+
+  .zwirk-v3-command {
+    width: 62vw;
+  }
+}
+
+/*
+ * Prevent text/card overlap at the exact breakpoint
+ * where the screenshot was taken.
+ */
+@media (min-width: 1000px) and (max-width: 1450px) {
+  .zwirk-v3-hero {
+    width: 315px;
+  }
+
+  .zwirk-v3-hero h1 {
+    font-size: clamp(48px, 4.7vw, 64px);
+    max-width: 315px;
+  }
+
+  .zwirk-v3-hero p {
+    max-width: 290px;
+  }
+
+  .zwirk-v3-signal:nth-child(2) {
+    left: 36%;
+  }
+
+  .zwirk-v3-signal:nth-child(3) {
+    left: 38%;
+  }
+
+  .zwirk-v3-command {
+    width: min(720px, 56vw);
+  }
+}
+
+/*
+ * Mobile: keep the composition intentional instead of
+ * letting desktop percentages collapse on top of each other.
+ */
+@media (max-width: 800px) {
+  .zwirk-v3-page {
+    min-height: 100svh;
+    height: 100svh;
+  }
+
+  .zwirk-v3-hero {
+    top: 78px;
+    left: 16px;
+    width: 205px;
+  }
+
+  .zwirk-v3-hero h1 {
+    font-size: 31px;
+    max-width: 210px;
+  }
+
+  .zwirk-v3-hero p {
+    max-width: 200px;
+    font-size: 9px;
+  }
+
+  .zwirk-v3-hero .zwirk-v3-cta {
+    margin-top: 13px;
+  }
+
+  .zwirk-v3-signal:nth-child(1) { left: 73%; top: 24%; }
+  .zwirk-v3-signal:nth-child(2) { left: 27%; top: 39%; }
+  .zwirk-v3-signal:nth-child(3) { left: 27%; top: 57%; }
+  .zwirk-v3-signal:nth-child(4) { left: 73%; top: 41%; }
+  .zwirk-v3-signal:nth-child(5) { left: 73%; top: 59%; }
+  .zwirk-v3-signal:nth-child(6) { left: 50%; top: 70%; }
+
+  .zwirk-v3-signal {
+    width: 130px;
+    min-height: 77px;
+  }
+
+  .zwirk-v3-command {
+    bottom: 10px;
+    width: calc(100vw - 20px);
+  }
+
+  .zwirk-v3-scan {
+    display: none;
+  }
+}
