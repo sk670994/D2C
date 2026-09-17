@@ -1277,19 +1277,86 @@ const onResponse = async (response: {
 
     if (!input) {
       console.warn(
-        "[MetaPageSearch] no usable Meta search input",
+        "[MetaPageSearch] no interactive input; using captured network data",
         {
           url: page.url(),
-          title:
-            await page
-              .title()
-              .catch(
-                () => "",
-              ),
+          title: await page.title().catch(() => ""),
+          capturedPayloads: payloads.length,
         },
       );
 
-      return [];
+      const networkCandidates =
+        await extractNetworkCandidates(
+          payloads,
+          query,
+        );
+
+      const domCandidates =
+        await extractCandidatesFromDOM(
+          page,
+          query,
+        );
+
+      const merged = new Map<string, Candidate>();
+
+      for (const candidate of [
+        ...domCandidates,
+        ...networkCandidates,
+      ]) {
+        const existing =
+          merged.get(candidate.pageId);
+
+        if (!existing) {
+          merged.set(
+            candidate.pageId,
+            candidate,
+          );
+          continue;
+        }
+
+        merged.set(
+          candidate.pageId,
+          {
+            ...existing,
+            imageUrl:
+              existing.imageUrl ??
+              candidate.imageUrl,
+            category:
+              existing.category ??
+              candidate.category,
+            verification:
+              existing.verification ??
+              candidate.verification,
+            likes:
+              existing.likes ??
+              candidate.likes,
+            igFollowers:
+              existing.igFollowers ??
+              candidate.igFollowers,
+            igUsername:
+              existing.igUsername ??
+              candidate.igUsername,
+            pageAlias:
+              existing.pageAlias ??
+              candidate.pageAlias,
+          },
+        );
+      }
+
+      return [
+        ...merged.values(),
+      ]
+        .map((candidate) => ({
+          candidate,
+          score: relevanceScore(
+            candidate.name,
+            query,
+          ),
+        }))
+        .filter(({ score }) => score >= 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, MAX_SUGGESTIONS)
+        .map(({ candidate }) => candidate);
     }
 
     await input.click({

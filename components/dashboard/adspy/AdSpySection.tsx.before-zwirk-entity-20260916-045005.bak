@@ -34,11 +34,11 @@ import type {
 } from "./adspy-types";
 
 const PAGE_SIZE = 25;
-const AUTOCOMPLETE_DEBOUNCE_MS = 70;
+const AUTOCOMPLETE_DEBOUNCE_MS = 130;
 const SEARCH_CACHE_TTL_MS = 12_000;
-const AUTOCOMPLETE_CACHE_TTL_MS = 30_000;
+const AUTOCOMPLETE_CACHE_TTL_MS = 20_000;
 const SEARCH_CACHE_MAX = 18;
-const AUTOCOMPLETE_CACHE_MAX = 200;
+const AUTOCOMPLETE_CACHE_MAX = 100;
 const POLL_START_MS = 450;
 const POLL_MAX_MS = 3000;
 const STALE_STATUSES = new Set(["queued", "scraping", "normalizing", "enriching", "finalizing", "deep_queued", "deep"]);
@@ -93,7 +93,7 @@ function formatDate(value?: string | null) {
 }
 
 function formatNumber(value?: number | null) {
-  if (value == null || !Number.isFinite(value)) return "-";
+  if (value == null || !Number.isFinite(value)) return "—";
   return new Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
@@ -184,7 +184,6 @@ export function AdSpySection({
 
   const searchAbortRef = useRef<AbortController | null>(null);
   const autocompleteAbortRef = useRef<AbortController | null>(null);
-  const liveDiscoveryAbortRef = useRef<AbortController | null>(null);
   const pollTimerRef = useRef<number | null>(null);
   const pollingJobRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
@@ -198,7 +197,6 @@ export function AdSpySection({
       mountedRef.current = false;
       searchAbortRef.current?.abort();
       autocompleteAbortRef.current?.abort();
-      liveDiscoveryAbortRef.current?.abort();
       if (pollTimerRef.current !== null) window.clearTimeout(pollTimerRef.current);
     };
   }, []);
@@ -313,39 +311,14 @@ export function AdSpySection({
 
   const loadSuggestions = useCallback(async (queryValue: string) => {
     const q = queryValue.trim();
-    if (q.length < 1 || mode !== "advertiser") {
+    if (q.length < 2 || mode !== "advertiser") {
       setSuggestions([]);
       setSuggestionOpen(false);
       return;
     }
 
-    const normalizedCountry = countryInput.trim().toUpperCase() || "IN";
-    const normalizedQuery = q.toLocaleLowerCase();
-    const key = `${platform}|${normalizedCountry}|${normalizedQuery}`;
-
-    // Show the nearest cached parent prefix immediately while the exact
-    // query is fetched. This keeps the dropdown alive between keystrokes.
-    for (let length = normalizedQuery.length - 1; length >= 1; length -= 1) {
-      const parentKey = `${platform}|${normalizedCountry}|${normalizedQuery.slice(0, length)}`;
-      const warm = cacheGet<AutocompleteAdvertiser[]>(
-        autocompleteCache as Map<string, { expiresAt: number; [key: string]: unknown }>,
-        parentKey,
-        "advertisers",
-      );
-
-      if (warm) {
-        setSuggestions(warm);
-        setSuggestionOpen(warm.length > 0);
-        setActiveSuggestion(0);
-        break;
-      }
-    }
-
-    const cached = cacheGet<AutocompleteAdvertiser[]>(
-      autocompleteCache as Map<string, { expiresAt: number; [key: string]: unknown }>,
-      key,
-      "advertisers",
-    );
+    const key = `${platform}|${countryInput.trim().toUpperCase() || "IN"}|${q.toLocaleLowerCase()}`;
+    const cached = cacheGet<AutocompleteAdvertiser[]>(autocompleteCache as Map<string, { expiresAt: number; [key: string]: unknown }>, key, "advertisers");
     if (cached) {
       setSuggestions(cached);
       setSuggestionOpen(cached.length > 0);
@@ -374,56 +347,6 @@ export function AdSpySection({
       setSuggestions(advertisers);
       setSuggestionOpen(advertisers.length > 0);
       setActiveSuggestion(0);
-
-      // Secondary live refresh: starts only after the indexed result has
-      // rendered. It can enrich the index and replace sparse results, but
-      // never blocks the keystroke-to-dropdown path.
-      if (platform === "meta" && q.length >= 2) {
-        const refreshUrl = new URL("/api/ad-intelligence/autocomplete/refresh", window.location.origin);
-        refreshUrl.searchParams.set("q", q);
-        refreshUrl.searchParams.set("country", normalizedCountry);
-        refreshUrl.searchParams.set("platform", platform);
-
-        void fetch(refreshUrl, {
-          cache: "no-store",
-          headers: { Accept: "application/json" },
-        })
-          .then(async (refreshResponse) => {
-            if (!refreshResponse.ok) return null;
-            return (await refreshResponse.json()) as {
-              success: boolean;
-              advertisers?: AutocompleteAdvertiser[];
-            };
-          })
-          .then((refreshData) => {
-            if (
-              !mountedRef.current ||
-              !refreshData?.success ||
-              input.trim().toLocaleLowerCase() !== normalizedQuery
-            ) {
-              return;
-            }
-
-            const liveAdvertisers = refreshData.advertisers ?? [];
-            if (liveAdvertisers.length === 0) return;
-
-            cacheWrite(
-              autocompleteCache as Map<string, { expiresAt: number; [key: string]: unknown }>,
-              key,
-              liveAdvertisers,
-              "advertisers",
-              AUTOCOMPLETE_CACHE_TTL_MS,
-              AUTOCOMPLETE_CACHE_MAX,
-            );
-
-            setSuggestions(liveAdvertisers);
-            setSuggestionOpen(true);
-            setActiveSuggestion(0);
-          })
-          .catch(() => {
-            // Live refresh is an enhancement; the indexed result remains authoritative.
-          });
-      }
     } catch (autocompleteError) {
       if (!(autocompleteError instanceof DOMException && autocompleteError.name === "AbortError")) {
         setSuggestions([]);
@@ -436,152 +359,9 @@ export function AdSpySection({
 
   useEffect(() => {
     if (mode !== "advertiser") return;
-
-    const timer = window.setTimeout(
-      () => void loadSuggestions(input),
-      AUTOCOMPLETE_DEBOUNCE_MS,
-    );
-
-    return () =>
-      window.clearTimeout(timer);
-  }, [
-    input,
-    loadSuggestions,
-    mode,
-  ]);
-
-  useEffect(() => {
-    if (
-      platform !== "meta" ||
-      mode !== "advertiser" ||
-      input.trim().length < 2
-    ) {
-      liveDiscoveryAbortRef.current?.abort();
-      return;
-    }
-
-    const queryValue = input.trim();
-    const countryValue =
-      countryInput.trim().toUpperCase() ||
-      "IN";
-
-    const timer = window.setTimeout(
-      () => {
-        if (suggestions.length > 0) {
-          return;
-        }
-
-        liveDiscoveryAbortRef.current?.abort();
-
-        const controller =
-          new AbortController();
-
-        liveDiscoveryAbortRef.current =
-          controller;
-
-        const url = new URL(
-          "/api/ad-intelligence/autocomplete/refresh",
-          window.location.origin,
-        );
-
-        url.searchParams.set(
-          "q",
-          queryValue,
-        );
-
-        url.searchParams.set(
-          "country",
-          countryValue,
-        );
-
-        url.searchParams.set(
-          "platform",
-          platform,
-        );
-
-        void fetch(url, {
-          method: "GET",
-          cache: "no-store",
-          signal: controller.signal,
-          headers: {
-            Accept: "application/json",
-          },
-        })
-          .then(async (response) => {
-            if (!response.ok) {
-              return null;
-            }
-
-            return (await response.json()) as {
-              success?: boolean;
-              advertisers?: AutocompleteAdvertiser[];
-            };
-          })
-          .then((result) => {
-            if (
-              controller.signal.aborted ||
-              !result?.success
-            ) {
-              return;
-            }
-
-            if (
-              input.trim().toLowerCase() !==
-              queryValue.toLowerCase()
-            ) {
-              return;
-            }
-
-            const advertisers =
-              result.advertisers ?? [];
-
-            if (!advertisers.length) {
-              return;
-            }
-
-            const key =
-              `${platform}|${countryValue}|${queryValue.toLowerCase()}`;
-
-            cacheWrite(
-              autocompleteCache as Map<
-                string,
-                {
-                  expiresAt: number;
-                  [key: string]: unknown;
-                }
-              >,
-              key,
-              advertisers,
-              "advertisers",
-              AUTOCOMPLETE_CACHE_TTL_MS,
-              AUTOCOMPLETE_CACHE_MAX,
-            );
-
-            setSuggestions(
-              advertisers,
-            );
-
-            setSuggestionOpen(true);
-            setActiveSuggestion(0);
-          })
-          .catch(() => {
-            // Indexed results remain usable.
-          });
-      },
-      900,
-    );
-
-    return () => {
-      window.clearTimeout(timer);
-      liveDiscoveryAbortRef.current?.abort();
-    };
-  }, [
-    countryInput,
-    input,
-    mode,
-    platform,
-    suggestions.length,
-  ]);
+    const timer = window.setTimeout(() => void loadSuggestions(input), AUTOCOMPLETE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [input, loadSuggestions, mode]);
 
   const startRefresh = useCallback(async (overrideQuery?: string, overridePageId?: string | null) => {
     const q = (overrideQuery ?? input).trim();
@@ -735,28 +515,7 @@ export function AdSpySection({
   }, []);
 
   useEffect(() => {
-    if (!selectedAd) {
-      window.dispatchEvent(
-        new CustomEvent("zooptrack:zwirk-entity", {
-          detail: null,
-        })
-      );
-      return;
-    }
-
-    window.dispatchEvent(
-      new CustomEvent("zooptrack:zwirk-entity", {
-        detail: {
-          type: "ad",
-          id: selectedAd.id ?? null,
-          name:
-            selectedAd.advertiserName ??
-            "Selected creative",
-          payload: selectedAd,
-        },
-      })
-    );
-
+    if (!selectedAd) return;
     modalCloseRef.current?.focus();
     const previous = beforeModalFocusedRef.current;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -920,7 +679,7 @@ export function AdSpySection({
                 <span className="adspy-results-kicker">{selectedPageId ? "Exact Meta advertiser" : mode === "keyword" ? "Keyword search" : "Indexed advertiser search"}</span>
                 <h2>{submittedQuery}</h2>
               </div>
-              <div className="adspy-result-count">{total ? `${firstResult.toLocaleString("en-IN")}-${lastResult.toLocaleString("en-IN")} of ${total.toLocaleString("en-IN")}` : "No indexed creatives yet"}</div>
+              <div className="adspy-result-count">{total ? `${firstResult.toLocaleString("en-IN")}–${lastResult.toLocaleString("en-IN")} of ${total.toLocaleString("en-IN")}` : "No indexed creatives yet"}</div>
             </div>
 
             <div className="adspy-filter-row" aria-label="Creative filters">
@@ -1025,28 +784,6 @@ export function AdSpySection({
               <div className="adspy-evidence-copy"><span>Languages</span><p>{selectedAd.languages?.length ? selectedAd.languages.map((language) => language.name).join(" · ") : "Not publicly available"}</p></div>
               <div className="adspy-evidence-copy"><span>Provenance</span><pre>{JSON.stringify(selectedAd.dataProvenance ?? {}, null, 2)}</pre></div>
               <div className="adspy-modal-actions">
-                <button
-                  type="button"
-                  className="adspy-primary-button"
-                  onClick={() => {
-                    const advertiser =
-                      selectedAd.advertiserName ??
-                      "this advertiser";
-
-                    window.dispatchEvent(
-                      new CustomEvent(
-                        "zooptrack:ask-zwirk",
-                        {
-                          detail:
-                            `Why might this ${advertiser} ad work, and what should I test differently?`,
-                        }
-                      )
-                    );
-                  }}
-                >
-                  <Sparkles size={14} />
-                  Analyze with ZWIRK
-                </button>
                 {safeExternalUrl(selectedAd.sourceUrl) && <a className="adspy-secondary-button" href={safeExternalUrl(selectedAd.sourceUrl)!} target="_blank" rel="noreferrer"><ExternalLink size={14} /> Open source</a>}
                 {selectedAd.videoUrl && <span className="adspy-secondary-note"><Play size={13} /> Video evidence loads only when inspected</span>}
               </div>
@@ -1059,5 +796,3 @@ export function AdSpySection({
 }
 
 export default AdSpySection;
-
-

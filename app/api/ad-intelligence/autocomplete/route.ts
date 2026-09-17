@@ -2,24 +2,32 @@
 
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rate-limit";
-import {
-  discoverAdvertisers,
-  type AdvertiserDiscoveryResult,
-} from "@/lib/ad-intelligence/discovery/advertiser-discovery";
-import {
-  searchMetaPages,
-  type MetaPageSearchResult,
-} from "@/lib/ad-intelligence/global/meta-page-search";
+import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
+import { searchMetaPages } from "@/lib/ad-intelligence/global/meta-page-search";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 15;
 
-const CACHE_TTL_MS = 10_000;
-const CACHE_MAX = 120;
+const CACHE_TTL_MS = 3_000;
+const CACHE_MAX = 200;
 const MAX_RESULTS = 12;
 
-type AdvertiserSuggestion = {
+type Row = {
+  id?: string | number | null;
+  page_id?: string | number | null;
+  label?: string | null;
+  domain?: string | null;
+  profile_url?: string | null;
+  profile_image_url?: string | null;
+  category?: string | null;
+  verification?: string | null;
+  likes?: number | null;
+  ig_followers?: number | null;
+  score?: number | null;
+};
+
+type Suggestion = {
   id: string;
   pageId: string;
   label: string;
@@ -31,28 +39,16 @@ type AdvertiserSuggestion = {
   verification: string | null;
   likes: number | null;
   igFollowers: number | null;
-  source: "meta_public" | "indexed";
+  source: "indexed" | "meta_public";
   country: string;
 };
 
 const cache = new Map<
   string,
-  {
-    expiresAt: number;
-    advertisers: AdvertiserSuggestion[];
-    source: "meta_public" | "indexed" | "none";
-  }
+  { expiresAt: number; advertisers: Suggestion[] }
 >();
 
-const inflight = new Map<
-  string,
-  Promise<{
-    advertisers: AdvertiserSuggestion[];
-    source: "meta_public" | "indexed" | "none";
-    metaCount: number;
-    indexedCount: number;
-  }>
->();
+const inflight = new Map<string, Promise<Suggestion[]>>();
 
 function normalize(value: string): string {
   return value
@@ -63,480 +59,179 @@ function normalize(value: string): string {
     .trim();
 }
 
-function compact(value?: number | null): number | null {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : null;
-}
+function mapRow(row: Row, country: string): Suggestion | null {
+  const label = String(row.label ?? "").replace(/\s+/g, " ").trim();
+  const pageId = String(row.page_id ?? "").trim();
 
-function relevant(
-  query: string,
-  label: string,
-  domain?: string | null,
-): boolean {
-  const q = normalize(query);
-  const l = normalize(label);
-  const d = normalize(domain ?? "");
-
-  if (!q || !l) return false;
-
-  if (
-    l === q ||
-    l.startsWith(q) ||
-    l.includes(q)
-  ) {
-    return true;
-  }
-
-  if (
-    d === q ||
-    d.startsWith(q) ||
-    d.includes(q)
-  ) {
-    return true;
-  }
-
-  const tokens = q
-    .split(" ")
-    .filter(Boolean);
-
-  return (
-    tokens.length > 0 &&
-    tokens.every((token) =>
-      l.includes(token),
-    )
-  );
-}
-
-function rank(
-  query: string,
-  item: AdvertiserSuggestion,
-): number {
-  const q = normalize(query);
-  const label = normalize(item.label);
-
-  if (label === q) {
-    return 10000;
-  }
-
-  if (
-    label.replace(
-      /[^\p{L}\p{N}]/gu,
-      "",
-    ) ===
-    q.replace(
-      /[^\p{L}\p{N}]/gu,
-      "",
-    )
-  ) {
-    return 9500;
-  }
-
-  if (label.startsWith(q)) {
-    return 9000;
-  }
-
-  const firstWord =
-    label.split(" ")[0] ?? "";
-
-  if (firstWord.startsWith(q)) {
-    return 8200;
-  }
-
-  if (label.includes(q)) {
-    return 7000;
-  }
-
-  const tokens = q
-    .split(" ")
-    .filter(Boolean);
-
-  if (
-    tokens.length > 0 &&
-    tokens.every((token) =>
-      label.includes(token),
-    )
-  ) {
-    return 5500;
-  }
-
-  return 0;
-}
-
-function mapMeta(
-  page: MetaPageSearchResult,
-  country: string,
-): AdvertiserSuggestion | null {
-  const pageId =
-    String(page.pageId ?? "").trim();
-
-  const label =
-    String(page.name ?? "")
-      .replace(/\s+/g, " ")
-      .trim();
-
-  if (
-    !/^\d+$/.test(pageId) ||
-    !label
-  ) {
-    return null;
-  }
+  if (!label || !pageId) return null;
 
   return {
-    id: `meta:${pageId}`,
+    id: String(row.id ?? `meta:${pageId}`),
     pageId,
     label,
     type: "advertiser",
-    domain: page.igUsername
-      ? `https://instagram.com/${encodeURIComponent(page.igUsername)}`
-      : null,
-    profileUrl: page.pageAlias
-      ? `https://www.facebook.com/${encodeURIComponent(page.pageAlias)}`
-      : `https://www.facebook.com/profile.php?id=${encodeURIComponent(pageId)}`,
+    domain: row.domain != null ? String(row.domain) : null,
+    profileUrl: row.profile_url != null ? String(row.profile_url) : null,
     profileImageUrl:
-      page.imageUrl ?? null,
-    category:
-      page.category ?? null,
-    verification:
-      page.verification ?? null,
-    likes: compact(page.likes),
+      row.profile_image_url != null ? String(row.profile_image_url) : null,
+    category: row.category != null ? String(row.category) : null,
+    verification: row.verification != null ? String(row.verification) : null,
+    likes:
+      typeof row.likes === "number" && Number.isFinite(row.likes)
+        ? row.likes
+        : null,
     igFollowers:
-      compact(page.igFollowers),
-    source: "meta_public",
-    country,
-  };
-}
-
-function mapIndexed(
-  item: AdvertiserDiscoveryResult,
-  country: string,
-): AdvertiserSuggestion {
-  return {
-    id: item.id,
-    pageId: item.pageId,
-    label: item.label,
-    type: "advertiser",
-    domain: item.domain,
-    profileUrl: item.profileUrl,
-    profileImageUrl:
-      item.profileImageUrl,
-    category: item.category,
-    verification:
-      item.verification,
-    likes: compact(item.likes),
-    igFollowers:
-      compact(item.igFollowers),
+      typeof row.ig_followers === "number" &&
+      Number.isFinite(row.ig_followers)
+        ? row.ig_followers
+        : null,
     source: "indexed",
     country,
   };
 }
 
-function dedupeMeta(
-  query: string,
-  items: AdvertiserSuggestion[],
-): AdvertiserSuggestion[] {
-  const seenPageIds =
-    new Set<string>();
+function dedupe(items: Suggestion[]): Suggestion[] {
+  const seenPageIds = new Set<string>();
+  const seenLabels = new Set<string>();
 
-  const seenLabels =
-    new Set<string>();
+  return items.filter((item) => {
+    const pid = item.pageId.trim();
+    const label = normalize(item.label);
 
-  return items
-    .filter((item) =>
-      relevant(
-        query,
-        item.label,
-        item.domain,
-      ),
-    )
-    .filter((item) => {
-      const pageId =
-        item.pageId.trim();
+    if (pid && seenPageIds.has(pid)) return false;
+    if (label && seenLabels.has(label)) return false;
 
-      const label =
-        normalize(item.label);
-
-      if (
-        pageId &&
-        seenPageIds.has(pageId)
-      ) {
-        return false;
-      }
-
-      if (
-        label &&
-        seenLabels.has(label)
-      ) {
-        return false;
-      }
-
-      if (pageId) {
-        seenPageIds.add(pageId);
-      }
-
-      if (label) {
-        seenLabels.add(label);
-      }
-
-      return true;
-    })
-    .map((item) => ({
-      item,
-      score:
-        rank(query, item) +
-        500 +
-        (item.verification?.toUpperCase() ===
-        "VERIFIED"
-          ? 250
-          : 0) +
-        Math.min(
-          400,
-          Math.log10(
-            Math.max(
-              item.likes ?? 0,
-              0,
-            ) +
-              Math.max(
-                item.igFollowers ?? 0,
-                0,
-              ) +
-              1,
-          ) * 50,
-        ),
-    }))
-    .sort(
-      (a, b) =>
-        b.score - a.score ||
-        a.item.label.localeCompare(
-          b.item.label,
-        ),
-    )
-    .slice(0, MAX_RESULTS)
-    .map(({ item }) => item);
+    if (pid) seenPageIds.add(pid);
+    if (label) seenLabels.add(label);
+    return true;
+  });
 }
 
-async function liveMetaLookup(
-  query: string,
-  country: string,
-): Promise<AdvertiserSuggestion[]> {
-  const pages =
-    await searchMetaPages(
-      query,
-      country,
-    );
+function score(query: string, item: Suggestion): number {
+  const q = normalize(query);
+  const label = normalize(item.label);
+  const domain = normalize(item.domain ?? "");
 
-  return pages
-    .map((page) =>
-      mapMeta(
-        page,
-        country,
-      ),
-    )
-    .filter(
-      (
-        item,
-      ): item is AdvertiserSuggestion =>
-        item !== null,
-    );
+  const username = domain
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/^instagram\.com\//, "")
+    .replace(/\/+$/, "");
+
+  let value = 0;
+
+  if (label === q) value += 20000;
+  else if (label.startsWith(q)) value += 16500;
+  else if (username.startsWith(q)) value += 14800;
+  else if (label.includes(q)) value += 10500;
+  else if (username.includes(q)) value += 9000;
+
+  if (item.verification?.toUpperCase() === "VERIFIED") value += 250;
+  return value;
 }
 
-async function indexedLookup(
+async function loadIndexed(
   query: string,
+  platform: "meta" | "google" | "linkedin",
   country: string,
-  platform:
-    | "meta"
-    | "google"
-    | "linkedin",
-): Promise<AdvertiserSuggestion[]> {
-  const items =
-    await discoverAdvertisers({
-      query,
-      platform,
-      country,
-      limit: MAX_RESULTS,
-    });
+): Promise<Suggestion[]> {
+  const client = createGlobalServiceClient();
 
-  return items.map((item) =>
-    mapIndexed(
-      item,
-      country,
-    ),
-  );
-}
+  const result = await client.rpc("adspy_autocomplete_advertisers", {
+    p_query: query,
+    p_platform: platform,
+    p_country: country,
+    p_limit: MAX_RESULTS,
+  });
 
-async function buildResponse(
-  query: string,
-  country: string,
-  platform:
-    | "meta"
-    | "google"
-    | "linkedin",
-) {
-  /*
-   * META MUST BE THE PRIMARY SOURCE.
-   *
-   * The indexed catalog is consulted concurrently only so that we have
-   * a fallback available if Meta returns zero usable entities.
-   *
-   * A successful Meta result is NEVER replaced by indexed advertisers.
-   */
-  const [metaResult, indexedResult] =
-    await Promise.allSettled([
-      platform === "meta"
-        ? liveMetaLookup(
-            query,
-            country,
-          )
-        : Promise.resolve(
-            [] as AdvertiserSuggestion[],
-          ),
-
-      indexedLookup(
-        query,
-        country,
-        platform,
-      ),
-    ]);
-
-  const meta =
-    metaResult.status === "fulfilled"
-      ? dedupeMeta(
-          query,
-          metaResult.value,
-        )
-      : [];
-
-  const indexed =
-    indexedResult.status === "fulfilled"
-      ? indexedResult.value
-      : [];
-
-  /*
-   * For Meta searches:
-   *   Meta has absolute priority.
-   *   Indexed data is fallback only.
-   */
-  if (
-    platform === "meta" &&
-    meta.length > 0
-  ) {
-    return {
-      advertisers: meta,
-      source: "meta_public" as const,
-      metaCount: meta.length,
-      indexedCount: indexed.length,
-    };
+  if (result.error) {
+    throw new Error(result.error.message);
   }
 
-  /*
-   * Meta returned nothing.
-   * Use local index rather than returning an empty dropdown.
-   */
-  const fallback =
-    dedupeMeta(
-      query,
-      indexed,
-    );
-
-  return {
-    advertisers: fallback,
-    source:
-      fallback.length > 0
-        ? ("indexed" as const)
-        : ("none" as const),
-    metaCount: 0,
-    indexedCount: fallback.length,
-  };
+  return dedupe(
+    ((result.data ?? []) as Row[])
+      .map((row) => mapRow(row, country))
+      .filter((item): item is Suggestion => item !== null)
+      .map((item) => ({ ...item, score: undefined }))
+      .sort((a, b) => score(query, b) - score(query, a) || a.label.localeCompare(b.label)),
+  ).slice(0, MAX_RESULTS);
 }
 
-export async function GET(
-  request: NextRequest,
-) {
-  try {
-    const auth =
-      await createServerAuthClient();
+function getCache(key: string): Suggestion[] | null {
+  const entry = cache.get(key);
+  if (!entry) return null;
 
+  if (entry.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return null;
+  }
+
+  return entry.advertisers;
+}
+
+function setCache(key: string, advertisers: Suggestion[]) {
+  cache.set(key, {
+    expiresAt: Date.now() + CACHE_TTL_MS,
+    advertisers,
+  });
+
+  while (cache.size > CACHE_MAX) {
+    const first = cache.keys().next().value;
+    if (first === undefined) break;
+    cache.delete(first);
+  }
+}
+
+export async function GET(request: NextRequest) {
+  const start = performance.now();
+
+  try {
+    const auth = await createServerAuthClient();
     const {
       data: { user },
-      error,
+      error: authError,
     } = await auth.auth.getUser();
 
-    if (
-      error ||
-      !user
-    ) {
+    if (authError || !user) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "Unauthorized",
-        },
+        { success: false, error: "Unauthorized" },
         { status: 401 },
       );
     }
 
-    const rate =
-      checkRateLimit(
-        `adspy-autocomplete:${user.id}`,
-        120,
-        60_000,
-      );
+    const rate = checkRateLimit(
+      `adspy-autocomplete:${user.id}`,
+      300,
+      60_000,
+    );
 
     if (!rate.allowed) {
       return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Too many autocomplete requests.",
-        },
+        { success: false, error: "Too many autocomplete requests." },
         {
           status: 429,
           headers: {
-            "Retry-After":
-              String(
-                rate.retryAfterSeconds,
-              ),
+            "Retry-After": String(rate.retryAfterSeconds),
           },
         },
       );
     }
 
-    const params =
-      request.nextUrl.searchParams;
-
-    const query =
-      (params.get("q") ?? "")
-        .replace(/\s+/g, " ")
-        .trim();
-
-    const country =
-      (
-        params.get("country") ??
-        "IN"
-      )
-        .trim()
-        .toUpperCase();
-
-    const rawPlatform =
-      (
-        params.get("platform") ??
-        "meta"
-      )
-        .trim()
-        .toLowerCase();
+    const params = request.nextUrl.searchParams;
+    const query = normalize(params.get("q") ?? "");
+    const country = (params.get("country") ?? "IN").trim().toUpperCase();
+    const rawPlatform = (params.get("platform") ?? "meta").trim().toLowerCase();
 
     const platform =
       rawPlatform === "google"
         ? "google"
-        : rawPlatform ===
-            "linkedin"
+        : rawPlatform === "linkedin"
           ? "linkedin"
           : "meta";
 
     if (
-      query.length < 2 ||
-      !/^[A-Z]{2}$/.test(
-        country,
-      )
+      !/^[A-Z]{2}$/.test(country) ||
+      query.length < 1
     ) {
       return NextResponse.json({
         success: true,
@@ -545,134 +240,68 @@ export async function GET(
       });
     }
 
-    const key =
-      `${platform}|${country}|${normalize(query)}`;
+    const key = `${platform}|${country}|${query}`;
+    const cached = getCache(key);
 
-    const cached =
-      cache.get(key);
-
-    if (
-      cached &&
-      cached.expiresAt >
-        Date.now()
-    ) {
+    if (cached) {
       return NextResponse.json(
         {
           success: true,
-          advertisers:
-            cached.advertisers,
-          source:
-            cached.source,
+          advertisers: cached,
+          source: "indexed",
         },
         {
           headers: {
-            "Cache-Control":
-              "private, max-age=5, stale-while-revalidate=20",
-            "X-AdSpy-Suggestion-Source":
-              cached.source,
+            "Cache-Control": "private, max-age=3, stale-while-revalidate=20",
+            "X-AdSpy-Suggestion-Source": "indexed",
+            "Server-Timing": `cache;dur=${Math.max(0, performance.now() - start).toFixed(1)}`,
           },
         },
       );
     }
 
-    let promise =
-      inflight.get(key);
+    let promise = inflight.get(key);
 
     if (!promise) {
-      promise =
-        buildResponse(
-          query,
-          country,
-          platform,
-        );
-
-      inflight.set(
-        key,
-        promise,
-      );
+      promise = loadIndexed(query, platform, country);
+      inflight.set(key, promise);
     }
 
-    let result;
+    let advertisers: Suggestion[];
 
     try {
-      result =
-        await promise;
+      advertisers = await promise;
     } finally {
-      if (
-        inflight.get(key) ===
-        promise
-      ) {
+      if (inflight.get(key) === promise) {
         inflight.delete(key);
       }
     }
 
-    cache.set(
-      key,
-      {
-        expiresAt:
-          Date.now() +
-          CACHE_TTL_MS,
-        advertisers:
-          result.advertisers,
-        source:
-          result.source,
-      },
-    );
-
-    while (
-      cache.size >
-      CACHE_MAX
-    ) {
-      const first =
-        cache.keys()
-          .next()
-          .value;
-
-      if (
-        first === undefined
-      ) {
-        break;
-      }
-
-      cache.delete(first);
-    }
+    setCache(key, advertisers);
 
     return NextResponse.json(
       {
         success: true,
-        advertisers:
-          result.advertisers,
-        source:
-          result.source,
-        metaCount:
-          result.metaCount,
-        indexedCount:
-          result.indexedCount,
+        advertisers,
+        source: "indexed",
       },
       {
         headers: {
-          "Cache-Control":
-            "private, max-age=5, stale-while-revalidate=20",
-          "X-AdSpy-Suggestion-Source":
-            result.source,
+          "Cache-Control": "private, max-age=3, stale-while-revalidate=20",
+          "X-AdSpy-Suggestion-Source": "indexed",
+          "Server-Timing": `db;dur=${Math.max(0, performance.now() - start).toFixed(1)}`,
         },
       },
     );
   } catch (error) {
-    console.error(
-      "[ADSPY_META_AUTOCOMPLETE]",
-      error,
-    );
+    console.error("[ADSPY_AUTOCOMPLETE]", error);
 
     return NextResponse.json(
       {
         success: false,
         advertisers: [],
         source: "none",
-        error:
-          error instanceof Error
-            ? error.message
-            : "Meta advertiser discovery failed.",
+        error: error instanceof Error ? error.message : "Autocomplete failed.",
       },
       { status: 503 },
     );

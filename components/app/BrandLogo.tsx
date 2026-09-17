@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 
-export function BrandLogo({ href = "/dashboard" }: { href?: string }) {
+export function BrandLogo({ href = "/" }: { href?: string }) {
   return (
     <Link href={href} className="zt-brand" aria-label="Zooptrack home">
       <Image

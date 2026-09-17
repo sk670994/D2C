@@ -22,6 +22,11 @@ const nextConfig: NextConfig = {
       "./node_modules/@sparticuz/chromium-min/**/*",
     ],
 
+    "/api/ad-intelligence/autocomplete/refresh": [
+      "./node_modules/playwright-core/**/*",
+      "./node_modules/@sparticuz/chromium-min/**/*",
+    ],
+
     "/api/ad-intelligence/refresh": [
       "./node_modules/playwright-core/**/*",
       "./node_modules/@sparticuz/chromium-min/**/*",
@@ -45,3 +50,5 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
+
+

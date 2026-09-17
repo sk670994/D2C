@@ -788,3 +788,33 @@
     display: none;
   }
 }
+
+/* === ZWIRK CARD CONTRAST POLISH V27 === */
+.signal-card {
+  border-color: rgba(220,233,236,.19);
+  background:
+    linear-gradient(180deg, rgba(13,19,23,.78), rgba(8,12,15,.90)),
+    radial-gradient(circle at 100% 0%, rgba(255,137,73,.11), transparent 48%);
+  box-shadow:
+    0 18px 54px rgba(0,0,0,.27),
+    inset 0 0 0 1px rgba(255,255,255,.038);
+}
+
+.signal-card strong {
+  color: rgba(248,249,246,.97);
+}
+
+.signal-value {
+  color: rgba(242,246,244,.84);
+}
+
+.signal-detail,
+.signal-index,
+.signal-status {
+  color: rgba(218,229,231,.54);
+}
+
+.creature-caption {
+  color: rgba(220,231,233,.50);
+}
+

@@ -1,0 +1,131 @@
+﻿"use client";
+
+import { useEffect, useRef } from "react";
+
+const signals = [
+  { label: "META ADS", value: "12.4K", side: "left", y: 16 },
+  { label: "CREATIVES", value: "42", side: "left", y: 38 },
+  { label: "COMPETITORS", value: "18", side: "left", y: 60 },
+  { label: "ECONOMICS", value: "₹", side: "right", y: 16 },
+  { label: "MARKET SIGNAL", value: "07", side: "right", y: 38 },
+  { label: "EXPERIMENTS", value: "03", side: "right", y: 60 },
+];
+
+export function ZwirkCinematicScene() {
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    let raf = 0;
+    let targetX = 0;
+    let targetY = 0;
+    let currentX = 0;
+    let currentY = 0;
+
+    const onPointerMove = (event: PointerEvent) => {
+      targetX = (event.clientX / window.innerWidth - 0.5) * 2;
+      targetY = (event.clientY / window.innerHeight - 0.5) * 2;
+    };
+
+    const onScroll = () => {
+      root.style.setProperty("--zwirk-scroll", String(window.scrollY));
+    };
+
+    const animate = () => {
+      currentX += (targetX - currentX) * 0.045;
+      currentY += (targetY - currentY) * 0.045;
+      root.style.setProperty("--zwirk-mx", currentX.toFixed(4));
+      root.style.setProperty("--zwirk-my", currentY.toFixed(4));
+      raf = requestAnimationFrame(animate);
+    };
+
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    raf = requestAnimationFrame(animate);
+
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(raf);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={rootRef}
+      className="zwirk-cinematic-scene"
+      aria-hidden="true"
+    >
+      <div className="zwirk-cinema-vignette" />
+      <div className="zwirk-cinema-grain" />
+      <div className="zwirk-cinema-scan" />
+
+      <div className="zwirk-cinema-atmosphere">
+        <span className="zwirk-light-column zwirk-light-column-a" />
+        <span className="zwirk-light-column zwirk-light-column-b" />
+        <span className="zwirk-light-column zwirk-light-column-c" />
+      </div>
+
+      <div className="zwirk-cinema-floor">
+        <div className="zwirk-floor-horizon" />
+        <div className="zwirk-floor-grid" />
+        <div className="zwirk-floor-ring zwirk-floor-ring-a" />
+        <div className="zwirk-floor-ring zwirk-floor-ring-b" />
+      </div>
+
+      <div className="zwirk-cinema-machine">
+        <div className="zwirk-machine-shadow" />
+        <div className="zwirk-machine-base">
+          <span />
+          <span />
+          <span />
+        </div>
+
+        <div className="zwirk-machine-core">
+          <div className="zwirk-core-shell">
+            <span className="zwirk-core-blade zwirk-core-blade-a" />
+            <span className="zwirk-core-blade zwirk-core-blade-b" />
+            <span className="zwirk-core-blade zwirk-core-blade-c" />
+          </div>
+          <div className="zwirk-core-letter">Z</div>
+          <div className="zwirk-core-label">DECISION ENGINE</div>
+        </div>
+
+        <div className="zwirk-machine-beam" />
+      </div>
+
+      <div className="zwirk-cinema-signals">
+        {signals.map((signal) => (
+          <div
+            key={signal.label}
+            className={`zwirk-signal zwirk-signal-${signal.side}`}
+            style={{ top: `${signal.y}%` }}
+          >
+            <span className="zwirk-signal-line" />
+            <span className="zwirk-signal-dot" />
+            <span className="zwirk-signal-copy">
+              <small>{signal.label}</small>
+              <strong>{signal.value}</strong>
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="zwirk-cinema-status">
+        <span className="zwirk-status-live" />
+        LIVE INTELLIGENCE
+      </div>
+
+      <div className="zwirk-cinema-counter">
+        <span>01</span>
+        <i />
+        <span>06</span>
+      </div>
+    </div>
+  );
+}
+
+

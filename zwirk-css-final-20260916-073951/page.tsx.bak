@@ -1,9 +1,8 @@
-"use client";
+﻿"use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import ZwirkCinematicScene from "@/components/zwirk/ZwirkCinematicScene";
-import { BrandLogo } from "@/components/app/BrandLogo";
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
@@ -163,7 +162,7 @@ export default function ZwirkPage() {
 
       <div className="zwirk-v3-overlay">
         <header className="zwirk-v3-nav">
-          <BrandLogo href="/" />
+          <Link href="/dashboard" className="zwirk-v3-logo">ZOOPTRACK</Link>
 
           <nav>
             <Link href="/dashboard">Dashboard</Link>
@@ -171,7 +170,7 @@ export default function ZwirkPage() {
             <Link href="/brand-vault">Brand Vault</Link>
             <Link href="/competitors">Competitors</Link>
             <Link href="/zwirk" className="active">ZWIRK</Link>
-            <Link href="/records">Reports</Link>
+            <Link href="/reports">Reports</Link>
           </nav>
 
           <div className="zwirk-v3-nav-right">
@@ -296,7 +295,6 @@ export default function ZwirkPage() {
     </main>
   );
 }
-
 
 
 
