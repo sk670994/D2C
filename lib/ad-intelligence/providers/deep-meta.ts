@@ -1,4 +1,4 @@
-import "server-only";
+﻿import "server-only";
 
 import path from "node:path";
 import { existsSync } from "node:fs";
@@ -174,7 +174,7 @@ function isLikelyChallenge(text: string): boolean {
 async function evaluateStable<T>(
   page: Page,
   evaluator: () => T,
-  attempts = 4,
+  attempts = 2,
 ): Promise<T> {
   let lastError: unknown = null;
 
@@ -686,7 +686,7 @@ export const deepMetaProvider: AdProvider = {
     if (normalized.query.length < 2) return { ads: [] };
 
     let lastError: unknown = null;
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    for (let attempt = 1; attempt <= 1; attempt += 1) {
       try {
         const ads = await scrapeOnce(normalized);
         console.info("[MetaProvider] collection complete", {
@@ -706,7 +706,7 @@ export const deepMetaProvider: AdProvider = {
           depth: normalized.collectionDepth,
           error: error instanceof Error ? error.message : error,
         });
-        if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+        // No outer collection retry. Queue delivery is bounded separately.
       }
     }
 

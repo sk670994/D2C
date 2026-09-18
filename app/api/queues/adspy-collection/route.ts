@@ -9,7 +9,7 @@ import type {
 } from "@/lib/ad-intelligence/jobs/collect-ad-intelligence";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 export const POST =
   handleCallback(

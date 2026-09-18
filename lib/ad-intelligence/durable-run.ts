@@ -222,7 +222,7 @@ export async function claimAdSpyRequest(input: {
     {
       p_request_id: input.requestId,
       p_worker_id: input.workerId ?? `adspy:${randomUUID()}`,
-      p_lease_seconds: input.leaseSeconds ?? 300,
+      p_lease_seconds: input.leaseSeconds ?? 75,
     },
   );
 

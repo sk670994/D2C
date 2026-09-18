@@ -9,7 +9,6 @@ import {
 
 import {
   getDurableRunByCollectionJob,
-  reapExpiredAdSpyRequests,
 } from "@/lib/ad-intelligence/durable-run";
 
 import type { CollectionJob } from "@/lib/ad-intelligence/global/types";
@@ -189,14 +188,6 @@ export async function GET(
         { status: 400 },
       );
     }
-
-    void reapExpiredAdSpyRequests()
-      .catch((error) => {
-        console.warn(
-          "[ADSPY_REQUEST_REAPER]",
-          error,
-        );
-      });
 
     let job =
       await getCollectionJob(

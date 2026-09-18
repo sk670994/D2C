@@ -1,4 +1,4 @@
-import "server-only";
+﻿import "server-only";
 
 import { adProviders } from "@/lib/ad-intelligence/providers";
 import type { AdPlatform, CompetitorAd } from "@/lib/ad-intelligence/types";
@@ -19,7 +19,6 @@ import { dispatchAdSpyCollection } from "./dispatch-adspy-collection";
 import {
   claimAdSpyRequest,
   completeAdSpyRequest,
-  enqueueAdSpyRequest,
   failAdSpyRequest,
   finishAdSpyRun,
   heartbeatAdSpyRun,
@@ -64,34 +63,6 @@ function uniqueBatch(
   }
 
   return unique;
-}
-
-async function dispatchDeep(
-  data: CollectionEvent,
-  runId: string,
-): Promise<void> {
-  const payload: CollectionEvent = {
-    ...data,
-    collectionDepth: "deep",
-    runId,
-  };
-
-  const request = await enqueueAdSpyRequest({
-    runId,
-    uniqueKey: `${data.collectionKey}:deep`,
-    requestType: "deep",
-    payload,
-    priority: 50,
-    maxAttempts: 5,
-  });
-
-  await dispatchAdSpyCollection(
-    {
-      ...payload,
-      requestId: request.id,
-    },
-    `${data.collectionKey}:deep:${runId}`,
-  );
 }
 
 export async function collectAdIntelligence(
@@ -296,11 +267,16 @@ export async function collectAdIntelligence(
         },
       });
 
+      await finishAdSpyRun({
+        runId: data.runId,
+        status: "exhausted",
+      });
+
       await updateCollectionJob(
         data.jobId,
         {
-          status: "deep_queued",
-          stage: "deep_queued",
+          status: "exhausted",
+          stage: "complete",
           discoveredAds:
             state.discoveredAds,
           normalizedAds:
@@ -318,21 +294,15 @@ export async function collectAdIntelligence(
           state.normalizedAds,
         persistedAds:
           state.persistedAds,
-        stage: "deep_queued",
-        status: "running",
+        stage: "complete",
+        status: "exhausted",
       });
-
-      await dispatchDeep(
-        data,
-        data.runId,
-      );
 
       return {
         jobId: data.jobId,
         ...state,
       };
     }
-
     await completeAdSpyRequest({
       requestId: data.requestId,
       result: {

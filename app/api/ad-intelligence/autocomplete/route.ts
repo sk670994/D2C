@@ -3,11 +3,11 @@
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
-import { searchMetaPages } from "@/lib/ad-intelligence/global/meta-page-search";
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 15;
+export const maxDuration = 5;
 
 const CACHE_TTL_MS = 3_000;
 const CACHE_MAX = 200;

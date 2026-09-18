@@ -1,4 +1,4 @@
-import path from "node:path";
+﻿import path from "node:path";
 import { existsSync } from "node:fs";
 
 import {
@@ -3419,7 +3419,7 @@ async function scrapeMetaAdLibrary(
   maxScrolls =
     DEFAULT_MAX_SCROLLS,
 ): Promise<ScrapedMetaAd[]> {
-  const maxAttempts = 3;
+  const maxAttempts = 1;
 
   for (
     let attempt = 1;

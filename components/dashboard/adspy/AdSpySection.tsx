@@ -34,7 +34,7 @@ import type {
 } from "./adspy-types";
 
 const PAGE_SIZE = 25;
-const AUTOCOMPLETE_DEBOUNCE_MS = 70;
+const AUTOCOMPLETE_DEBOUNCE_MS = 180;
 const SEARCH_CACHE_TTL_MS = 12_000;
 const AUTOCOMPLETE_CACHE_TTL_MS = 30_000;
 const SEARCH_CACHE_MAX = 18;
@@ -274,7 +274,6 @@ export function AdSpySection({
       const url = new URL("/api/ad-intelligence/search", window.location.origin);
       url.searchParams.set("q", q);
       url.searchParams.set("country", c);
-      url.searchParams.set("platform", platform);
       url.searchParams.set("mode", mode);
       url.searchParams.set("page", String(nextPage));
       url.searchParams.set("limit", String(PAGE_SIZE));
@@ -363,7 +362,6 @@ export function AdSpySection({
       const url = new URL("/api/ad-intelligence/autocomplete", window.location.origin);
       url.searchParams.set("q", q);
       url.searchParams.set("country", countryInput.trim().toUpperCase() || "IN");
-      url.searchParams.set("platform", platform);
       const response = await fetch(url, { cache: "no-store", signal: controller.signal, headers: { Accept: "application/json" } });
       const data = (await response.json()) as { success: boolean; advertisers?: AutocompleteAdvertiser[]; error?: string };
       if (!response.ok || !data.success) throw new Error(data.error || "Advertiser lookup failed.");
@@ -374,56 +372,6 @@ export function AdSpySection({
       setSuggestions(advertisers);
       setSuggestionOpen(advertisers.length > 0);
       setActiveSuggestion(0);
-
-      // Secondary live refresh: starts only after the indexed result has
-      // rendered. It can enrich the index and replace sparse results, but
-      // never blocks the keystroke-to-dropdown path.
-      if (platform === "meta" && q.length >= 2) {
-        const refreshUrl = new URL("/api/ad-intelligence/autocomplete/refresh", window.location.origin);
-        refreshUrl.searchParams.set("q", q);
-        refreshUrl.searchParams.set("country", normalizedCountry);
-        refreshUrl.searchParams.set("platform", platform);
-
-        void fetch(refreshUrl, {
-          cache: "no-store",
-          headers: { Accept: "application/json" },
-        })
-          .then(async (refreshResponse) => {
-            if (!refreshResponse.ok) return null;
-            return (await refreshResponse.json()) as {
-              success: boolean;
-              advertisers?: AutocompleteAdvertiser[];
-            };
-          })
-          .then((refreshData) => {
-            if (
-              !mountedRef.current ||
-              !refreshData?.success ||
-              input.trim().toLocaleLowerCase() !== normalizedQuery
-            ) {
-              return;
-            }
-
-            const liveAdvertisers = refreshData.advertisers ?? [];
-            if (liveAdvertisers.length === 0) return;
-
-            cacheWrite(
-              autocompleteCache as Map<string, { expiresAt: number; [key: string]: unknown }>,
-              key,
-              liveAdvertisers,
-              "advertisers",
-              AUTOCOMPLETE_CACHE_TTL_MS,
-              AUTOCOMPLETE_CACHE_MAX,
-            );
-
-            setSuggestions(liveAdvertisers);
-            setSuggestionOpen(true);
-            setActiveSuggestion(0);
-          })
-          .catch(() => {
-            // Live refresh is an enhancement; the indexed result remains authoritative.
-          });
-      }
     } catch (autocompleteError) {
       if (!(autocompleteError instanceof DOMException && autocompleteError.name === "AbortError")) {
         setSuggestions([]);
@@ -450,139 +398,6 @@ export function AdSpySection({
     mode,
   ]);
 
-  useEffect(() => {
-    if (
-      platform !== "meta" ||
-      mode !== "advertiser" ||
-      input.trim().length < 2
-    ) {
-      liveDiscoveryAbortRef.current?.abort();
-      return;
-    }
-
-    const queryValue = input.trim();
-    const countryValue =
-      countryInput.trim().toUpperCase() ||
-      "IN";
-
-    const timer = window.setTimeout(
-      () => {
-        if (suggestions.length > 0) {
-          return;
-        }
-
-        liveDiscoveryAbortRef.current?.abort();
-
-        const controller =
-          new AbortController();
-
-        liveDiscoveryAbortRef.current =
-          controller;
-
-        const url = new URL(
-          "/api/ad-intelligence/autocomplete/refresh",
-          window.location.origin,
-        );
-
-        url.searchParams.set(
-          "q",
-          queryValue,
-        );
-
-        url.searchParams.set(
-          "country",
-          countryValue,
-        );
-
-        url.searchParams.set(
-          "platform",
-          platform,
-        );
-
-        void fetch(url, {
-          method: "GET",
-          cache: "no-store",
-          signal: controller.signal,
-          headers: {
-            Accept: "application/json",
-          },
-        })
-          .then(async (response) => {
-            if (!response.ok) {
-              return null;
-            }
-
-            return (await response.json()) as {
-              success?: boolean;
-              advertisers?: AutocompleteAdvertiser[];
-            };
-          })
-          .then((result) => {
-            if (
-              controller.signal.aborted ||
-              !result?.success
-            ) {
-              return;
-            }
-
-            if (
-              input.trim().toLowerCase() !==
-              queryValue.toLowerCase()
-            ) {
-              return;
-            }
-
-            const advertisers =
-              result.advertisers ?? [];
-
-            if (!advertisers.length) {
-              return;
-            }
-
-            const key =
-              `${platform}|${countryValue}|${queryValue.toLowerCase()}`;
-
-            cacheWrite(
-              autocompleteCache as Map<
-                string,
-                {
-                  expiresAt: number;
-                  [key: string]: unknown;
-                }
-              >,
-              key,
-              advertisers,
-              "advertisers",
-              AUTOCOMPLETE_CACHE_TTL_MS,
-              AUTOCOMPLETE_CACHE_MAX,
-            );
-
-            setSuggestions(
-              advertisers,
-            );
-
-            setSuggestionOpen(true);
-            setActiveSuggestion(0);
-          })
-          .catch(() => {
-            // Indexed results remain usable.
-          });
-      },
-      900,
-    );
-
-    return () => {
-      window.clearTimeout(timer);
-      liveDiscoveryAbortRef.current?.abort();
-    };
-  }, [
-    countryInput,
-    input,
-    mode,
-    platform,
-    suggestions.length,
-  ]);
-
   const startRefresh = useCallback(async (overrideQuery?: string, overridePageId?: string | null) => {
     const q = (overrideQuery ?? input).trim();
     if (q.length < 2) return null;
@@ -590,8 +405,6 @@ export function AdSpySection({
       const url = new URL("/api/ad-intelligence/refresh", window.location.origin);
       url.searchParams.set("q", q);
       url.searchParams.set("country", countryInput.trim().toUpperCase() || "IN");
-      url.searchParams.set("platform", platform);
-      url.searchParams.set("platform", platform);
       url.searchParams.set("mode", mode);
       const pageId = overridePageId !== undefined ? overridePageId : selectedPageId;
       if (pageId && platform === "meta" && mode === "advertiser") url.searchParams.set("pageId", pageId);
@@ -637,11 +450,10 @@ export function AdSpySection({
 
         if (nextJob.stale) {
           pollingJobRef.current = null;
-          const replacement = await startRefresh(submittedQuery, selectedPageId);
-          if (replacement?.id) {
-            setJob(replacement);
-            setRefreshing(isActive(replacement));
-          }
+          setRefreshing(false);
+          setError(
+            "The collection became stale. Use Refresh dataset to start a new collection."
+          );
           return;
         }
 
@@ -669,29 +481,60 @@ export function AdSpySection({
   const submit = useCallback(async (overrideQuery?: string, overridePageId?: string | null) => {
     const q = (overrideQuery ?? input).trim();
     const pageId = overridePageId !== undefined ? overridePageId : selectedPageId;
+
     if (q.length < 2) {
       setError("Enter at least 2 characters.");
       return;
     }
+
     setSubmittedQuery(q);
     setPage(1);
     setSelectedPageId(pageId ?? null);
     setSuggestionOpen(false);
     setError("");
+
     announce("Searching the indexed creative library");
 
-    const [result, refreshed] = await Promise.all([
-      loadSearch(1, { overrideQuery: q, overridePageId: pageId }),
-      startRefresh(q, pageId),
-    ]);
-    const latestJob = refreshed ?? (result?.collectionJob ?? null);
-    if (latestJob) {
-      setJob(latestJob);
-      setRefreshing(isActive(latestJob));
-      if (isActive(latestJob)) pollJob(latestJob.id);
+    const result = await loadSearch(1, {
+      overrideQuery: q,
+      overridePageId: pageId,
+    });
+
+    /*
+     * CPU SAFETY BOUNDARY
+     *
+     * Search always hits the indexed database first.
+     * No Playwright call occurs from typing/autocomplete.
+     *
+     * Collection starts only when:
+     *   1. the user explicitly submitted the search, AND
+     *   2. the indexed search returned zero creatives.
+     *
+     * Selecting an already-indexed advertiser therefore never
+     * creates a redundant collection job.
+     */
+    if (result && Number(result.total ?? 0) === 0) {
+      announce("No indexed creatives found. Starting a bounded collection.");
+
+      const refreshed = await startRefresh(q, pageId);
+
+      if (refreshed?.id) {
+        setJob(refreshed);
+        setRefreshing(isActive(refreshed));
+
+        if (isActive(refreshed)) {
+          pollJob(refreshed.id);
+        }
+      }
+    } else if (result?.collectionJob) {
+      setJob(result.collectionJob);
+      setRefreshing(isActive(result.collectionJob));
+
+      if (isActive(result.collectionJob)) {
+        pollJob(result.collectionJob.id);
+      }
     }
   }, [announce, input, loadSearch, pollJob, selectedPageId, startRefresh]);
-
   const selectAdvertiser = useCallback((advertiser: AutocompleteAdvertiser) => {
     setQuery(advertiser.label);
     setSelectedPageId(advertiser.pageId);
@@ -883,13 +726,28 @@ export function AdSpySection({
                     {suggestion.profileImageUrl ? <img src={suggestion.profileImageUrl} alt="" loading="lazy" /> : <span className="adspy-avatar-fallback">{suggestion.label.slice(0, 1).toUpperCase()}</span>}
                     <span className="adspy-suggestion-main">
                       <strong>{suggestion.label}</strong>
-                      <span>{suggestion.category ?? "Advertiser"}{suggestion.igFollowers ? ` · ${formatNumber(suggestion.igFollowers)} followers` : ""}</span>
+                      <span>{suggestion.category ?? "Advertiser"}{suggestion.igFollowers ? ` Â· ${formatNumber(suggestion.igFollowers)} followers` : ""}</span>
                     </span>
                     <span className="adspy-suggestion-source">{suggestion.source === "meta_public" ? "Meta" : "Indexed"}</span>
                   </button>
                 ))}
                 {!autocompleteLoading && suggestions.length === 0 && (
-                  <div className="adspy-suggestion-empty"><Search size={14} /> Search exact phrase</div>
+                  <div className="adspy-suggestion-empty" role="status">
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Search size={14} />
+                      <span>No indexed advertiser found for "{input.trim()}".</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="adspy-secondary-button"
+                      onClick={() => {
+                        setSuggestionOpen(false);
+                        void submit();
+                      }}
+                    >
+                      Search & collect
+                    </button>
+                  </div>
                 )}
               </div>
             )}
@@ -902,7 +760,7 @@ export function AdSpySection({
             {!refreshing && submittedQuery && updatedAt && <>Last observed {formatDate(updatedAt)}</>}
             {!refreshing && !submittedQuery && <>Search indexed public observations</>}
           </div>
-          {refreshing && job && <div className="adspy-progress">{job.persistedAds.toLocaleString("en-IN")} indexed · {job.discoveredAds.toLocaleString("en-IN")} discovered</div>}
+          {refreshing && job && <div className="adspy-progress">{job.persistedAds.toLocaleString("en-IN")} indexed Â· {job.discoveredAds.toLocaleString("en-IN")} discovered</div>}
         </div>
 
         {error && (
@@ -923,7 +781,23 @@ export function AdSpySection({
               <div className="adspy-result-count">{total ? `${firstResult.toLocaleString("en-IN")}-${lastResult.toLocaleString("en-IN")} of ${total.toLocaleString("en-IN")}` : "No indexed creatives yet"}</div>
             </div>
 
-            <div className="adspy-filter-row" aria-label="Creative filters">
+            <section className="adspy-intelligence" aria-label="Competitive intelligence">
+              <div className="adspy-section-heading"><div><span className="adspy-results-kicker">Evidence layer</span><h2>What the observed library says</h2></div><span className="adspy-evidence-chip"><Activity size={13} /> {summary.totalAds.toLocaleString("en-IN")} observed creatives</span></div>
+              <div className="adspy-stat-grid">
+                <div><span>Active</span><strong>{summary.activeAds.toLocaleString("en-IN")}</strong><small>{summary.videoAds.toLocaleString("en-IN")} video</small></div>
+                <div><span>Average running</span><strong>{summary.averageRunningDays.toFixed(1)}d</strong><small>Longest {summary.longestRunningDays}d</small></div>
+                <div><span>Creators</span><strong>{summary.creatorAds.toLocaleString("en-IN")}</strong><small>{summary.carouselAds.toLocaleString("en-IN")} carousel</small></div>
+                <div><span>Formats</span><strong>{summary.videoAds + summary.imageAds + summary.carouselAds}</strong><small>{summary.imageAds.toLocaleString("en-IN")} image</small></div>
+              </div>
+              <div className="adspy-intelligence-grid">
+                <div className="adspy-intelligence-panel"><div className="adspy-panel-title"><History size={15} /> Messaging patterns</div>{intelligence?.topHooks?.length ? <div className="adspy-chip-list">{intelligence.topHooks.slice(0, 5).map((item) => <span key={item.label}>{item.label} <b>{item.count}</b></span>)}</div> : <p>Not enough observed text evidence yet.</p>}</div>
+                <div className="adspy-intelligence-panel"><div className="adspy-panel-title"><Clock3 size={15} /> Persistence</div><p>{intelligence?.longestRunningAd?.headline ? <><strong>{intelligence.longestRunningAd.headline}</strong><br />{intelligence.longestRunningAd.runningDays ?? summary.longestRunningDays} days observed.</> : "Historical duration appears once enough observations have accumulated."}</p></div>
+                <div className="adspy-intelligence-panel"><div className="adspy-panel-title"><UserRound size={15} /> Creators</div>{intelligence?.topCreators?.length ? <div className="adspy-chip-list">{intelligence.topCreators.slice(0, 5).map((item) => <span key={item.label}>{item.label} <b>{item.count}</b></span>)}</div> : <p>No creator pattern is established in the indexed evidence.</p>}</div>
+                <div className="adspy-intelligence-panel"><div className="adspy-panel-title"><CircleAlert size={15} /> Performance data</div><p>Public Meta sources used here do not provide reliable per-ad reach, CTR, spend or ROAS. Those fields stay unavailable rather than being inferred.</p></div>
+              </div>
+            </section>
+
+<div className="adspy-filter-row" aria-label="Creative filters">
               {( [
                 ["all", "All"], ["active", "Active"], ["video", "Video"], ["image", "Image"], ["carousel", "Carousel"], ["creator", "Creators"], ["longest", "Longest running"],
               ] as const).map(([id, label]) => (
@@ -950,7 +824,7 @@ export function AdSpySection({
                         <button type="button" className="adspy-inspect-float" onClick={(event) => { event.stopPropagation(); openAd(ad); }} aria-label={`Inspect ${ad.advertiserName ?? "creative"}`}><ArrowUpRight size={15} /></button>
                       </div>
                       <div className="adspy-card-body">
-                        <div className="adspy-card-advertiser"><span>{ad.advertiserName ?? "Unknown advertiser"}</span>{ad.advertiserId && <span className="adspy-pageid">Meta · {ad.advertiserId}</span>}</div>
+                        <div className="adspy-card-advertiser"><span>{ad.advertiserName ?? "Unknown advertiser"}</span>{ad.advertiserId && <span className="adspy-pageid">Meta Â· {ad.advertiserId}</span>}</div>
                         <div className="adspy-card-meta"><span>{labelize(ad.creativeType)}</span><span>First seen {formatDate(ad.firstSeen)}</span></div>
                         <div className="adspy-card-footer"><span>{ad.runningDays ? `${ad.runningDays} day${ad.runningDays === 1 ? "" : "s"} running` : "Duration unavailable"}</span>{visibleMeta(ad) && <span className="adspy-card-offer">{visibleMeta(ad)}</span>}</div>
                         {sourceUrl && <a href={sourceUrl} target="_blank" rel="noreferrer" className="adspy-source-link" onClick={(event) => event.stopPropagation()}><ExternalLink size={12} /> Source</a>}
@@ -976,21 +850,7 @@ export function AdSpySection({
               </div>
             </div>
 
-            <section className="adspy-intelligence" aria-label="Competitive intelligence">
-              <div className="adspy-section-heading"><div><span className="adspy-results-kicker">Evidence layer</span><h2>What the observed library says</h2></div><span className="adspy-evidence-chip"><Activity size={13} /> {summary.totalAds.toLocaleString("en-IN")} observed creatives</span></div>
-              <div className="adspy-stat-grid">
-                <div><span>Active</span><strong>{summary.activeAds.toLocaleString("en-IN")}</strong><small>{summary.videoAds.toLocaleString("en-IN")} video</small></div>
-                <div><span>Average running</span><strong>{summary.averageRunningDays.toFixed(1)}d</strong><small>Longest {summary.longestRunningDays}d</small></div>
-                <div><span>Creators</span><strong>{summary.creatorAds.toLocaleString("en-IN")}</strong><small>{summary.carouselAds.toLocaleString("en-IN")} carousel</small></div>
-                <div><span>Formats</span><strong>{summary.videoAds + summary.imageAds + summary.carouselAds}</strong><small>{summary.imageAds.toLocaleString("en-IN")} image</small></div>
-              </div>
-              <div className="adspy-intelligence-grid">
-                <div className="adspy-intelligence-panel"><div className="adspy-panel-title"><History size={15} /> Messaging patterns</div>{intelligence?.topHooks?.length ? <div className="adspy-chip-list">{intelligence.topHooks.slice(0, 5).map((item) => <span key={item.label}>{item.label} <b>{item.count}</b></span>)}</div> : <p>Not enough observed text evidence yet.</p>}</div>
-                <div className="adspy-intelligence-panel"><div className="adspy-panel-title"><Clock3 size={15} /> Persistence</div><p>{intelligence?.longestRunningAd?.headline ? <><strong>{intelligence.longestRunningAd.headline}</strong><br />{intelligence.longestRunningAd.runningDays ?? summary.longestRunningDays} days observed.</> : "Historical duration appears once enough observations have accumulated."}</p></div>
-                <div className="adspy-intelligence-panel"><div className="adspy-panel-title"><UserRound size={15} /> Creators</div>{intelligence?.topCreators?.length ? <div className="adspy-chip-list">{intelligence.topCreators.slice(0, 5).map((item) => <span key={item.label}>{item.label} <b>{item.count}</b></span>)}</div> : <p>No creator pattern is established in the indexed evidence.</p>}</div>
-                <div className="adspy-intelligence-panel"><div className="adspy-panel-title"><CircleAlert size={15} /> Performance data</div><p>Public Meta sources used here do not provide reliable per-ad reach, CTR, spend or ROAS. Those fields stay unavailable rather than being inferred.</p></div>
-              </div>
-            </section>
+
           </>
         )}
       </div>
@@ -1021,8 +881,8 @@ export function AdSpySection({
               <div className="adspy-evidence-copy"><span>Primary text</span><p>{selectedAd.primaryText ?? "Not publicly available"}</p></div>
               <div className="adspy-evidence-copy"><span>Headline</span><p>{selectedAd.headline ?? "Not publicly available"}</p></div>
               <div className="adspy-evidence-copy"><span>CTA</span><p>{selectedAd.callToAction ?? "Not publicly available"}</p></div>
-              <div className="adspy-evidence-copy"><span>Markets</span><p>{selectedAd.markets?.length ? selectedAd.markets.map((market) => market.countryName ?? market.countryCode ?? "Unknown").join(" · ") : "Not publicly available"}</p></div>
-              <div className="adspy-evidence-copy"><span>Languages</span><p>{selectedAd.languages?.length ? selectedAd.languages.map((language) => language.name).join(" · ") : "Not publicly available"}</p></div>
+              <div className="adspy-evidence-copy"><span>Markets</span><p>{selectedAd.markets?.length ? selectedAd.markets.map((market) => market.countryName ?? market.countryCode ?? "Unknown").join(" Â· ") : "Not publicly available"}</p></div>
+              <div className="adspy-evidence-copy"><span>Languages</span><p>{selectedAd.languages?.length ? selectedAd.languages.map((language) => language.name).join(" Â· ") : "Not publicly available"}</p></div>
               <div className="adspy-evidence-copy"><span>Provenance</span><pre>{JSON.stringify(selectedAd.dataProvenance ?? {}, null, 2)}</pre></div>
               <div className="adspy-modal-actions">
                 <button
@@ -1059,5 +919,4 @@ export function AdSpySection({
 }
 
 export default AdSpySection;
-
 

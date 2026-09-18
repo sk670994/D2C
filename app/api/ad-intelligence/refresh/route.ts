@@ -351,7 +351,7 @@ export async function POST(
         requestType: "initial",
         payload,
         priority: 100,
-        maxAttempts: 5,
+        maxAttempts: 2,
       });
 
     const message: CollectionEvent = {

@@ -1,17 +1,13 @@
-{
+﻿{
   "crons": [
     {
       "path": "/api/cron/fetch-ad-data",
       "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/cron/refresh-tracked-adspy",
-      "schedule": "0 3 * * *"
     }
   ],
   "functions": {
     "app/api/queues/adspy-collection/route.ts": {
-      "maxDuration": 300,
+      "maxDuration": 60,
       "experimentalTriggers": [
         {
           "type": "queue/v2beta",
