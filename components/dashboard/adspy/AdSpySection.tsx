@@ -21,6 +21,7 @@ import {
   Video,
   X,
 } from "lucide-react";
+import { AdvertiserIntelligenceCard } from "./AdvertiserIntelligenceCard";
 import type {
   Ad,
   AutocompleteAdvertiser,
@@ -59,8 +60,28 @@ const EMPTY: Summary = {
   longestRunningDays: 0,
 };
 
-function searchKey(input: { query: string; country: string; platform: Platform; mode: SearchMode; pageId?: string | null; page: number }) {
-  return [input.query.trim().toLowerCase(), input.country.trim().toUpperCase(), input.platform, input.mode, input.pageId ?? "", input.page].join("|");
+function searchKey(input: {
+  query: string;
+  country: string;
+  platform: Platform;
+  mode: SearchMode;
+  pageId?: string | null;
+  page: number;
+  filter?: FilterId;
+  language?: string;
+  region?: string;
+}) {
+  return [
+    input.query.trim().toLowerCase(),
+    input.country.trim().toUpperCase(),
+    input.platform,
+    input.mode,
+    input.pageId ?? "",
+    input.page,
+    input.filter ?? "all",
+    input.language?.trim().toLowerCase() ?? "",
+    input.region?.trim().toLowerCase() ?? "",
+  ].join("|");
 }
 
 function cacheGet<T>(cache: Map<string, { expiresAt: number; [key: string]: unknown }>, key: string, field: string): T | null {
@@ -180,6 +201,8 @@ export function AdSpySection({
   const [selectedAd, setSelectedAd] = useState<Ad | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterId>("all");
+  const [languageFilter, setLanguageFilter] = useState("");
+  const [regionFilter, setRegionFilter] = useState("");
   const [announcement, setAnnouncement] = useState("");
 
   const searchAbortRef = useRef<AbortController | null>(null);
@@ -230,9 +253,23 @@ export function AdSpySection({
     onQueryChange?.(value);
   }, [onQueryChange]);
 
-  const loadSearch = useCallback(async (nextPage = 1, options?: { silent?: boolean; prefetch?: boolean; overrideQuery?: string; overridePageId?: string | null }) => {
+  const loadSearch = useCallback(async (
+    nextPage = 1,
+    options?: {
+      silent?: boolean;
+      prefetch?: boolean;
+      overrideQuery?: string;
+      overridePageId?: string | null;
+      overrideFilter?: FilterId;
+      overrideLanguage?: string;
+      overrideRegion?: string;
+    },
+  ) => {
     const q = (options?.overrideQuery ?? input).trim();
     const pageId = options?.overridePageId !== undefined ? options.overridePageId : selectedPageId;
+    const activeFilter = options?.overrideFilter ?? filter;
+    const activeLanguage = options?.overrideLanguage ?? languageFilter;
+    const activeRegion = options?.overrideRegion ?? regionFilter;
     const c = countryInput.trim().toUpperCase() || "IN";
     if (q.length < 2) {
       if (!options?.prefetch) {
@@ -246,7 +283,17 @@ export function AdSpySection({
       return null;
     }
 
-    const key = searchKey({ query: q, country: c, platform, mode, pageId, page: nextPage });
+    const key = searchKey({
+      query: q,
+      country: c,
+      platform,
+      mode,
+      pageId,
+      page: nextPage,
+      filter: activeFilter,
+      language: activeLanguage,
+      region: activeRegion,
+    });
     const cached = cacheGet<SearchResponse>(searchCache as Map<string, { expiresAt: number; [key: string]: unknown }>, key, "response");
     if (cached) {
       if (!options?.prefetch) {
@@ -278,6 +325,12 @@ export function AdSpySection({
       url.searchParams.set("page", String(nextPage));
       url.searchParams.set("limit", String(PAGE_SIZE));
       if (pageId && platform === "meta" && mode === "advertiser") url.searchParams.set("pageId", pageId);
+      if (activeLanguage.trim()) url.searchParams.set("language", activeLanguage.trim());
+      if (activeRegion.trim()) url.searchParams.set("region", activeRegion.trim());
+      if (activeFilter === "active") url.searchParams.set("activeStatus", "active");
+      if (activeFilter === "video" || activeFilter === "image" || activeFilter === "carousel") {
+        url.searchParams.set("creativeType", activeFilter);
+      }
 
       const response = await fetch(url, { cache: "no-store", signal: controller.signal, headers: { Accept: "application/json" } });
       const data = (await response.json()) as SearchResponse;
@@ -308,7 +361,7 @@ export function AdSpySection({
     } finally {
       if (mountedRef.current && generation === searchGenerationRef.current && !options?.silent && !options?.prefetch) setLoading(false);
     }
-  }, [countryInput, input, mode, platform, selectedPageId]);
+  }, [countryInput, filter, input, languageFilter, mode, platform, regionFilter, selectedPageId]);
 
   const loadSuggestions = useCallback(async (queryValue: string) => {
     const q = queryValue.trim();
@@ -513,7 +566,16 @@ export function AdSpySection({
      * Selecting an already-indexed advertiser therefore never
      * creates a redundant collection job.
      */
-    if (result && Number(result.total ?? 0) === 0) {
+    const hasServerFilters = Boolean(
+      languageFilter.trim()
+      || regionFilter.trim()
+      || filter === "active"
+      || filter === "video"
+      || filter === "image"
+      || filter === "carousel"
+    );
+
+    if (result && Number(result.total ?? 0) === 0 && !hasServerFilters) {
       announce("No indexed creatives found. Starting a bounded collection.");
 
       const refreshed = await startRefresh(q, pageId);
@@ -534,7 +596,7 @@ export function AdSpySection({
         pollJob(result.collectionJob.id);
       }
     }
-  }, [announce, input, loadSearch, pollJob, selectedPageId, startRefresh]);
+  }, [announce, filter, input, languageFilter, loadSearch, pollJob, regionFilter, selectedPageId, startRefresh]);
   const selectAdvertiser = useCallback((advertiser: AutocompleteAdvertiser) => {
     setQuery(advertiser.label);
     setSelectedPageId(advertiser.pageId);
@@ -773,7 +835,14 @@ export function AdSpySection({
 
         {submittedQuery && (
           <>
-            <div className="adspy-results-head">
+                        {selectedPageId && platform === "meta" && mode === "advertiser" ? (
+              <AdvertiserIntelligenceCard
+                pageId={selectedPageId}
+                country={countryInput.trim().toUpperCase() || "IN"}
+              />
+            ) : null}
+
+<div className="adspy-results-head">
               <div>
                 <span className="adspy-results-kicker">{selectedPageId ? "Exact Meta advertiser" : mode === "keyword" ? "Keyword search" : "Indexed advertiser search"}</span>
                 <h2>{submittedQuery}</h2>
@@ -798,11 +867,97 @@ export function AdSpySection({
             </section>
 
 <div className="adspy-filter-row" aria-label="Creative filters">
-              {( [
-                ["all", "All"], ["active", "Active"], ["video", "Video"], ["image", "Image"], ["carousel", "Carousel"], ["creator", "Creators"], ["longest", "Longest running"],
+              {([
+                ["all", "All"],
+                ["active", "Active"],
+                ["video", "Video"],
+                ["image", "Image"],
+                ["carousel", "Carousel"],
+                ["creator", "Creators"],
+                ["longest", "Longest running"],
               ] as const).map(([id, label]) => (
-                <button key={id} type="button" className={filter === id ? "active" : ""} onClick={() => setFilter(id)}>{label}</button>
+                <button
+                  key={id}
+                  type="button"
+                  className={filter === id ? "active" : ""}
+                  onClick={() => {
+                    setFilter(id);
+                    setPage(1);
+                    if (submittedQuery.trim()) {
+                      void loadSearch(1, {
+                        overrideQuery: submittedQuery,
+                        overridePageId: selectedPageId,
+                        overrideFilter: id,
+                        overrideLanguage: languageFilter,
+                        overrideRegion: regionFilter,
+                      });
+                    }
+                  }}
+                >
+                  {label}
+                </button>
               ))}
+            </div>
+
+            <div className="adspy-filter-row" aria-label="Language and region filters">
+              <select
+                className="adspy-mode"
+                value={languageFilter}
+                onChange={(event) => setLanguageFilter(event.target.value)}
+                aria-label="Language filter"
+              >
+                <option value="">All languages</option>
+                <option value="en">English</option>
+                <option value="hi">Hindi</option>
+                <option value="hinglish">Hinglish</option>
+                <option value="bn">Bengali</option>
+                <option value="gu">Gujarati</option>
+                <option value="pa">Punjabi</option>
+                <option value="ta">Tamil</option>
+                <option value="te">Telugu</option>
+                <option value="kn">Kannada</option>
+                <option value="ml">Malayalam</option>
+              </select>
+
+              <input
+                className="adspy-mode"
+                value={regionFilter}
+                onChange={(event) => setRegionFilter(event.target.value.slice(0, 100))}
+                placeholder="Region / state / city"
+                aria-label="Region, state, or city filter"
+                autoComplete="off"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && submittedQuery.trim()) {
+                    event.preventDefault();
+                    setPage(1);
+                    void loadSearch(1, {
+                      overrideQuery: submittedQuery,
+                      overridePageId: selectedPageId,
+                      overrideFilter: filter,
+                      overrideLanguage: languageFilter,
+                      overrideRegion: regionFilter,
+                    });
+                  }
+                }}
+              />
+
+              <button
+                type="button"
+                className="adspy-secondary-button"
+                disabled={!submittedQuery.trim() || loading}
+                onClick={() => {
+                  setPage(1);
+                  void loadSearch(1, {
+                    overrideQuery: submittedQuery,
+                    overridePageId: selectedPageId,
+                    overrideFilter: filter,
+                    overrideLanguage: languageFilter,
+                    overrideRegion: regionFilter,
+                  });
+                }}
+              >
+                Apply filters
+              </button>
             </div>
 
             {loading ? (

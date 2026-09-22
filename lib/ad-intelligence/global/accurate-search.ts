@@ -867,6 +867,21 @@ export async function searchGlobalAdsAccurate(
     advertiserPageId?:
       | string
       | undefined;
+    language?:
+      | string
+      | undefined;
+    region?:
+      | string
+      | undefined;
+    creativeType?:
+      | "video"
+      | "image"
+      | "carousel"
+      | undefined;
+    activeStatus?:
+      | "active"
+      | "inactive"
+      | undefined;
   },
 ) {
   const client =
@@ -900,45 +915,75 @@ export async function searchGlobalAdsAccurate(
 
   /*
    * Metrics and creative page are fetched concurrently.
+   *
+   * Both RPCs use the same indexed predicate set so
+   * totals and creative rows stay consistent.
+   *
+   * A selected Page ID is authoritative. There is no
+   * JavaScript fallback to fuzzy advertiser-name matching.
    */
+  const language =
+    normalizeText(
+      input.language,
+    ).toLowerCase();
+
+  const region =
+    normalizeText(
+      input.region,
+    );
+
+  const creativeType =
+    input.creativeType ??
+    "";
+
+  const activeStatus =
+    input.activeStatus ??
+    "";
+
   const [
     metricsResult,
     creativeResult,
   ] =
     await Promise.all([
-      advertiserPageId
-        ? client.rpc(
-            "adspy_search_metrics_by_advertiser",
-            {
-              p_page_id:
-                advertiserPageId,
+      client.rpc(
+        "adspy_search_metrics_v2",
+        {
+          p_query:
+            query,
 
-              p_country:
-                country,
+          p_country:
+            country,
 
-              p_platform:
-                input.platform,
-            },
-          )
-        : client.rpc(
-            "adspy_search_metrics",
-            {
-              p_query:
-                query,
+          p_platform:
+            input.platform,
 
-              p_country:
-                country,
+          p_mode:
+            input.mode,
 
-              p_platform:
-                input.platform,
+          p_advertiser_page_id:
+            advertiserPageId ||
+            null,
 
-              p_mode:
-                input.mode,
-            },
-          ),
+          p_language:
+            language ||
+            null,
+
+          p_region:
+            region ||
+            null,
+
+          p_creative_type:
+            creativeType ||
+            null,
+
+          p_active_status:
+            activeStatus ||
+            null,
+        },
+      ),
 
       client.rpc(
-        "adspy_search_creatives_v3",
+        "adspy_search_creatives_v4",
         {
           p_query:
             query,
@@ -960,6 +1005,22 @@ export async function searchGlobalAdsAccurate(
 
           p_advertiser_page_id:
             advertiserPageId ||
+            null,
+
+          p_language:
+            language ||
+            null,
+
+          p_region:
+            region ||
+            null,
+
+          p_creative_type:
+            creativeType ||
+            null,
+
+          p_active_status:
+            activeStatus ||
             null,
         },
       ),
@@ -1013,100 +1074,6 @@ export async function searchGlobalAdsAccurate(
       initialCreativeRows ??
       []
     ) as unknown as CreativeSearchRow[];
-
-  /*
-   * Exact advertiser identity is preferred.
-   *
-   * However, older indexed creatives may have a missing,
-   * normalized, or stale advertiser_id. In that case we
-   * perform exactly ONE fallback against advertiser name.
-   *
-   * This fixes the previous:
-   *
-   *   Analytics: 27
-   *   Creative Library: 0
-   *
-   * inconsistency without hiding actual empty datasets.
-   */
-  if (
-    advertiserPageId &&
-    normalizedRows.length === 0
-  ) {
-    const [
-      fallbackMetricsResult,
-      fallbackCreativeResult,
-    ] =
-      await Promise.all([
-        client.rpc(
-          "adspy_search_metrics",
-          {
-            p_query:
-              query,
-
-            p_country:
-              country,
-
-            p_platform:
-              input.platform,
-
-            p_mode:
-              input.mode,
-          },
-        ),
-
-        client.rpc(
-          "adspy_search_creatives_v3",
-          {
-            p_query:
-              query,
-
-            p_country:
-              country,
-
-            p_platform:
-              input.platform,
-
-            p_mode:
-              input.mode,
-
-            p_page:
-              input.page,
-
-            p_limit:
-              input.limit,
-
-            p_advertiser_page_id:
-              null,
-          },
-        ),
-      ]);
-
-    if (
-      !fallbackMetricsResult.error
-    ) {
-      const fallbackMetricsData =
-        fallbackMetricsResult.data;
-
-      metrics =
-        (
-          Array.isArray(
-            fallbackMetricsData,
-          )
-            ? fallbackMetricsData[0]
-            : fallbackMetricsData
-        ) as MetricsRow | null;
-    }
-
-    if (
-      !fallbackCreativeResult.error
-    ) {
-      normalizedRows =
-        (
-          fallbackCreativeResult.data ??
-          []
-        ) as unknown as CreativeSearchRow[];
-    }
-  }
 
   /*
    * COUNT(*) OVER() is present on every non-empty page.
