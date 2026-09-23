@@ -29,6 +29,11 @@ import {
   extractProductName,
   parsePrice,
 } from "../meta/parser";
+import {
+  mergeMetaIdentity,
+  scanMetaIdentity,
+  type MetaIdentityScan,
+} from "../meta/graphql-identity";
 
 const META_LIBRARY_URL = "https://www.facebook.com/ads/library/";
 const DEFAULT_COUNTRY = "IN";
@@ -45,8 +50,8 @@ const CTA_VALUES = [
   "Shop Now", "Learn More", "Sign Up", "Buy Now", "Install Now", "Book Now",
   "Contact Us", "Get Offer", "Apply Now", "Download", "Subscribe", "Order Now",
   "Message Now", "Send Message", "Get Directions", "Call Now", "Watch More",
-  "Listen Now", "Play Game", "Use App", "à¤…à¤­à¥€ à¤–à¤°à¥€à¤¦à¥‡à¤‚", "à¤”à¤° à¤œà¤¾à¤¨à¥‡à¤‚", "à¤¸à¤¾à¤‡à¤¨ à¤…à¤ª à¤•à¤°à¥‡à¤‚",
-  "à¤…à¤­à¥€ à¤‡à¤‚à¤¸à¥à¤Ÿà¥‰à¤² à¤•à¤°à¥‡à¤‚", "à¤¸à¤‚à¤¦à¥‡à¤¶ à¤­à¥‡à¤œà¥‡à¤‚",
+  "Listen Now", "Play Game", "Use App", "अभी खरीदें", "और जानें", "साइन अप करें",
+  "अभी इंस्टॉल करें", "संदेश भेजें",
 ] as const;
 
 type RawCard = {
@@ -209,9 +214,9 @@ async function evaluateStable<T>(
 async function extractVisibleCards(page: Page): Promise<RawCard[]> {
   return evaluateStable(page, () => {
     const clean = (v: string) => v.replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim();
-    const getId = (v: string) => v.match(/(?:Library ID|à¤²à¤¾à¤‡à¤¬à¥à¤°à¥‡à¤°à¥€ ID):\s*(\d+)/i)?.[1] ?? null;
+    const getId = (v: string) => v.match(/(?:Library ID|लाइब्रेरी ID):\s*(\d+)/i)?.[1] ?? null;
     const countIds = (el: Element) => {
-      const all = (el.textContent ?? "").match(/(?:Library ID|à¤²à¤¾à¤‡à¤¬à¥à¤°à¥‡à¤°à¥€ ID):\s*\d+/gi) ?? [];
+      const all = (el.textContent ?? "").match(/(?:Library ID|लाइब्रेरी ID):\s*\d+/gi) ?? [];
       return new Set(all.map((x) => x.match(/(\d+)/)?.[1] ?? "")).size;
     };
     const cards = new Map<string, Element>();
@@ -287,7 +292,7 @@ function destinationFromLinks(links: RawCard["links"]): string | null {
 function inferHeadline(lines: string[], primaryText: string | null, cta: string | null): string | null {
   for (const line of lines) {
     if (!line || line === primaryText || line === cta) continue;
-    if (/^(Library ID|à¤²à¤¾à¤‡à¤¬à¥à¤°à¥‡à¤°à¥€ ID):\s*\d+$/i.test(line)) continue;
+    if (/^(Library ID|लाइब्रेरी ID):\s*\d+$/i.test(line)) continue;
     if (/^(Active|Inactive|Image|Video|Carousel)$/i.test(line)) continue;
     if (/^\d+:\d{2}\s*\/\s*\d+:\d{2}$/.test(line)) continue;
     if (/^\d{1,2}\s+[A-Za-z]+\s+\d{4}/i.test(line)) continue;
@@ -296,14 +301,26 @@ function inferHeadline(lines: string[], primaryText: string | null, cta: string 
   return null;
 }
 
-function normalizeCard(card: RawCard, input: AdSearchInput, sourceUrl: string): CompetitorAd | null {
+function normalizeCard(
+  card: RawCard,
+  input: AdSearchInput,
+  sourceUrl: string,
+  metaIdentity?: MetaIdentityScan,
+): CompetitorAd | null {
   const lines = card.rawLines.map(normalizedText).filter(Boolean);
   if (!lines.length) return null;
+  const sourceIdentity = metaIdentity?.ads.get(card.id) ?? null;
+  const requestedPageId = input.advertiserPageId?.trim() || null;
+  // Identity boundary: when an exact Page ID was requested, never keep an ad
+  // that Meta attributes to a different page.
+  if (requestedPageId && sourceIdentity?.pageId && sourceIdentity.pageId !== requestedPageId) {
+    return null;
+  }
   const identity = extractAdvertiserIdentity(lines);
   const primaryText = extractPrimaryText(lines) || null;
   const cta = extractCallToAction(lines, CTA_VALUES) || null;
   const dates = extractDateRange(lines);
-  const isActive = extractActiveStatus(lines);
+  const isActive = sourceIdentity?.isActive ?? extractActiveStatus(lines);
   const productName = extractProductName(lines) || null;
   const offer = extractOffer(primaryText,lines) || null;
   const landingPage = destinationFromLinks(card.links);
@@ -320,8 +337,11 @@ function normalizeCard(card: RawCard, input: AdSearchInput, sourceUrl: string): 
   return {
     id: card.id,
     platform: "meta",
-    advertiserName: normalizedText(identity.advertiserName) || input.query.trim(),
-    advertiserId: input.advertiserPageId ?? null,
+    advertiserName:
+      (sourceIdentity?.pageName ? normalizedText(sourceIdentity.pageName) : "") ||
+      normalizedText(identity.advertiserName) ||
+      input.query.trim(),
+    advertiserId: sourceIdentity?.pageId ?? requestedPageId,
     creatorName: normalizedText(identity.creatorName) || null,
     partnershipType: identity.partnershipType,
     country: (input.country ?? DEFAULT_COUNTRY).toUpperCase(),
@@ -367,6 +387,12 @@ function normalizeCard(card: RawCard, input: AdSearchInput, sourceUrl: string): 
       collectedAt: new Date().toISOString(),
       searchMode: input.mode ?? "advertiser",
       collectionDepth: input.collectionDepth ?? "deep",
+      identitySource: sourceIdentity?.pageId ? "meta_graphql" : requestedPageId ? "requested_page_id" : "dom_text",
+      activeStatusSource: sourceIdentity?.isActive != null ? "provider" : "heuristic",
+      metaPageProfileUri: sourceIdentity?.pageProfileUri ?? null,
+      metaCollationId: sourceIdentity?.collationId ?? null,
+      metaCollationCount: sourceIdentity?.collationCount ?? null,
+      metaTotalCount: metaIdentity?.totalCount ?? null,
     },
   };
 }
@@ -527,11 +553,32 @@ async function scrapeOnce(
     });
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
+
+    // Meta ships authoritative identity (page_id, is_active, collation, total
+    // count) as JSON in the HTML and in /api/graphql responses while scrolling.
+    const metaIdentity: MetaIdentityScan = { ads: new Map(), totalCount: null };
+    const pendingScans = new Set<Promise<void>>();
+    page.on("response", (response) => {
+      if (!response.url().includes("/api/graphql")) return;
+      const task = response
+        .text()
+        .then((body) => {
+          if (body.length > 8_000_000) return;
+          mergeMetaIdentity(metaIdentity, scanMetaIdentity(body));
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          pendingScans.delete(task);
+        });
+      pendingScans.add(task);
+    });
     page.setDefaultNavigationTimeout(NAV_TIMEOUT);
 
     await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
     await page.waitForTimeout(INITIAL_WAIT);
     await page.waitForLoadState('load', { timeout: 10000 }).catch(() => undefined);
+    const initialHtml = await page.content().catch(() => "");
+    mergeMetaIdentity(metaIdentity, scanMetaIdentity(initialHtml));
 
     const bodyText = await page.locator("body").innerText().catch(() => "");
     if (isLikelyChallenge(bodyText)) {
@@ -554,7 +601,7 @@ async function scrapeOnce(
 
       let added = 0;
       for (const card of raw) {
-        const ad = normalizeCard(card, input, page.url() || pageUrl);
+        const ad = normalizeCard(card, input, page.url() || pageUrl, metaIdentity);
         if (!ad || !isRelevant(ad, input)) continue;
 
         if (!collected.has(ad.id)) {
@@ -623,17 +670,24 @@ async function scrapeOnce(
         await clickPaginationControls(page);
         const tailRaw = await extractVisibleCards(page);
         for (const card of tailRaw) {
-          const ad = normalizeCard(card, input, page.url() || pageUrl);
-          if (ad && isRelevant(ad, input)) collected.set(ad.id, ad);
+          const ad = normalizeCard(card, input, page.url() || pageUrl, metaIdentity);
+          if (ad && isRelevant(ad, input)) {
+          if (!collected.has(ad.id)) pendingBatch.push(ad);
+          collected.set(ad.id, ad);
+        }
         }
         await scrollToRevealMore(page);
       }
     }
 
+    await Promise.allSettled(Array.from(pendingScans));
     const finalRaw = await extractVisibleCards(page);
     for (const card of finalRaw) {
-      const ad = normalizeCard(card, input, page.url() || pageUrl);
-      if (ad && isRelevant(ad, input)) collected.set(ad.id, ad);
+      const ad = normalizeCard(card, input, page.url() || pageUrl, metaIdentity);
+      if (ad && isRelevant(ad, input)) {
+          if (!collected.has(ad.id)) pendingBatch.push(ad);
+          collected.set(ad.id, ad);
+        }
     }
 
     if (onBatch && pendingBatch.length > 0) {
