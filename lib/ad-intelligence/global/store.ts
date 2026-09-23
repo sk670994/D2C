@@ -154,6 +154,7 @@ export async function updateCollectionJob(jobId: string, patch: Partial<{
   errorMessage: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  lastRequestedAt: string;
 }>): Promise<CollectionJob> {
   const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (patch.status !== undefined) payload.status = patch.status;
@@ -164,6 +165,7 @@ export async function updateCollectionJob(jobId: string, patch: Partial<{
   if (patch.errorMessage !== undefined) payload.error_message = patch.errorMessage;
   if (patch.startedAt !== undefined) payload.started_at = patch.startedAt;
   if (patch.completedAt !== undefined) payload.completed_at = patch.completedAt;
+  if (patch.lastRequestedAt !== undefined) payload.last_requested_at = patch.lastRequestedAt;
 
   const { error } = await createGlobalServiceClient().from("ad_intelligence_collection_jobs").update(payload).eq("id", jobId);
   if (error) throw new Error(`Failed to update collection job: ${error.message}`);
@@ -1077,6 +1079,7 @@ export async function trackBrand(input: { userId: string; query: string; country
 export async function listTrackedBrands(): Promise<
   Array<{
     id: string;
+    userId: string;
     country: string;
     platform: AdPlatform;
     query: string;
@@ -1095,6 +1098,7 @@ export async function listTrackedBrands(): Promise<
       .select(
         [
           "id",
+          "user_id",
           "country",
           "platform",
           "query",
@@ -1117,6 +1121,8 @@ export async function listTrackedBrands(): Promise<
   return (data ?? []).map(
     (row: any) => ({
       id: String(row.id),
+
+      userId: String(row.user_id),
 
       country:
         String(
