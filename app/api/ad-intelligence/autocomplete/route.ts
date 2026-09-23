@@ -3,14 +3,16 @@
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
+import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
 
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 5;
 
-const CACHE_TTL_MS = 3_000;
-const CACHE_MAX = 200;
+// The advertiser index changes slowly; keep hot prefixes warm per instance.
+const CACHE_TTL_MS = 60_000;
+const CACHE_MAX = 1_000;
 const MAX_RESULTS = 12;
 
 type Row = {
@@ -186,13 +188,11 @@ export async function GET(request: NextRequest) {
   const start = performance.now();
 
   try {
-    const auth = await createServerAuthClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await auth.auth.getUser();
+    // Local JWT verification (no round-trip to Supabase Auth on every
+    // keystroke); falls back to getUser only if local verification fails.
+    const userId = await getVerifiedUserId(await createServerAuthClient());
 
-    if (authError || !user) {
+    if (!userId) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
         { status: 401 },
@@ -200,7 +200,7 @@ export async function GET(request: NextRequest) {
     }
 
     const rate = checkRateLimit(
-      `adspy-autocomplete:${user.id}`,
+      `adspy-autocomplete:${userId}`,
       300,
       60_000,
     );

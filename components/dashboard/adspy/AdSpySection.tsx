@@ -463,8 +463,9 @@ export function AdSpySection({
       if (pageId && platform === "meta" && mode === "advertiser") url.searchParams.set("pageId", pageId);
 
       const response = await fetch(url, { method: "POST", cache: "no-store", headers: { Accept: "application/json" } });
-      const data = (await response.json()) as { success: boolean; job?: Job; error?: string };
+      const data = (await response.json()) as { success: boolean; job?: Job; error?: string; message?: string | null };
       if (!response.ok || !data.success || !data.job) throw new Error(data.error || "Could not start library update.");
+      if (data.message) setError(data.message);
       setJob(data.job);
       setRefreshing(isActive(data.job));
       return data.job;
@@ -505,7 +506,7 @@ export function AdSpySection({
           pollingJobRef.current = null;
           setRefreshing(false);
           setError(
-            "The collection became stale. Use Refresh dataset to start a new collection."
+            "The last collection timed out. Use Refresh data to start a new one."
           );
           return;
         }
@@ -530,6 +531,15 @@ export function AdSpySection({
   useEffect(() => {
     if (job?.id && isActive(job)) pollJob(job.id);
   }, [job, pollJob]);
+
+  // Explicit re-observation of the current advertiser/keyword. The server
+  // enforces the minimum interval and recovers timed-out collections.
+  const refreshDataset = useCallback(async () => {
+    if (!submittedQuery.trim()) return;
+    setError("");
+    const next = await startRefresh(submittedQuery, selectedPageId);
+    if (next && isActive(next)) pollJob(next.id);
+  }, [pollJob, selectedPageId, startRefresh, submittedQuery]);
 
   const submit = useCallback(async (overrideQuery?: string, overridePageId?: string | null) => {
     const q = (overrideQuery ?? input).trim();
@@ -788,7 +798,7 @@ export function AdSpySection({
                     {suggestion.profileImageUrl ? <img src={suggestion.profileImageUrl} alt="" loading="lazy" /> : <span className="adspy-avatar-fallback">{suggestion.label.slice(0, 1).toUpperCase()}</span>}
                     <span className="adspy-suggestion-main">
                       <strong>{suggestion.label}</strong>
-                      <span>{suggestion.category ?? "Advertiser"}{suggestion.igFollowers ? ` Â· ${formatNumber(suggestion.igFollowers)} followers` : ""}</span>
+                      <span>{suggestion.category ?? "Advertiser"}{suggestion.igFollowers ? ` · ${formatNumber(suggestion.igFollowers)} followers` : ""}</span>
                     </span>
                     <span className="adspy-suggestion-source">{suggestion.source === "meta_public" ? "Meta" : "Indexed"}</span>
                   </button>
@@ -822,7 +832,7 @@ export function AdSpySection({
             {!refreshing && submittedQuery && updatedAt && <>Last observed {formatDate(updatedAt)}</>}
             {!refreshing && !submittedQuery && <>Search indexed public observations</>}
           </div>
-          {refreshing && job && <div className="adspy-progress">{job.persistedAds.toLocaleString("en-IN")} indexed Â· {job.discoveredAds.toLocaleString("en-IN")} discovered</div>}
+          {refreshing && job && <div className="adspy-progress">{job.persistedAds.toLocaleString("en-IN")} indexed · {job.discoveredAds.toLocaleString("en-IN")} discovered</div>}
         </div>
 
         {error && (
@@ -847,7 +857,21 @@ export function AdSpySection({
                 <span className="adspy-results-kicker">{selectedPageId ? "Exact Meta advertiser" : mode === "keyword" ? "Keyword search" : "Indexed advertiser search"}</span>
                 <h2>{submittedQuery}</h2>
               </div>
-              <div className="adspy-result-count">{total ? `${firstResult.toLocaleString("en-IN")}-${lastResult.toLocaleString("en-IN")} of ${total.toLocaleString("en-IN")}` : "No indexed creatives yet"}</div>
+              <div className="adspy-results-actions" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <div className="adspy-result-count">{total ? `${firstResult.toLocaleString("en-IN")}-${lastResult.toLocaleString("en-IN")} of ${total.toLocaleString("en-IN")}` : "No indexed creatives yet"}</div>
+                {platform === "meta" && (
+                  <button
+                    type="button"
+                    className="adspy-secondary-button"
+                    onClick={() => void refreshDataset()}
+                    disabled={refreshing || loading}
+                    title="Collect the latest public ads for this search"
+                  >
+                    {refreshing ? <Loader2 size={14} className="adspy-spin" /> : <History size={14} />}
+                    {refreshing ? " Refreshing…" : " Refresh data"}
+                  </button>
+                )}
+              </div>
             </div>
 
             <section className="adspy-intelligence" aria-label="Competitive intelligence">
@@ -979,7 +1003,7 @@ export function AdSpySection({
                         <button type="button" className="adspy-inspect-float" onClick={(event) => { event.stopPropagation(); openAd(ad); }} aria-label={`Inspect ${ad.advertiserName ?? "creative"}`}><ArrowUpRight size={15} /></button>
                       </div>
                       <div className="adspy-card-body">
-                        <div className="adspy-card-advertiser"><span>{ad.advertiserName ?? "Unknown advertiser"}</span>{ad.advertiserId && <span className="adspy-pageid">Meta Â· {ad.advertiserId}</span>}</div>
+                        <div className="adspy-card-advertiser"><span>{ad.advertiserName ?? "Unknown advertiser"}</span>{ad.advertiserId && <span className="adspy-pageid">Meta · {ad.advertiserId}</span>}</div>
                         <div className="adspy-card-meta"><span>{labelize(ad.creativeType)}</span><span>First seen {formatDate(ad.firstSeen)}</span></div>
                         <div className="adspy-card-footer"><span>{ad.runningDays ? `${ad.runningDays} day${ad.runningDays === 1 ? "" : "s"} running` : "Duration unavailable"}</span>{visibleMeta(ad) && <span className="adspy-card-offer">{visibleMeta(ad)}</span>}</div>
                         {sourceUrl && <a href={sourceUrl} target="_blank" rel="noreferrer" className="adspy-source-link" onClick={(event) => event.stopPropagation()}><ExternalLink size={12} /> Source</a>}
@@ -1036,8 +1060,8 @@ export function AdSpySection({
               <div className="adspy-evidence-copy"><span>Primary text</span><p>{selectedAd.primaryText ?? "Not publicly available"}</p></div>
               <div className="adspy-evidence-copy"><span>Headline</span><p>{selectedAd.headline ?? "Not publicly available"}</p></div>
               <div className="adspy-evidence-copy"><span>CTA</span><p>{selectedAd.callToAction ?? "Not publicly available"}</p></div>
-              <div className="adspy-evidence-copy"><span>Markets</span><p>{selectedAd.markets?.length ? selectedAd.markets.map((market) => market.countryName ?? market.countryCode ?? "Unknown").join(" Â· ") : "Not publicly available"}</p></div>
-              <div className="adspy-evidence-copy"><span>Languages</span><p>{selectedAd.languages?.length ? selectedAd.languages.map((language) => language.name).join(" Â· ") : "Not publicly available"}</p></div>
+              <div className="adspy-evidence-copy"><span>Markets</span><p>{selectedAd.markets?.length ? selectedAd.markets.map((market) => market.countryName ?? market.countryCode ?? "Unknown").join(" · ") : "Not publicly available"}</p></div>
+              <div className="adspy-evidence-copy"><span>Languages</span><p>{selectedAd.languages?.length ? selectedAd.languages.map((language) => language.name).join(" · ") : "Not publicly available"}</p></div>
               <div className="adspy-evidence-copy"><span>Provenance</span><pre>{JSON.stringify(selectedAd.dataProvenance ?? {}, null, 2)}</pre></div>
               <div className="adspy-modal-actions">
                 <button

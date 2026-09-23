@@ -110,6 +110,7 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
     external_ad_key: string;
     first_seen_at: string | null;
     last_seen_at: string | null;
+    advertiser_id: string | null;
   }> = [];
 
   if (externalKeys.length) {
@@ -119,7 +120,7 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
     } = await client
       .from("ad_intelligence_creatives")
       .select(
-        "platform,external_ad_key,first_seen_at,last_seen_at",
+        "platform,external_ad_key,first_seen_at,last_seen_at,advertiser_id",
       )
       .in(
         "external_ad_key",
@@ -142,6 +143,7 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
       {
         first_seen_at: string | null;
         last_seen_at: string | null;
+        advertiser_id: string | null;
       }
     >(
       existingCreativeHistory.map(
@@ -153,6 +155,9 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
               null,
             last_seen_at:
               row.last_seen_at ??
+              null,
+            advertiser_id:
+              row.advertiser_id ??
               null,
           },
         ],
@@ -187,7 +192,8 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
     external_ad_id: ad.id?.trim() || null,
     external_ad_key: buildExternalKey(ad),
     advertiser_name: ad.advertiserName || "Unknown advertiser",
-    advertiser_id: ad.advertiserId ?? null,
+    // A known Page ID is never erased by a later collection that lacked it.
+    advertiser_id: ad.advertiserId ?? history?.advertiser_id ?? null,
     creator_name: ad.creatorName ?? null,
     partnership_type: ad.partnershipType ?? "unknown",
     creative_type: ad.creativeType ?? "unknown",
@@ -234,6 +240,14 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
       ad.isActive ?? true,
     data_provenance: {
       advertiser: "provider",
+      advertiserId:
+        ad.metadata?.identitySource === "meta_graphql"
+          ? "provider"
+          : ad.advertiserId
+            ? "requested"
+            : "unavailable",
+      activeStatus:
+        ad.metadata?.activeStatusSource === "provider" ? "provider" : "heuristic",
       creative: "provider",
       firstSeen: ad.firstSeen ? "provider" : "unavailable",
       lastSeen: "provider",
@@ -391,5 +405,65 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
     }
   }
 
+  await upsertAdvertiserIndex(client, ads);
+
   return { insertedOrUpdated: creativeRows.length, observations: observationRows.length, languages: languageRows.length, markets: marketRows.length };
+}
+
+/**
+ * Keeps the autocomplete index (ad_intelligence_advertisers) growing from
+ * collected ads that carry an authoritative Page ID. Best effort: an index
+ * failure must never fail the collection.
+ */
+async function upsertAdvertiserIndex(
+  client: ReturnType<typeof createGlobalServiceClient>,
+  ads: CompetitorAd[],
+): Promise<void> {
+  const byPage = new Map<string, CompetitorAd>();
+  for (const ad of ads) {
+    const pageId = ad.advertiserId?.trim();
+    if (!pageId || !/^\d{5,25}$/.test(pageId)) continue;
+    if (ad.metadata?.identitySource !== "meta_graphql") continue;
+    const name = (ad.advertiserName ?? "").trim();
+    if (!name || name.toLowerCase() === "unknown advertiser") continue;
+    if (!byPage.has(`${ad.platform}:${pageId}`)) byPage.set(`${ad.platform}:${pageId}`, ad);
+  }
+
+  for (const ad of byPage.values()) {
+    const profileUri =
+      typeof ad.metadata?.metaPageProfileUri === "string"
+        ? (ad.metadata?.metaPageProfileUri as string)
+        : null;
+    const { error } = await client.rpc("adspy_upsert_advertiser_v2", {
+      p_platform: ad.platform,
+      p_page_id: ad.advertiserId!.trim(),
+      p_page_name: ad.advertiserName.trim(),
+      p_normalized_name: normalize(ad.advertiserName),
+      // Landing domains vary per ad (marketplaces, trackers); never overwrite a
+      // curated advertiser domain with one.
+      p_domain: null,
+      p_profile_url: profileUri,
+      p_country: ad.country?.trim().toUpperCase() ?? null,
+      p_source: "meta_ad_library_collection",
+      // Passing the username also pins the 16-argument overload, so
+      // PostgREST never has to choose between two function signatures.
+      p_facebook_username: facebookUsernameFrom(profileUri),
+    });
+    if (error) {
+      console.warn("[GlobalAdIngest] Advertiser index warning:", error.message);
+    }
+  }
+}
+
+function facebookUsernameFrom(profileUri: string | null): string | null {
+  if (!profileUri) return null;
+  try {
+    const url = new URL(profileUri);
+    if (!/(^|\.)facebook\.com$/i.test(url.hostname)) return null;
+    const first = url.pathname.split("/").filter(Boolean)[0] ?? "";
+    if (!first || /^\d+$/.test(first) || first === "profile.php") return null;
+    return first.slice(0, 100);
+  } catch {
+    return null;
+  }
 }

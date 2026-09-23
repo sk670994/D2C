@@ -4,46 +4,23 @@ import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
 
 import type { AdPlatform } from "@/lib/ad-intelligence/types";
-import type { CollectionDepth } from "@/lib/ad-intelligence/provider";
-import type { CollectionEvent } from "@/lib/ad-intelligence/jobs/collect-ad-intelligence";
-
-import {
-  buildAdvertiserCollectionKey,
-  getOrCreateAdvertiserCollectionJob,
-} from "@/lib/ad-intelligence/global/page-aware-store";
-
 import {
   getCollectionJob,
-  updateCollectionJob,
 } from "@/lib/ad-intelligence/global/store";
 
-import { dispatchAdSpyCollection } from "@/lib/ad-intelligence/jobs/dispatch-adspy-collection";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 import {
-  enqueueAdSpyRequest,
   getDurableRunByCollectionJob,
-  getOrCreateDurableRun,
 } from "@/lib/ad-intelligence/durable-run";
+
+import {
+  startAdSpyCollection,
+  UnsupportedPlatformError,
+} from "@/lib/ad-intelligence/jobs/start-collection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const ACTIVE_JOB_STATUSES = new Set([
-  "queued",
-  "scraping",
-  "normalizing",
-  "enriching",
-  "finalizing",
-  "deep_queued",
-  "deep",
-]);
-
-const ACTIVE_RUN_STATUSES = new Set([
-  "queued",
-  "running",
-  "retrying",
-]);
 
 const MIN_REFRESH_INTERVAL_MS = 10 * 60_000;
 
@@ -220,172 +197,49 @@ export async function POST(
       );
     }
 
-    let job =
-      await getOrCreateAdvertiserCollectionJob(
-        {
-          query,
-          country,
-          platform,
-          mode,
-          userId,
-          advertiserPageId:
-            pageId,
-        },
-      );
-
-    const collectionKey =
-      buildAdvertiserCollectionKey({
-        query: job.query,
-        country: job.country,
-        platform: job.platform,
-        mode: job.mode,
-        pageId,
-      });
-
-    const existingRun =
-      await getDurableRunByCollectionJob(
-        job.id,
-        userId,
-      );
-
-    if (
-      ACTIVE_JOB_STATUSES.has(
-        job.status,
-      ) &&
-      existingRun &&
-      ACTIVE_RUN_STATUSES.has(
-        existingRun.status,
-      )
-    ) {
-      return NextResponse.json({
-        success: true,
-        job: mapJob(job),
-        durableRun:
-          mapRun(existingRun),
-        isRefreshing: true,
-        advertiserPageId: pageId,
-      });
-    }
-
-    const lastRequestedAt =
-      new Date(
-        job.lastRequestedAt,
-      ).getTime();
-
-    if (
-      ["complete","exhausted","failed","stale"].includes(
-        job.status,
-      ) &&
-      Number.isFinite(
-        lastRequestedAt,
-      ) &&
-      Date.now() -
-          lastRequestedAt <
-        MIN_REFRESH_INTERVAL_MS
-    ) {
-      return NextResponse.json({
-        success: true,
-        job: mapJob(job),
-        durableRun:
-          mapRun(existingRun),
-        isRefreshing: false,
-        advertiserPageId: pageId,
-      });
-    }
-
-    job =
-      await updateCollectionJob(
-        job.id,
-        {
-          status: "queued",
-          stage: "queued",
-          errorMessage: null,
-          completedAt: null,
-          discoveredAds: 0,
-          normalizedAds: 0,
-          persistedAds: 0,
-          startedAt: null,
-        },
-      );
-
-    const run =
-      await getOrCreateDurableRun({
-        userId,
-        collectionJobId:
-          job.id,
-        collectionKey,
-        query: job.query,
-        country: job.country,
-        platform: job.platform,
-        mode: job.mode,
-        advertiserPageId:
-          pageId,
-      });
-
-    const collectionDepth:
-      CollectionDepth =
-      platform === "meta"
-        ? "quick"
-        : "deep";
-
-    const payload: Omit<
-      CollectionEvent,
-      "requestId"
-    > = {
-      jobId: job.id,
-      query: job.query,
-      country: job.country,
-      platform: job.platform,
-      mode: job.mode,
-      collectionKey,
-      collectionDepth,
-      advertiserPageId: pageId,
-      runId: run.id,
-    };
-
-    const queueRequest =
-      await enqueueAdSpyRequest({
-        runId: run.id,
-        uniqueKey:
-          `${collectionKey}:initial`,
-        requestType: "initial",
-        payload,
-        priority: 100,
-        maxAttempts: 2,
-      });
-
-    const message: CollectionEvent = {
-      ...payload,
-      requestId:
-        queueRequest.id,
-    };
-
-    await dispatchAdSpyCollection(
-      message,
-      `${collectionKey}:initial:${run.id}`,
-    );
+    const result = await startAdSpyCollection({
+      userId,
+      query,
+      country,
+      platform,
+      mode,
+      pageId,
+      minIntervalMs: MIN_REFRESH_INTERVAL_MS,
+      reason: "user",
+    });
 
     const freshJob =
-      (await getCollectionJob(
-        job.id,
-        userId,
-      )) ?? job;
+      (await getCollectionJob(result.job.id, userId)) ?? result.job;
 
     const freshRun =
-      await getDurableRunByCollectionJob(
-        job.id,
-        userId,
-      );
+      (await getDurableRunByCollectionJob(result.job.id, userId)) ?? result.run;
+
+    const isRefreshing =
+      result.outcome === "dispatched" ||
+      result.outcome === "already_running";
 
     return NextResponse.json({
       success: true,
       job: mapJob(freshJob),
-      durableRun:
-        mapRun(freshRun),
-      isRefreshing: true,
+      durableRun: mapRun(freshRun),
+      isRefreshing,
+      outcome: result.outcome,
+      message:
+        result.outcome === "recently_collected"
+          ? "This advertiser was refreshed a few minutes ago. Showing the latest indexed data."
+          : result.outcome === "running_for_another_request"
+            ? "A collection for this advertiser is already running. Search again in a minute to see new ads."
+            : null,
       advertiserPageId: pageId,
     });
   } catch (error) {
+    if (error instanceof UnsupportedPlatformError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 400 },
+      );
+    }
+
     console.error(
       "[AdSpy refresh]",
       error,
