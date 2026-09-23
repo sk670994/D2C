@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { searchGlobalAdsAccurate } from "@/lib/ad-intelligence/global/accurate-search";
+import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
 import type { AdPlatform } from "@/lib/ad-intelligence/types";
 
 export const runtime = "nodejs";
@@ -39,13 +40,9 @@ function activeStatus(value: string | null): "active" | "inactive" | undefined {
 }
 
 export async function GET(request: NextRequest) {
-  const auth = await createServerAuthClient();
-  const {
-    data: { user },
-    error,
-  } = await auth.auth.getUser();
+  const userId = await getVerifiedUserId(await createServerAuthClient());
 
-  if (error || !user) {
+  if (!userId) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
 
