@@ -1,15 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { createClient as createServerAuthClient } from "@/lib/supabase/server";
+import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
+
 const ALLOWED_HOSTS = [
   "facebook.com",
   "fbcdn.net",
   "fbsbx.com",
   "instagram.com",
   "cdninstagram.com",
-  "xx.fbcdn.net",
 ];
 
+const MAX_REDIRECTS = 3;
+const FETCH_TIMEOUT_MS = 10_000;
+
 function allowed(url: URL) {
+  if (url.protocol !== "https:") return false;
+  if (url.username || url.password) return false;
+  if (url.port && url.port !== "443") return false;
   const host = url.hostname.toLowerCase();
   return ALLOWED_HOSTS.some((allowedHost) => host === allowedHost || host.endsWith(`.${allowedHost}`));
 }
@@ -18,6 +26,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
+  // Login required: previously this was an open image proxy.
+  const auth = await createServerAuthClient();
+  const userId = await getVerifiedUserId(auth);
+  if (!userId) {
+    return new NextResponse("Unauthorized", { status: 401 });
+  }
+
   const raw = request.nextUrl.searchParams.get("url");
   if (!raw) {
     return new NextResponse("Missing url", { status: 400 });
@@ -30,27 +45,47 @@ export async function GET(request: NextRequest) {
     return new NextResponse("Invalid url", { status: 400 });
   }
 
-  if (!["http:", "https:"].includes(target.protocol) || !allowed(target)) {
+  if (!allowed(target)) {
     return new NextResponse("Media host not allowed", { status: 403 });
   }
 
   try {
-    const response = await fetch(target.toString(), {
-      headers: {
-        Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36",
-        Referer: "https://www.facebook.com/",
-      },
-      cache: "force-cache",
-    });
+    let response: Response | null = null;
 
-    if (!response.ok) {
+    // Follow redirects manually so every hop is re-checked against the allowlist.
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+      response = await fetch(target.toString(), {
+        headers: {
+          Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36",
+          Referer: "https://www.facebook.com/",
+        },
+        redirect: "manual",
+        cache: "force-cache",
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+
+      if (response.status < 300 || response.status >= 400) break;
+
+      const location = response.headers.get("location");
+      if (!location) break;
+
+      const next = new URL(location, target);
+      if (!allowed(next)) {
+        return new NextResponse("Media redirect not allowed", { status: 403 });
+      }
+      target = next;
+      response = null;
+    }
+
+    if (!response || !response.ok) {
       return new NextResponse("Upstream media unavailable", { status: 502 });
     }
 
     const contentType = response.headers.get("content-type") || "image/jpeg";
-    if (!contentType.startsWith("image/")) {
+    // SVG can carry script; only serve raster images.
+    if (!contentType.startsWith("image/") || contentType.includes("svg")) {
       return new NextResponse("Not an image", { status: 415 });
     }
 
@@ -58,8 +93,8 @@ export async function GET(request: NextRequest) {
       status: 200,
       headers: {
         "Content-Type": contentType,
-        "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
-        "Cross-Origin-Resource-Policy": "cross-origin",
+        "Cache-Control": "private, max-age=86400",
+        "X-Content-Type-Options": "nosniff",
       },
     });
   } catch {
