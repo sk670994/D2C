@@ -111,11 +111,20 @@ export async function collectAdIntelligence(
   };
 
   const seenIds = new Set<string>();
+  // Meta's own total for this query/page (source-backed), when observed.
+  let metaTotalCount: number | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   const persist = async (
     incoming: CompetitorAd[],
   ): Promise<void> => {
+    for (const ad of incoming) {
+      const total = Number(ad.metadata?.metaTotalCount);
+      if (Number.isFinite(total) && total > 0) {
+        metaTotalCount = Math.max(metaTotalCount ?? 0, total);
+      }
+    }
+
     const ads = uniqueBatch(incoming, seenIds);
     if (!ads.length) return;
 
@@ -232,21 +241,12 @@ export async function collectAdIntelligence(
         },
       );
     } else {
-      const result =
-        await adProviders[
-          data.platform
-        ]!.search({
-          query: data.query,
-          country: data.country,
-          platform: data.platform,
-          mode: data.mode,
-          collectionDepth: phase,
-          advertiserPageId:
-            data.advertiserPageId ?? null,
-        });
-
-      await persist(
-        result.ads ?? [],
+      // Google/LinkedIn providers only return a link to the public library,
+      // not real creatives. Never write those placeholders into the shared
+      // creative index.
+      console.info(
+        "[AdSpy collect] Skipping non-Meta collection (no creative-level source yet)",
+        { platform: data.platform, jobId: data.jobId },
       );
     }
 
@@ -258,6 +258,7 @@ export async function collectAdIntelligence(
         requestId: data.requestId,
         result: {
           phase: "quick",
+          metaTotalCount,
           discoveredAds:
             state.discoveredAds,
           normalizedAds:
@@ -307,6 +308,7 @@ export async function collectAdIntelligence(
       requestId: data.requestId,
       result: {
         phase,
+        metaTotalCount,
         discoveredAds:
           state.discoveredAds,
         normalizedAds:
