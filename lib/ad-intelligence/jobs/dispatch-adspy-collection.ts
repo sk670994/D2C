@@ -3,9 +3,21 @@
 import { send } from "@vercel/queue";
 import type { CollectionEvent } from "./collect-ad-intelligence";
 
-export type AdSpyDispatchMode = "queue" | "inline";
+export type AdSpyDispatchMode = "queue" | "inline" | "runner";
+
+type InlineRunner = (payload: CollectionEvent) => void;
+let inlineRunner: InlineRunner | null = null;
+
+/**
+ * Background collectors (scripts/adspy-prefill.ts) register a runner so
+ * collections execute in-process, awaited and one at a time.
+ */
+export function setAdSpyInlineRunner(runner: InlineRunner | null) {
+  inlineRunner = runner;
+}
 
 export function getAdSpyDispatchMode(): AdSpyDispatchMode {
+  if (inlineRunner) return "runner";
   return process.env.VERCEL ? "queue" : "inline";
 }
 
@@ -14,6 +26,11 @@ export async function dispatchAdSpyCollection(
   idempotencyKey: string,
 ): Promise<{ mode: AdSpyDispatchMode }> {
   const mode = getAdSpyDispatchMode();
+
+  if (mode === "runner" && inlineRunner) {
+    inlineRunner(payload);
+    return { mode };
+  }
 
   if (mode === "queue") {
     await send(
