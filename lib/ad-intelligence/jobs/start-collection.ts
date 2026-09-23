@@ -137,6 +137,8 @@ export async function startAdSpyCollection(input: {
   /** Skip if this job finished less than this long ago. */
   minIntervalMs?: number;
   reason: StartCollectionReason;
+  /** "deep" reads the full library (background collector only). */
+  depth?: "quick" | "deep";
 }): Promise<StartCollectionResult> {
   if (input.platform !== "meta") {
     throw new UnsupportedPlatformError(input.platform);
@@ -236,7 +238,7 @@ export async function startAdSpyCollection(input: {
     platform: job.platform,
     mode: job.mode,
     collectionKey,
-    collectionDepth: "quick",
+    collectionDepth: input.depth ?? "quick",
     advertiserPageId: pageId,
     runId: run.id,
   };
