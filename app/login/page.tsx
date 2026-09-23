@@ -3,6 +3,7 @@ import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { BrandLogo } from "@/components/app/BrandLogo";
+import { safeNextPath } from "@/lib/security/safe-redirect";
 
 export default async function LoginPage({
   searchParams
@@ -10,7 +11,7 @@ export default async function LoginPage({
   searchParams: Promise<{ next?: string; error?: string }>;
 }) {
   const params = await searchParams;
-  const nextPath = params.next && params.next.startsWith("/") ? params.next : "/dashboard";
+  const nextPath = safeNextPath(params.next);
 
   return (
     <main className="main auth-page">
