@@ -174,9 +174,13 @@ function Shell({ children, scene, eyebrow, title, copy, actions }: {
   return (
     <main className={styles.site}>
       <header className={styles.navbar}>
-        <Link className={styles.logo} href="/">
-          <span className={styles.logoMark}>Z</span>
-          <span>ZOOPTRACK</span>
+        <Link className={styles.logo} href="/" aria-label="Zooptrack home">
+          <span className={styles.logoChip}>
+            <span className={styles.logoCrop}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/zooptrack-logo.png" alt="Zooptrack" width={1408} height={768} className={styles.logoImage} />
+            </span>
+          </span>
         </Link>
         <nav>
           {nav.map(([label, href]) => <Link key={href} href={href}>{label}</Link>)}
