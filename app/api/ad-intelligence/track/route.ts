@@ -12,23 +12,15 @@ import type {
 } from "@/lib/ad-intelligence/types";
 
 import {
-  buildCollectionKey,
-  claimCollectionDispatch,
-  getCollectionJob,
-  getOrCreateCollectionJob,
   normalizeCollectionQuery,
   trackBrand,
 } from "@/lib/ad-intelligence/global/store";
 
-import type {
-  CollectionDepth,
-} from "@/lib/ad-intelligence/provider";
+import { startAdSpyCollection } from "@/lib/ad-intelligence/jobs/start-collection";
 
 import type {
   CollectionJob,
 } from "@/lib/ad-intelligence/global/types";
-
-import { send } from "@vercel/queue";
 
 import { checkRateLimit } from "@/lib/rate-limit";
 
@@ -132,124 +124,6 @@ function mapJob(
     errorMessage:
       job.errorMessage ??
       null,
-  };
-}
-
-function chooseCollectionDepth(
-  platform: AdPlatform,
-  job: CollectionJob,
-): CollectionDepth {
-  /*
-   * Tracking is an explicit user action.
-   *
-   * For a brand that has never been collected:
-   * use quick Meta discovery so the initial dataset becomes
-   * available as soon as possible.
-   *
-   * Existing tracked data gets a deep refresh.
-   */
-  if (
-    platform === "meta" &&
-    Number(
-      job.discoveredAds ?? 0,
-    ) === 0
-  ) {
-    return "quick";
-  }
-
-  return "deep";
-}
-
-function buildDispatchIdempotencyKey(
-  collectionKey: string,
-) {
-  /*
-   * Vercel Queues provides at-least-once delivery.
-   *
-   * Keep the idempotency window short enough that a legitimate
-   * later refresh is still allowed to enqueue another job.
-   */
-  const dispatchBucket =
-    Math.floor(
-      Date.now() / 600_000,
-    );
-
-  return `${collectionKey}:dispatch:${dispatchBucket}`;
-}
-
-async function dispatchIfQueued(
-  job: CollectionJob,
-  collectionDepth: CollectionDepth,
-) {
-  if (
-    job.status !== "queued"
-  ) {
-    return {
-      job,
-      dispatched: false,
-    };
-  }
-
-  const claimed =
-    await claimCollectionDispatch(
-      job.id,
-    );
-
-  if (!claimed) {
-    const current =
-      await getCollectionJob(
-        job.id,
-      );
-
-    return {
-      job: current ?? job,
-      dispatched: false,
-    };
-  }
-
-  const latest =
-    await getCollectionJob(
-      job.id,
-    );
-
-  if (!latest) {
-    throw new Error(
-      "Collection job disappeared after tracking.",
-    );
-  }
-
-  const collectionKey =
-    buildCollectionKey({
-      query: latest.query,
-      country: latest.country,
-      platform: latest.platform,
-      mode: latest.mode,
-    });
-
-  await send(
-    "adspy-collection",
-    {
-      jobId: latest.id,
-      query: latest.query,
-      country: latest.country,
-      platform: latest.platform,
-      mode: latest.mode,
-      collectionKey,
-      collectionDepth,
-    },
-    {
-      idempotencyKey:
-        buildDispatchIdempotencyKey(
-          collectionKey,
-        ),
-      retentionSeconds:
-        24 * 60 * 60,
-    },
-  );
-
-  return {
-    job: latest,
-    dispatched: true,
   };
 }
 
@@ -488,38 +362,37 @@ export async function POST(
       platform,
     });
 
-    let job =
-      await getOrCreateCollectionJob({
-        query,
-        country,
-        platform,
-        mode: "advertiser",
-        userId: user.id,
+    // Tracking is saved for every platform, but only Meta can be collected.
+    if (platform !== "meta") {
+      return NextResponse.json({
+        success: true,
+        tracked: true,
+        jobId: null,
+        dispatched: false,
+        collectionDepth: null,
+        job: null,
+        message: "Tracked. Collection for this platform is not available yet.",
       });
+    }
 
-    const collectionDepth =
-      chooseCollectionDepth(
-        platform,
-        job,
-      );
-
-    const dispatchResult =
-      await dispatchIfQueued(
-        job,
-        collectionDepth,
-      );
-
-    job =
-      dispatchResult.job;
+    const result = await startAdSpyCollection({
+      userId: user.id,
+      query,
+      country,
+      platform,
+      mode: "advertiser",
+      minIntervalMs: 10 * 60_000,
+      reason: "track",
+    });
 
     return NextResponse.json({
       success: true,
       tracked: true,
-      jobId: job.id,
-      dispatched:
-        dispatchResult.dispatched,
-      collectionDepth,
-      job: mapJob(job),
+      jobId: result.job.id,
+      dispatched: result.dispatched,
+      outcome: result.outcome,
+      collectionDepth: "quick",
+      job: mapJob(result.job),
     });
   } catch (error) {
     console.error(
