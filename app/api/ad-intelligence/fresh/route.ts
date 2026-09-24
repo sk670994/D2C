@@ -46,13 +46,16 @@ export async function GET(request: NextRequest) {
 
   const raw = (request.nextUrl.searchParams.get("country") ?? "IN").toUpperCase();
   const country = /^[A-Z]{2}$/.test(raw) ? raw : "IN";
-  const hit = cache.get(country);
+  const kind = request.nextUrl.searchParams.get("kind") === "long" ? "long" : "new";
+  const cacheKey = `${country}:${kind}`;
+  const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < TTL_MS) {
     return NextResponse.json({ success: true, ads: hit.ads });
   }
 
   const since = new Date(Date.now() - 21 * 86_400_000).toISOString();
-  const { data, error } = await createGlobalServiceClient()
+  const longBefore = new Date(Date.now() - 60 * 86_400_000).toISOString();
+  const base = createGlobalServiceClient()
     .from("ad_intelligence_creatives")
     .select(
       "id,external_ad_id,advertiser_name,advertiser_id,creative_type,image_url,video_url,thumbnail_url,primary_text,headline,call_to_action,landing_page_url,source_url,offer,first_seen_at,last_seen_at,is_currently_active,markets:ad_intelligence_markets!inner(country)",
@@ -60,10 +63,13 @@ export async function GET(request: NextRequest) {
     .eq("platform", "meta")
     .eq("markets.country", country)
     .not("advertiser_id", "is", null)
-    .not("thumbnail_url", "is", null)
-    .gte("first_seen_at", since)
-    .order("first_seen_at", { ascending: false })
-    .limit(120);
+    .not("thumbnail_url", "is", null);
+  // "new": launched in the last 3 weeks. "long": still running after 60+ days.
+  const { data, error } = await (
+    kind === "long"
+      ? base.eq("is_currently_active", true).lte("first_seen_at", longBefore).order("first_seen_at", { ascending: true })
+      : base.gte("first_seen_at", since).order("first_seen_at", { ascending: false })
+  ).limit(160);
 
   if (error) {
     console.error("[AdSpy fresh]", error.message);
@@ -107,6 +113,6 @@ export async function GET(request: NextRequest) {
       };
     });
 
-  cache.set(country, { at: Date.now(), ads });
+  cache.set(cacheKey, { at: Date.now(), ads });
   return NextResponse.json({ success: true, ads }, { headers: { "Cache-Control": "private, max-age=120" } });
 }
