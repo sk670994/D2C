@@ -194,7 +194,8 @@ export function domainOf(value?: string | null): string | null {
 /** The opening line of the ad copy — what a viewer reads first. */
 export function hookOf(ad: Ad): string | null {
   const text = (ad.primaryText ?? "").replace(/\s+/g, " ").trim();
-  if (!text) return null;
+  // Meta Ad Library UI text sometimes lands in the copy field; it is not a hook.
+  if (!text || /^started running on\b/i.test(text)) return null;
   const firstSentence = text.split(/(?<=[.!?।])\s/)[0] ?? text;
   const hook = firstSentence.length >= 25 ? firstSentence : text;
   return hook.length > 180 ? `${hook.slice(0, 177).trimEnd()}…` : hook;
