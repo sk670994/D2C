@@ -88,7 +88,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     title,
     description,
     alternates: { canonical: url },
-    openGraph: { type: "website", siteName: "Zooptrack", locale: "en_IN", url, title: `${title} | Zooptrack`, description },
+    openGraph: { type: "website", siteName: "Zooptrack", locale: "en_IN", url, title: `${title} | Zooptrack`, description, images: [{ url: "/opengraph-image", width: 1200, height: 630 }] },
     twitter: { card: "summary_large_image", title: `${title} | Zooptrack`, description },
   };
 }
