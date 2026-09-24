@@ -687,7 +687,7 @@ export function AdSpyWorkspace() {
         <div className="azs-main">
           <AdvertiserHeader
             target={target}
-            total={total}
+            total={result ? total : null}
             lastUpdatedAt={result?.lastUpdatedAt ?? null}
             collecting={collecting}
             sampleAd={ads[0] ?? null}
@@ -954,7 +954,7 @@ function AdvertiserHeader({
   onRefresh,
 }: {
   target: SearchTarget;
-  total: number;
+  total: number | null;
   lastUpdatedAt: string | null;
   collecting: boolean;
   sampleAd: Ad | null;
@@ -1024,7 +1024,7 @@ function AdvertiserHeader({
         <div className="azs-adv-meta">
           {target.pageId && <span>Page ID {target.pageId}</span>}
           <span>{COUNTRIES.find(([c]) => c === target.country)?.[1] ?? target.country}</span>
-          <span>{formatInt(total)} ads indexed</span>
+          <span>{total === null ? "Counting ads…" : `${formatInt(total)} ads indexed`}</span>
           {lastUpdatedAt && <span>Updated {formatDate(lastUpdatedAt)}</span>}
         </div>
         {!target.pageId && target.mode === "advertiser" && (
@@ -1046,7 +1046,7 @@ function AdvertiserHeader({
           {copied ? <Check size={14} /> : <Share2 size={14} />}
           {copied ? "Link copied" : "Share"}
         </button>
-        {total > 0 && (
+        {(total ?? 0) > 0 && (
           <button
             type="button"
             className="azs-btn azs-btn-primary"
