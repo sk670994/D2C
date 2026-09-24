@@ -7,7 +7,7 @@ import seed from "@/scripts/adspy-seed-brands.json";
 import styles from "./brand.module.css";
 
 export const metadata: Metadata = {
-  title: "Indian D2C brand ads on Facebook & Instagram | Zooptrack",
+  title: "Indian D2C brand ads on Facebook & Instagram",
   description:
     "Browse the Meta ads of India's leading D2C brands — beauty, wellness, fashion, food and more. See hooks, offers, languages and weekly launches.",
   alternates: { canonical: "/brand" },
