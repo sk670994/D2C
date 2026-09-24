@@ -28,6 +28,30 @@ import {
 const CHUNK_SIZE = 25;
 const HEARTBEAT_MS = 15_000;
 
+/**
+ * Serverless functions are killed at maxDuration (60s). The scrape must stop
+ * well before that so results are persisted and the request is completed
+ * instead of timing out, being redelivered and starting over.
+ */
+const SERVERLESS_BUDGET_MS = Number(process.env.ADSPY_SERVERLESS_BUDGET_MS) || 40_000;
+/** Long-running workers (GitHub Actions) get a per-brand budget instead. */
+const WORKER_BUDGET_MS = Number(process.env.ADSPY_WORKER_BUDGET_MS) || 8 * 60_000;
+const IS_SERVERLESS = Boolean(process.env.VERCEL) && process.env.ADSPY_BROWSER !== "playwright";
+/** Lease must cover one invocation, not 5 of them. */
+const LEASE_SECONDS = IS_SERVERLESS ? 90 : Math.ceil(WORKER_BUDGET_MS / 1000) + 120;
+
+/**
+ * An error that retrying cannot fix (missing job, malformed message, request
+ * already terminal). The queue consumer acknowledges these instead of letting
+ * the message be redelivered for 24 hours.
+ */
+export class NonRetryableCollectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NonRetryableCollectionError";
+  }
+}
+
 type Phase = "quick" | "deep";
 
 export type CollectionEvent = {
@@ -71,7 +95,7 @@ export async function collectAdIntelligence(
   const job = await getCollectionJob(data.jobId);
 
   if (!job) {
-    throw new Error(`Collection job ${data.jobId} was not found.`);
+    throw new NonRetryableCollectionError(`Collection job ${data.jobId} was not found.`);
   }
 
   const phase: Phase =
@@ -82,7 +106,7 @@ export async function collectAdIntelligence(
         : "deep";
 
   if (!data.runId || !data.requestId) {
-    throw new Error(
+    throw new NonRetryableCollectionError(
       "Durable AdSpy execution requires both runId and requestId.",
     );
   }
@@ -90,7 +114,7 @@ export async function collectAdIntelligence(
   const claimed = await claimAdSpyRequest({
     requestId: data.requestId,
     workerId: `adspy:${process.pid}:${crypto.randomUUID()}`,
-    leaseSeconds: 300,
+    leaseSeconds: LEASE_SECONDS,
   });
 
   if (!claimed) {
@@ -235,6 +259,8 @@ export async function collectAdIntelligence(
           collectionDepth: phase,
           advertiserPageId:
             data.advertiserPageId ?? null,
+          deadlineAt:
+            Date.now() + (IS_SERVERLESS ? SERVERLESS_BUDGET_MS : WORKER_BUDGET_MS),
         },
         async (batch) => {
           await persist(batch);
@@ -440,6 +466,11 @@ export async function collectAdIntelligence(
       );
     }
 
+    // Only a request that is genuinely going to be retried may be redelivered.
+    // Anything terminal (failed, completed elsewhere, missing) is acknowledged.
+    if (requestState?.status !== "retrying") {
+      throw new NonRetryableCollectionError(message);
+    }
     throw error;
   } finally {
     if (heartbeatTimer) {
@@ -447,5 +478,39 @@ export async function collectAdIntelligence(
         heartbeatTimer,
       );
     }
+  }
+}
+
+
+/**
+ * Called by the queue consumer when a message has been delivered too many
+ * times. Marks the request/run/job failed (best effort) so the UI stops
+ * showing "Collecting" and the message can be acknowledged.
+ */
+export async function abandonCollection(
+  data: CollectionEvent,
+  reason: string,
+): Promise<void> {
+  if (data.requestId) {
+    await failAdSpyRequest({
+      requestId: data.requestId,
+      errorMessage: reason,
+      retryable: false,
+    }).catch((error) => console.error("[ADSPY_ABANDON_REQUEST_FAILED]", error));
+  }
+  if (data.runId) {
+    await finishAdSpyRun({
+      runId: data.runId,
+      status: "failed",
+      errorMessage: reason,
+    }).catch((error) => console.error("[ADSPY_ABANDON_RUN_FAILED]", error));
+  }
+  if (data.jobId) {
+    await updateCollectionJob(data.jobId, {
+      status: "failed",
+      stage: "failed",
+      errorMessage: reason,
+      completedAt: new Date().toISOString(),
+    }).catch((error) => console.error("[ADSPY_ABANDON_JOB_FAILED]", error));
   }
 }
