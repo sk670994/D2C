@@ -1,3 +1,11 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Terms of service",
+  description: "The terms for using Zooptrack, AdSpy and ZWIRK.",
+  alternates: { canonical: "/terms" },
+};
+
 const sections = [
   {
     title: "Service Scope",
