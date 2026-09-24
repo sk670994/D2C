@@ -10,9 +10,25 @@ const routeScript = `document.documentElement.dataset.route=location.pathname.sp
 
 const uiFont = Plus_Jakarta_Sans({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"], variable: "--zt-font", display: "swap" });
 
+const SITE_TITLE = "Zooptrack — See every D2C brand's ads. Know what to do next.";
+const SITE_DESCRIPTION =
+  "Search any Indian D2C brand's live Facebook and Instagram ads. Spot new launches and long-running winners, compare competitors, and get clear next steps.";
+
 export const metadata: Metadata = {
-  title: "Zooptrack — Know what makes money, what the market is doing, and what to do next",
-  description: "Profit-aware growth intelligence for Indian D2C brands. True contribution after COD, returns and fees, competitor creatives, and a decision copilot that tells you what to do next."
+  metadataBase: new URL("https://www.zooptrack.co.in"),
+  title: { default: SITE_TITLE, template: "%s | Zooptrack" },
+  description: SITE_DESCRIPTION,
+  applicationName: "Zooptrack",
+  keywords: ["Meta ad library India", "competitor ads", "Facebook ads spy tool", "Instagram ads", "D2C brands India", "ad intelligence", "AdSpy"],
+  openGraph: {
+    type: "website",
+    siteName: "Zooptrack",
+    locale: "en_IN",
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+  },
+  twitter: { card: "summary_large_image", title: SITE_TITLE, description: SITE_DESCRIPTION },
+  robots: { index: true, follow: true },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
