@@ -334,7 +334,7 @@ export default function ZwirkCinematicScene({
         ctx.scale(1, 0.33 + ring * 0.012);
         ctx.beginPath();
         ctx.arc(0, 0, rr, 0, TAU);
-        ctx.strokeStyle = `rgba(143, 194, 209, ${0.035 + ring * 0.009})`;
+        ctx.strokeStyle = `rgba(245, 190, 150,${0.035 + ring * 0.009})`;
         ctx.lineWidth = 1;
         ctx.stroke();
         ctx.restore();
@@ -450,7 +450,7 @@ export default function ZwirkCinematicScene({
           gradient.addColorStop(0.35, "rgba(255, 163, 88, 0.45)");
           gradient.addColorStop(1, "rgba(24, 17, 13, 0.96)");
         } else if (index === 1) {
-          gradient.addColorStop(0, "rgba(72, 126, 151, 0.35)");
+          gradient.addColorStop(0, "rgba(150, 92, 60, 0.35)");
           gradient.addColorStop(0.5, "rgba(14, 25, 31, 0.92)");
           gradient.addColorStop(1, "rgba(255, 116, 50, 0.24)");
         } else {
@@ -488,7 +488,7 @@ export default function ZwirkCinematicScene({
       for (let i = 0; i < 8; i += 1) {
         ctx.beginPath();
         ctx.arc(0, 0, 120 + i * 34, 0, TAU);
-        ctx.strokeStyle = `rgba(118, 176, 193, ${0.03 + i * 0.006})`;
+        ctx.strokeStyle = `rgba(240, 170, 120,${0.03 + i * 0.006})`;
         ctx.lineWidth = 1;
         ctx.stroke();
       }
