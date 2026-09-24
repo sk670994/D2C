@@ -9,6 +9,10 @@ export const runtime = "nodejs";
 export const preferredRegion = "syd1";
 export const dynamic = "force-dynamic";
 
+// Facet counts only change when new ads are collected; keep hot queries warm.
+const FACET_TTL_MS = 3 * 60_000;
+const facetCache = new Map<string, { at: number; facets: unknown }>();
+
 function text(value: string | null, max: number): string | undefined {
   const v = (value ?? "").trim().slice(0, max);
   return v || undefined;
@@ -34,6 +38,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: true, facets: null });
   }
 
+  const cacheKey = request.nextUrl.search;
+  const hit = facetCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < FACET_TTL_MS) {
+    return NextResponse.json({ success: true, facets: hit.facets }, { headers: { "Cache-Control": "private, max-age=20, stale-while-revalidate=60" } });
+  }
+
   try {
     const facets = await getSearchFacets({
       query,
@@ -48,6 +58,8 @@ export async function GET(request: NextRequest) {
       activeStatus: statusRaw === "active" || statusRaw === "inactive" ? statusRaw : undefined,
     });
 
+    facetCache.set(cacheKey, { at: Date.now(), facets });
+    if (facetCache.size > 500) facetCache.delete(facetCache.keys().next().value as string);
     return NextResponse.json(
       { success: true, facets },
       { headers: { "Cache-Control": "private, max-age=20, stale-while-revalidate=60" } },
