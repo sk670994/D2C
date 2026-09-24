@@ -1,3 +1,11 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Cookie policy",
+  description: "Which cookies Zooptrack uses and why.",
+  alternates: { canonical: "/cookies" },
+};
+
 const sections = [
   {
     title: "Why We Use Cookies",
