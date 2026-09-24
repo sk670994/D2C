@@ -2,7 +2,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import type { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import {
   ArrowUpRight,
   Bookmark,
@@ -586,10 +586,19 @@ export function AdSpyWorkspace() {
   return (
     <section className="azs">
       <div className="azs-top">
-        <div className="azs-titlebar">
+        <div className={`azs-titlebar ${target ? "" : "is-hero"}`}>
           <div>
-            <h1>AdSpy</h1>
-            <p>Every Facebook and Instagram ad your competitors are running, searchable in seconds.</p>
+            {target ? (
+              <h1>AdSpy</h1>
+            ) : (
+              <>
+                <span className="azs-eyebrow">AdSpy · live from Meta Ad Library</span>
+                <h1>
+                  See what every D2C brand <em>is running right now.</em>
+                </h1>
+              </>
+            )}
+            <p>Search a brand to watch every Facebook and Instagram ad it runs — videos, offers, languages and how long each one has been live.</p>
           </div>
         </div>
       </div>
@@ -1051,14 +1060,6 @@ function Landing({
             ))}
           </div>
         </section>
-      ) : watched ? (
-        <section className="azs-onboard">
-          <strong>Start by watching your 3 closest competitors</strong>
-          <span>Search a brand, pick it from the suggestions and press Watch. We refresh watched brands every night, so their newest ads are waiting for you.</span>
-          <button type="button" className="azs-btn azs-btn-primary" onClick={onFocusSearch}>
-            <Search size={14} /> Find a competitor
-          </button>
-        </section>
       ) : null}
       {recent.length > 0 && (
         <section>
@@ -1076,24 +1077,31 @@ function Landing({
           </div>
         </section>
       )}
-      <FreshFeed country={country} onOpenAd={onOpenAd} onAdvertiser={onAdvertiser} />
-      <section className="azs-how">
-        <button type="button" className="azs-how-step" onClick={onFocusSearch}>
-          <Search size={18} />
-          <strong>Pick the exact brand</strong>
-          <span>Suggestions appear as you type. Choosing one locks results to that brand’s Meta page.</span>
-        </button>
-        <div className="azs-how-step">
-          <FilterIcon size={18} />
-          <strong>Slice the library</strong>
-          <span>See how many ads run per language, format, region and status — then filter in one click.</span>
-        </div>
-        <div className="azs-how-step">
-          <TrendingUp size={18} />
-          <strong>Read the pattern</strong>
-          <span>Launch momentum, recurring hooks and offers — observed from public ads, never invented.</span>
-        </div>
-      </section>
+      <AdRow
+        kind="new"
+        title="Just launched"
+        subtitle="New ads from Indian D2C brands in the last 3 weeks"
+        country={country}
+        onOpenAd={onOpenAd}
+        onAdvertiser={onAdvertiser}
+      />
+      <AdRow
+        kind="long"
+        title="Still running after 60+ days"
+        subtitle="Ads brands keep paying for — the ones worth studying"
+        country={country}
+        onOpenAd={onOpenAd}
+        onAdvertiser={onAdvertiser}
+      />
+      {watched && watched.length === 0 && (
+        <section className="azs-onboard">
+          <strong>Start by watching your 3 closest competitors</strong>
+          <span>Search a brand, pick it from the suggestions and press Watch. We refresh watched brands every night, so their newest ads are waiting for you.</span>
+          <button type="button" className="azs-btn azs-btn-primary" onClick={onFocusSearch}>
+            <Search size={14} /> Find a competitor
+          </button>
+        </section>
+      )}
     </div>
   );
 }
@@ -1171,7 +1179,14 @@ function AdvertiserHeader({
   const name = target.pageId ? sampleAd?.advertiserName || target.query : target.query;
 
   return (
-    <header className="azs-adv">
+    <header
+      className="azs-adv"
+      style={
+        sampleAd?.thumbnailUrl || sampleAd?.imageUrl
+          ? ({ ["--azs-hero" as string]: `url("${String(sampleAd.thumbnailUrl ?? sampleAd.imageUrl).replace(/"/g, "%22")}")` } as CSSProperties)
+          : undefined
+      }
+    >
       <Avatar src={target.avatar} label={name} size={52} />
       <div className="azs-adv-main">
         <span className="azs-kicker">
@@ -1442,7 +1457,7 @@ function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
   );
 }
 
-function AdMedia({ ad, large = false }: { ad: Ad; large?: boolean }) {
+function AdMedia({ ad, large = false, onFail }: { ad: Ad; large?: boolean; onFail?: () => void }) {
   const [failed, setFailed] = useState(false);
   const src = ad.thumbnailUrl ?? ad.imageUrl ?? null;
   if (!src || failed) {
@@ -1453,40 +1468,75 @@ function AdMedia({ ad, large = false }: { ad: Ad; large?: boolean }) {
       </div>
     );
   }
-  return <img src={src} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />;
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      onError={() => {
+        setFailed(true);
+        onFail?.();
+      }}
+    />
+  );
 }
 
-function AdCard({ ad, onOpen, onAdvertiser }: { ad: Ad; onOpen: () => void; onAdvertiser?: () => void }) {
+function AdCard({
+  ad,
+  onOpen,
+  onAdvertiser,
+  hideIfBroken = false,
+}: {
+  ad: Ad;
+  onOpen: () => void;
+  onAdvertiser?: () => void;
+  hideIfBroken?: boolean;
+}) {
   const hook = hookOf(ad);
   const days = Number(ad.runningDays ?? 0);
   const language = ad.languages?.[0]?.name;
   const domain = domainOf(ad.landingPage);
-  const video = ad.creativeType === "video" ? safeExternalUrl(ad.videoUrl) : null;
+  const [videoBroken, setVideoBroken] = useState(false);
+  const [mediaBroken, setMediaBroken] = useState(false);
+  const video = ad.creativeType === "video" && !videoBroken ? safeExternalUrl(ad.videoUrl) : null;
+  const cardRef = useRef<HTMLElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const since = shortDate(ad.firstSeen);
   const name = ad.advertiserName ?? "Unknown advertiser";
 
-  const startPreview = () => {
+  const play = useCallback(() => {
     const el = videoRef.current;
     if (!el) return;
     el.muted = true;
     void el.play().then(() => setPlaying(true)).catch(() => undefined);
-  };
-  const stopPreview = () => {
-    const el = videoRef.current;
-    if (!el) return;
-    el.pause();
+  }, []);
+  const pause = useCallback(() => {
+    videoRef.current?.pause();
     setPlaying(false);
-  };
+  }, []);
+
+  // Videos play silently while they are on screen, like a social feed.
+  useEffect(() => {
+    if (!video || !cardRef.current || typeof IntersectionObserver === "undefined") return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => (entry.isIntersecting && entry.intersectionRatio >= 0.6 ? play() : pause()),
+      { threshold: [0, 0.6, 1] },
+    );
+    observer.observe(cardRef.current);
+    return () => observer.disconnect();
+  }, [video, play, pause]);
+
+  if (hideIfBroken && mediaBroken) return null;
 
   return (
     <article
+      ref={cardRef}
       className="azs-card"
       tabIndex={0}
       onClick={onOpen}
-      onMouseEnter={video ? startPreview : undefined}
-      onMouseLeave={video ? stopPreview : undefined}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
@@ -1494,41 +1544,29 @@ function AdCard({ ad, onOpen, onAdvertiser }: { ad: Ad; onOpen: () => void; onAd
         }
       }}
     >
-      <header className="azs-post-head">
-        <span className="azs-post-avatar" aria-hidden="true">
-          {name.trim().slice(0, 1).toUpperCase()}
-        </span>
-        <span className="azs-post-who">
-          {onAdvertiser ? (
-            <button
-              type="button"
-              className="azs-post-name"
-              onClick={(event) => {
-                event.stopPropagation();
-                onAdvertiser();
-              }}
-            >
-              {name}
-            </button>
-          ) : (
-            <strong className="azs-post-name">{name}</strong>
-          )}
-          <small>
-            <span className="azs-post-sp">{ad.isActive === false ? "Stopped · " : "Sponsored · "}</span>
-            {since ? `since ${since}` : "start date unknown"}
-          </small>
-        </span>
-        {ad.isActive !== false && <span className="azs-live-dot" title="Running now" />}
-      </header>
-
-      <p className={`azs-post-copy ${hook ? "" : "is-empty"}`}>{hook ?? "No ad text captured"}</p>
-
       <div className={`azs-card-media ${playing ? "is-playing" : ""}`}>
-        <AdMedia ad={ad} />
-        {video && <video ref={videoRef} className="azs-card-video" src={video} muted loop playsInline preload="none" aria-hidden="true" />}
+        <AdMedia ad={ad} onFail={() => setMediaBroken(true)} />
+        {video && (
+          <video
+            ref={videoRef}
+            className="azs-card-video"
+            src={video}
+            muted
+            loop
+            playsInline
+            preload="none"
+            aria-hidden="true"
+            onError={() => setVideoBroken(true)}
+          />
+        )}
         {ad.creativeType === "video" && !playing && (
           <span className="azs-play" aria-hidden="true">
             <Play size={16} />
+          </span>
+        )}
+        {days > 0 && (
+          <span className={`azs-days ${days >= 60 ? "is-long" : ""}`} title={days >= 60 ? "Running for 60+ days — usually worth studying. Meta does not publish spend or results." : undefined}>
+            {days >= 60 ? `Running ${days} days` : `${days}d live`}
           </span>
         )}
         {ad.creativeType === "carousel" && (
@@ -1536,34 +1574,56 @@ function AdCard({ ad, onOpen, onAdvertiser }: { ad: Ad; onOpen: () => void; onAd
             <Layers size={11} /> Carousel
           </span>
         )}
-        {days > 0 && (
-          <span className={`azs-days ${days >= 60 ? "is-long" : ""}`} title={days >= 60 ? "Running for 60+ days — usually worth studying. Meta does not publish spend or results." : undefined}>
-            <Clock3 size={11} /> {days >= 60 ? `Long-running · ${days}d` : `${days}d running`}
+        <div className="azs-card-overlay">
+          <span className="azs-post-avatar" aria-hidden="true">
+            {name.trim().slice(0, 1).toUpperCase()}
           </span>
-        )}
+          <span className="azs-post-who">
+            {onAdvertiser ? (
+              <button
+                type="button"
+                className="azs-post-name"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onAdvertiser();
+                }}
+              >
+                {name}
+              </button>
+            ) : (
+              <strong className="azs-post-name">{name}</strong>
+            )}
+            <small>
+              {ad.isActive === false ? "Stopped" : "Live"}
+              {since ? ` · since ${since}` : ""}
+            </small>
+          </span>
+        </div>
       </div>
 
-      {(ad.headline || ad.callToAction || domain) && (
-        <div className="azs-post-cta">
-          <div>
-            {domain && <small>{domain}</small>}
-            {ad.headline && <strong>{ad.headline}</strong>}
+      <div className="azs-card-text">
+        <p className={`azs-post-copy ${hook ? "" : "is-empty"}`}>{hook ?? "No ad text captured"}</p>
+        {(ad.headline || ad.callToAction || domain) && (
+          <div className="azs-post-cta">
+            <div>
+              {ad.headline && <strong>{ad.headline}</strong>}
+              {domain && <small>{domain}</small>}
+            </div>
+            {ad.callToAction && <span className="azs-post-button">{ad.callToAction}</span>}
           </div>
-          {ad.callToAction && <span className="azs-post-button">{ad.callToAction}</span>}
-        </div>
-      )}
-
-      {(ad.offer || language || ad.creatorName) && (
-        <div className="azs-card-tags">
-          {ad.offer && <span className="azs-tag azs-tag-offer">{ad.offer}</span>}
-          {language && <span className="azs-tag">{language}</span>}
-          {ad.creatorName && (
-            <span className="azs-tag">
-              <UserRound size={11} /> {ad.creatorName}
-            </span>
-          )}
-        </div>
-      )}
+        )}
+        {(ad.offer || language || ad.creatorName) && (
+          <div className="azs-card-tags">
+            {ad.offer && <span className="azs-tag azs-tag-offer">{ad.offer}</span>}
+            {language && <span className="azs-tag">{language}</span>}
+            {ad.creatorName && (
+              <span className="azs-tag">
+                <UserRound size={11} /> {ad.creatorName}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
     </article>
   );
 }
@@ -1599,37 +1659,66 @@ function StatStrip({ summary, facets, loading }: { summary: Summary | null; face
   );
 }
 
-function FreshFeed({ country, onOpenAd, onAdvertiser }: { country: string; onOpenAd: (ad: Ad) => void; onAdvertiser: (ad: Ad) => void }) {
+function AdRow({
+  kind,
+  title,
+  subtitle,
+  country,
+  onOpenAd,
+  onAdvertiser,
+}: {
+  kind: "new" | "long";
+  title: string;
+  subtitle: string;
+  country: string;
+  onOpenAd: (ad: Ad) => void;
+  onAdvertiser: (ad: Ad) => void;
+}) {
   const [ads, setAds] = useState<Ad[] | null>(null);
+  const rowRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let alive = true;
     setAds(null);
-    fetch(`/api/ad-intelligence/fresh?country=${country}`, { cache: "no-store" })
+    fetch(`/api/ad-intelligence/fresh?country=${country}&kind=${kind}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((data: { success?: boolean; ads?: Ad[] }) => alive && setAds(data.success ? data.ads ?? [] : []))
       .catch(() => alive && setAds([]));
     return () => {
       alive = false;
     };
-  }, [country]);
+  }, [country, kind]);
 
   if (ads && ads.length === 0) return null;
+  const scroll = (dir: number) => rowRef.current?.scrollBy({ left: dir * rowRef.current.clientWidth * 0.85, behavior: "smooth" });
+
   return (
-    <section className="azs-fresh" aria-label="New ads this week">
-      <h2>
-        <Sparkles size={15} /> Just launched by D2C brands
-      </h2>
-      <div className="azs-grid">
+    <section className="azs-rowsec" aria-label={title}>
+      <div className="azs-rowhead">
+        <div>
+          <h2>{title}</h2>
+          <p>{subtitle}</p>
+        </div>
+        <div className="azs-rownav">
+          <button type="button" aria-label="Scroll left" onClick={() => scroll(-1)}>
+            <ChevronLeft size={18} />
+          </button>
+          <button type="button" aria-label="Scroll right" onClick={() => scroll(1)}>
+            <ChevronRight size={18} />
+          </button>
+        </div>
+      </div>
+      <div className="azs-row" ref={rowRef}>
         {ads === null
-          ? Array.from({ length: 8 }).map((_, i) => (
+          ? Array.from({ length: 6 }).map((_, i) => (
               <div className="azs-card azs-card-skeleton" key={i}>
                 <div className="azs-sk-media" />
                 <div className="azs-sk-line" />
-                <div className="azs-sk-line short" />
               </div>
             ))
-          : ads.map((ad) => <AdCard key={ad.id} ad={ad} onOpen={() => onOpenAd(ad)} onAdvertiser={() => onAdvertiser(ad)} />)}
+          : ads.map((ad) => (
+              <AdCard key={ad.id} ad={ad} hideIfBroken onOpen={() => onOpenAd(ad)} onAdvertiser={() => onAdvertiser(ad)} />
+            ))}
       </div>
     </section>
   );
