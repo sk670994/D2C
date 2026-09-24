@@ -4,7 +4,7 @@ export const zooptrackTheme = {
     inkSoft: "#0b1d21",
     paper: "#eff6f2",
     paperSoft: "#dceae4",
-    signal: "#67efc5",
+    signal: "#0255b1",
     signalSoft: "#b5ffe9",
     violet: "#8d80ff",
     white: "#f7fbf9",
