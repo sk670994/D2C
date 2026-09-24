@@ -21,6 +21,30 @@ import { setAdSpyInlineRunner } from "@/lib/ad-intelligence/jobs/dispatch-adspy-
 import { startAdSpyCollection } from "@/lib/ad-intelligence/jobs/start-collection";
 import { refreshTrackedAdSpy } from "@/lib/ad-intelligence/jobs/refresh-tracked-ad-spy";
 import { normalizeAdvertiserName, searchMetaPages } from "@/lib/ad-intelligence/global/meta-page-search";
+import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
+
+type Page = { pageId: string; name: string; verification?: string | null };
+
+/** 1) our own advertiser index (fast, no browser) */
+async function fromIndex(brand: string, country: string): Promise<Page[]> {
+  const { data, error } = await createGlobalServiceClient().rpc("adspy_autocomplete_advertisers", {
+    p_query: brand,
+    p_platform: "meta",
+    p_country: country,
+    p_limit: 10,
+  });
+  if (error) return [];
+  return ((data ?? []) as Array<{ page_id?: string | number | null; label?: string | null; verification?: string | null }>)
+    .filter((row) => row.page_id && row.label)
+    .map((row) => ({ pageId: String(row.page_id), name: String(row.label), verification: row.verification ?? null }));
+}
+
+function pick(pages: Page[], want: string): Page | undefined {
+  return (
+    pages.find((p) => normalizeAdvertiserName(p.name) === want) ??
+    pages.find((p) => p.verification?.toUpperCase() === "VERIFIED" && normalizeAdvertiserName(p.name).includes(want))
+  );
+}
 
 const started = Date.now();
 const budgetMs = Math.max(5, Number(process.env.ADSPY_PREFILL_MINUTES) || 50) * 60_000;
@@ -76,28 +100,28 @@ async function main() {
     attempted += 1;
 
     try {
-      const pages = await searchMetaPages(brand, country);
       const want = normalizeAdvertiserName(brand);
-      // Identity boundary: only an exact name match, or a verified page whose
-      // name contains the brand. Never guess.
-      const page =
-        pages.find((p) => normalizeAdvertiserName(p.name) === want) ??
-        pages.find(
-          (p) => p.verification?.toUpperCase() === "VERIFIED" && normalizeAdvertiserName(p.name).includes(want),
-        );
+      // Identity boundary: exact name match, or a verified page containing
+      // the brand. Never guess a Page ID.
+      let page = pick(await fromIndex(brand, country), want);
       if (!page) {
+        const live = await searchMetaPages(brand, country).catch(() => [] as Page[]);
+        page = pick(live, want);
+      }
+      if (!page) {
+        // No exact page: search Meta by brand name. Every ad is still stored
+        // under its real advertiser Page ID, so data stays correctly attributed.
         stats.noPage += 1;
-        console.log(`- ${brand}: no exact Meta page`);
-        continue;
+        console.log(`~ ${brand}: no exact page, collecting by name`);
       }
 
       const result = await startAdSpyCollection({
         userId,
-        query: page.name,
+        query: page?.name ?? brand,
         country,
         platform: "meta",
         mode: "advertiser",
-        pageId: page.pageId,
+        pageId: page?.pageId ?? null,
         minIntervalMs: RECENT_MS,
         reason: "scheduled",
         depth: "deep",
@@ -111,7 +135,7 @@ async function main() {
       const t0 = Date.now();
       await drain();
       stats.collected += 1;
-      console.log(`+ ${brand} (${page.pageId}) in ${mins(Date.now() - t0)} min`);
+      console.log(`+ ${brand} (${page?.pageId ?? "by name"}) in ${mins(Date.now() - t0)} min`);
     } catch (error) {
       stats.errors += 1;
       console.error(`! ${brand}:`, error instanceof Error ? error.message : error);
