@@ -17,8 +17,8 @@ html:not([data-theme="dark"]) .adspy-page .azs.azs {
   --azs-soft: #8a9496;
   --azs-line: #e8e4db;
   --azs-line-strong: #d9d3c7;
-  --azs-accent: #0f8f83;
-  --azs-accent-soft: rgba(15, 143, 131, 0.1);
+  --azs-accent: #0255b1;
+  --azs-accent-soft: rgba(2, 85, 177, 0.1);
   --azs-good: #1f8a5b;
   --azs-good-soft: rgba(31, 138, 91, 0.1);
   --azs-warn: #b7791f;
@@ -43,7 +43,7 @@ html:not([data-theme="dark"]) .adspy-page .azs .azs-titlebar.is-hero::before {
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(520px 220px at 18% 45%, rgba(15, 143, 131, 0.12), transparent 70%),
+    radial-gradient(520px 220px at 18% 45%, rgba(2, 85, 177, 0.12), transparent 70%),
     radial-gradient(480px 220px at 70% 25%, rgba(224, 119, 95, 0.1), transparent 70%);
 }
 html .adspy-page .azs .azs-eyebrow { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; background: var(--azs-accent-soft); color: var(--azs-accent); font-size: 12px; font-weight: 700; }
@@ -58,7 +58,7 @@ html .adspy-page .azs .azs-combobox { border-radius: 14px; }
 html .adspy-page .azs .azs-combobox:focus-within { box-shadow: 0 0 0 4px var(--azs-accent-soft), var(--azs-shadow); }
 
 /* ---------- buttons ---------- */
-html:not([data-theme="dark"]) .adspy-page .azs.azs .azs-btn-primary { background: var(--azs-accent); color: #fff; border: 0; box-shadow: 0 6px 16px rgba(15, 143, 131, 0.22); }
+html:not([data-theme="dark"]) .adspy-page .azs.azs .azs-btn-primary { background: var(--azs-accent); color: #fff; border: 0; box-shadow: 0 6px 16px rgba(2, 85, 177, 0.22); }
 html:not([data-theme="dark"]) .adspy-page .azs.azs .azs-btn-primary:hover:not(:disabled) { filter: brightness(1.05); }
 
 /* ---------- advertiser header: soft wash of their own ad ---------- */
