@@ -7,6 +7,8 @@ import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
 
 
 export const runtime = "nodejs";
+// Run next to the Supabase database (ap-southeast-2 / Sydney).
+export const preferredRegion = "syd1";
 export const dynamic = "force-dynamic";
 export const maxDuration = 5;
 
