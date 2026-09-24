@@ -1,3 +1,11 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Sitemap",
+  description: "Every public page on Zooptrack in one place.",
+  alternates: { canonical: "/sitemap" },
+};
+
 const links = [
   { href: "/", label: "Home" },
   { href: "/dashboard", label: "Profit OS Dashboard" },
