@@ -2,6 +2,7 @@ const links = [
   { href: "/", label: "Home" },
   { href: "/dashboard", label: "Profit OS Dashboard" },
   { href: "/adspy", label: "AdSpy" },
+  { href: "/brand", label: "Brand ad library" },
   { href: "/brand-vault", label: "Brand Vault" },
   { href: "/zwirk", label: "ZWIRK Assistant" },
   { href: "/records", label: "Records" },
