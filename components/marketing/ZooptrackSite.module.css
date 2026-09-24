@@ -19,3 +19,30 @@
 @keyframes field{0%,100%{opacity:.25;transform:scale(.8)}50%{opacity:.9;transform:scale(1.35)}}@keyframes dash{to{stroke-dashoffset:-280}}@keyframes breath{50%{transform:scale(1.25);opacity:.55}}@keyframes pulse{0%{transform:scale(.5);opacity:.75}100%{transform:scale(2.6);opacity:0}}@keyframes radar{to{transform:rotate(360deg)}}@keyframes travel{0%,8%{transform:translate(0,0)}25%{transform:translate(174px,-130px)}50%{transform:translate(355px,-65px)}75%{transform:translate(540px,0)}92%,100%{transform:translate(720px,-175px)}}@media (max-width:900px){.navbar nav{display:none}.hero,.adspyIntro,.darkSection{grid-template-columns:1fr}.hero{min-height:auto}.heroCopy{padding:70px 0 15px}.sceneWrap{min-height:420px}.brief{grid-template-columns:1fr;margin-top:0}.nodeGrid,.pricingWrap{grid-template-columns:1fr 1fr}.nodeCard{min-height:170px}.nodeCard strong{margin-top:45px}}@media (max-width:580px){.navbar,.hero,.brief,.narrative,.pricingWrap,.faqWrap,.adspyIntro,.legalWrap,.darkSection{width:min(100% - 28px,1280px)}.hero h1{font-size:3.5rem}.nodeGrid,.pricingWrap{grid-template-columns:1fr}.metricGrid{grid-template-columns:1fr}.sceneWrap{min-height:350px}.sceneSvg{max-width:600px}.darkSection{padding:80px 0}.faqItem summary{grid-template-columns:35px 1fr 18px}.faqItem p{padding-left:45px}}
 @media (prefers-reduced-motion:reduce){.fieldDot,.signalOrbit,.heroCore,.radarBeam,.signalDot circle:last-child,.conveyorLine,.flowToken{animation:none}.sceneWrap{transform:none!important}}
 .logoChip{display:inline-flex;align-items:center}.logoCrop{position:relative;display:block;width:102px;height:28px;overflow:hidden}.logoImage{position:absolute;left:-6.98px;top:-17.08px;width:115.61px;height:auto;max-width:none}
+
+/* ===== Zooptrack Soft: light, friendly marketing site (overrides the dark theme above) ===== */
+:root{--zt-signal:#0f8f83;--zt-violet:#6d5dfc;--zt-muted:#5f6b6e;--zt-line:rgba(29,42,46,.1)}
+.site{background:radial-gradient(900px 520px at 85% -5%,rgba(15,143,131,.1),transparent 60%),radial-gradient(800px 500px at 5% 0%,rgba(224,119,95,.08),transparent 55%),#f7f6f2;color:#1d2a2e}
+.site:before{opacity:.6;background-image:linear-gradient(rgba(29,42,46,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(29,42,46,.035) 1px,transparent 1px)}
+.logo{color:#1d2a2e}.logoMark{color:#fff}
+.navbar nav a{color:#4d5a5d}.navbar nav a:hover{color:#1d2a2e;background:rgba(15,143,131,.08)}
+.navCta{color:#fff;background:#0f8f83}
+.kicker{color:#0f8f83}
+.hero h1{color:#1d2a2e;font-size:clamp(3rem,6.2vw,5.8rem);line-height:.96;letter-spacing:-.05em}
+.hero h1 em{color:#0f8f83;-webkit-text-stroke:0}
+.heroCopy>p{color:#4d5a5d}
+.button{background:#0f8f83;color:#fff;box-shadow:0 10px 24px rgba(15,143,131,.22)}
+.buttonSecondary{background:#fff;color:#1d2a2e;border-color:rgba(29,42,46,.14)}
+.sceneGlow{background:radial-gradient(circle,rgba(15,143,131,.12),transparent 68%)}
+.signalGrid path,.radarAxis{stroke:rgba(29,42,46,.08)}.fieldDot{fill:#0f8f83}.signalOrbit{stroke:rgba(15,143,131,.35)}
+.heroCore{fill:rgba(15,143,131,.12);stroke:#0f8f83}.rings circle{stroke:rgba(15,143,131,.18)}.radarBeam{stroke:#0f8f83;filter:none}
+.signalDot circle:first-child{fill:#0f8f83}.signalDot circle:last-child{stroke:rgba(15,143,131,.4)}
+.conveyorLine{stroke:rgba(15,143,131,.35)}.station rect{fill:#fff;stroke:rgba(29,42,46,.12)}.station text{fill:#1d2a2e}.station circle{fill:#0f8f83}
+.flowToken{fill:#0f8f83;filter:none}.ledgerPanel rect{fill:#fff;stroke:rgba(29,42,46,.12)}.ledgerPanel path{stroke:rgba(29,42,46,.08)}.ledgerPanel circle{fill:#0f8f83}.ledgerPanel text{fill:#1d2a2e}
+.unfoldCard rect{fill:#fff;stroke:rgba(29,42,46,.12)}.unfoldCard path{stroke:rgba(29,42,46,.25)}.cockpitFrame{fill:#fff;stroke:rgba(29,42,46,.12)}.graphLine{stroke:#0f8f83;filter:none}
+.cockpitTile{fill:#f3f1ec;stroke:rgba(29,42,46,.08)}.archiveRow rect{fill:#fff;stroke:rgba(29,42,46,.1)}.archiveRow path{stroke:rgba(29,42,46,.18)}
+.brief{background:rgba(255,255,255,.9);box-shadow:0 30px 70px rgba(29,42,46,.1)}.brief strong,.metricAccent{color:#c85a45}
+.sectionHeader h2,.darkSection h2,.adspyIntro h1{color:#1d2a2e;letter-spacing:-.045em}.sectionHeader p{color:#5f6b6e}
+.nodeCard,.stationRows article,.faqItem,.priceCard,.statement{background:#fff;box-shadow:0 1px 2px rgba(29,42,46,.04)}
+.priceCard div{color:#4d5a5d}.featured{border-color:rgba(15,143,131,.5);box-shadow:0 20px 50px rgba(15,143,131,.12)}
+.legalLine{border-bottom-color:rgba(29,42,46,.08)}
