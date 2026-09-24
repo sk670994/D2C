@@ -4564,6 +4564,7 @@ html[data-route="contact"]       { --pf-display: var(--f-youngserif);  --pf-body
 html[data-route="sitemap"]       { --pf-body: var(--f-franklin); }
 html[data-route="brand"]         { --pf-display: var(--f-archivo);     --pf-body: var(--f-worksans); }
 html[data-route="demo"]          { --pf-body: var(--f-schibsted); }
+html[data-route="compare"]       { --pf-display: var(--f-bitter);      --pf-body: var(--f-hanken); }
 
 /* Single-weight serif display faces: never fake-bold them. */
 html:is([data-route="brand-vault"], [data-route="login"], [data-route="contact"]) body :is(h1, h2, h3) {
