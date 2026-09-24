@@ -1,5 +1,4 @@
 import { brandSlug } from "@/lib/ad-intelligence/brand-slug";
-import { COMPETITORS } from "@/lib/compare-data";
 import seed from "@/scripts/adspy-seed-brands.json";
 
 // /sitemap.xml for search engines (the human sitemap lives at /sitemap).
@@ -11,7 +10,6 @@ const PAGES: Array<[path: string, priority: number, freq: string]> = [
   ["/", 1, "weekly"],
   ["/brand", 0.9, "daily"],
   ["/pricing", 0.8, "monthly"],
-  ["/compare", 0.7, "monthly"],
   ["/decision-loop", 0.6, "monthly"],
   ["/faq", 0.6, "monthly"],
   ["/login", 0.5, "yearly"],
@@ -31,7 +29,6 @@ export function GET() {
   const slugs = [...new Set((seed as { brands: string[] }).brands.map((b) => brandSlug(b)).filter(Boolean))];
   const urls = [
     ...PAGES.map(([p, pr, f]) => entry(p, pr, f, today)),
-    ...COMPETITORS.map((c) => entry(`/compare/${c.slug}`, 0.6, "monthly", today)),
     ...slugs.map((s) => entry(`/brand/${s}`, 0.7, "daily", today)),
   ];
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`;
