@@ -2,6 +2,12 @@ import "./globals.css";
 import type { Metadata } from "next";
 import { Plus_Jakarta_Sans } from "next/font/google";
 
+import { pageFontVars } from "./page-fonts";
+import { RouteMark } from "./RouteMark";
+
+// Sets the page's type voice before first paint (see html[data-route] in globals.css).
+const routeScript = `document.documentElement.dataset.route=location.pathname.split("/")[1]||"home"`;
+
 const uiFont = Plus_Jakarta_Sans({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"], variable: "--zt-font", display: "swap" });
 
 export const metadata: Metadata = {
@@ -11,8 +17,12 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="light" className={uiFont.variable} suppressHydrationWarning>
+    <html lang="en" data-theme="light" className={`${uiFont.variable} ${pageFontVars}`} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: routeScript }} />
+      </head>
       <body>
+        <RouteMark />
         {children}
         <footer className="site-footer-global">
           <div className="site-footer-inner">
