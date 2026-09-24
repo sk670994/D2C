@@ -5,6 +5,8 @@ import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
 import { getSearchFacets } from "@/lib/ad-intelligence/global/facets";
 
 export const runtime = "nodejs";
+// Run next to the Supabase database (ap-southeast-2 / Sydney).
+export const preferredRegion = "syd1";
 export const dynamic = "force-dynamic";
 
 function text(value: string | null, max: number): string | undefined {
