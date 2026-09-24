@@ -186,7 +186,10 @@ async function getBrowser(): Promise<Browser> {
         process.platform === "win32" ||
         process.env.IS_LOCAL === "true";
 
-      const executablePath = local
+      const executablePath =
+        process.env.ADSPY_BROWSER === "playwright"
+          ? ""
+          : local
         ? localChromeExecutable()
         : await chromiumPack.executablePath(
             process.env.CHROMIUM_PACK_URL?.trim() ||
@@ -205,11 +208,17 @@ async function getBrowser(): Promise<Browser> {
             "--disable-setuid-sandbox",
           ];
 
-      const next = await chromium.launch({
-        executablePath,
-        args,
-        headless: true,
-      });
+      const next =
+        process.env.ADSPY_BROWSER === "playwright"
+          ? await chromium.launch({
+              headless: true,
+              args: ["--disable-dev-shm-usage", "--no-sandbox"],
+            })
+          : await chromium.launch({
+              executablePath,
+              args,
+              headless: true,
+            });
 
       next.on("disconnected", () => {
         if (browser === next) {

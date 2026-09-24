@@ -1291,6 +1291,11 @@ function AdCard({ ad, onOpen, showAdvertiser }: { ad: Ad; onOpen: () => void; sh
             <Layers size={11} /> Carousel
           </span>
         )}
+        {Number(ad.runningDays ?? 0) >= 60 && (
+          <span className="azs-proven" title="Running 60+ days. Advertisers rarely keep paying for ads that lose money.">
+            🏆 Proven
+          </span>
+        )}
       </div>
       <div className="azs-card-body">
         {showAdvertiser && <span className="azs-card-adv">{ad.advertiserName ?? "Unknown advertiser"}</span>}

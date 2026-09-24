@@ -97,9 +97,11 @@ async function getBrowser(): Promise<Browser> {
   if (!browserPromise) {
     browserPromise = (async () => {
       const local = process.platform === "win32" || process.env.IS_LOCAL === "true";
-      let executablePath: string;
-      let args: string[];
-      if (local) {
+      let executablePath = "";
+      let args: string[] = [];
+      if (process.env.ADSPY_BROWSER === "playwright") {
+        // handled below
+      } else if (local) {
         executablePath = getLocalExecutable();
         args = ["--disable-dev-shm-usage", "--disable-gpu"];
       } else {
@@ -110,7 +112,11 @@ async function getBrowser(): Promise<Browser> {
         executablePath = await chromium.executablePath(packUrl);
         args = [...chromium.args, "--disable-dev-shm-usage", "--no-sandbox", "--disable-setuid-sandbox"];
       }
-      const next = await playwrightChromium.launch({ executablePath, args, headless: true });
+      // Background collector (GitHub Actions): use Playwright's own Chromium.
+      const bundled = process.env.ADSPY_BROWSER === "playwright";
+      const next = bundled
+        ? await playwrightChromium.launch({ headless: true, args: ["--disable-dev-shm-usage", "--no-sandbox"] })
+        : await playwrightChromium.launch({ executablePath, args, headless: true });
       next.on("disconnected", () => {
         if (browser === next) browser = null;
       });
@@ -533,7 +539,12 @@ async function scrapeOnce(
 ): Promise<CompetitorAd[]> {
   const pageUrl = buildLibraryUrl(input);
   const quick = input.collectionDepth !== "deep";
-  const maxScrolls = quick ? QUICK_MAX_SCROLLS : DEEP_MAX_SCROLLS;
+  const deepCap = Number(process.env.ADSPY_DEEP_MAX_SCROLLS);
+  const maxScrolls = quick
+    ? QUICK_MAX_SCROLLS
+    : Number.isFinite(deepCap) && deepCap > 0
+      ? Math.min(deepCap, DEEP_MAX_SCROLLS)
+      : DEEP_MAX_SCROLLS;
   const target = quick ? QUICK_TARGET : DEEP_TARGET;
   const stableTarget = quick ? QUICK_STABLE_ROUNDS : DEEP_STABLE_ROUNDS;
 
