@@ -181,10 +181,11 @@ html[data-theme="dark"] .azs .azs-btn-primary { color: #06101f; }
 .azs .azs-bar small { font-size: 10.5px; color: var(--azs-muted); min-height: 13px; }
 
 .azs .azs-pattern-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.azs .azs-pattern-cols > div { min-width: 0; }
 .azs .azs-pattern-title { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; color: var(--azs-muted); margin-bottom: 6px; }
 .azs .azs-pattern-cols ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .azs .azs-pattern-cols li { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
-.azs .azs-pattern-cols li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.azs .azs-pattern-cols li span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .azs .azs-pattern-cols li b { color: var(--azs-muted); font-weight: 600; }
 
 /* ---------- body: filters + results ---------- */
@@ -226,7 +227,7 @@ html[data-theme="dark"] .azs .azs-btn-primary { color: #06101f; }
 .azs .azs-status.is-active::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: #10b981; vertical-align: 1px; }
 .azs .azs-status.is-inactive { color: #64748b; }
 .azs .azs-format { position: absolute; top: 8px; right: 8px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background: rgba(15, 23, 42, 0.72); color: #fff; }
-.azs .azs-proven { position: absolute; bottom: 8px; left: 8px; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background: #fef3c7; color: #92400e; }
+.azs .azs-proven { position: absolute; bottom: 8px; left: 8px; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background: rgba(15, 23, 42, 0.72); color: #fff; }
 .azs .azs-no-media { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--azs-soft); font-size: 12px; }
 .azs .azs-no-media.is-large { min-height: 280px; }
 .azs .azs-card-body { display: flex; flex-direction: column; gap: 6px; padding: 12px 12px 10px; flex: 1; }
@@ -307,7 +308,7 @@ html[data-theme="dark"] .azs .azs-tag-offer { background: rgba(251, 146, 60, 0.1
   .azs .azs-filters.is-open { display: block; }
   .azs .azs-mobile-only { display: inline-flex !important; }
   .azs .azs-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  .azs .azs-pattern-cols { grid-template-columns: 1fr; }
+  .azs .azs-pattern-cols { grid-template-columns: minmax(0, 1fr); }
   .azs .azs-modal-body { grid-template-columns: 1fr; }
   .azs .azs-facts { grid-template-columns: 1fr; }
 }
