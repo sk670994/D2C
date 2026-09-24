@@ -4515,3 +4515,29 @@ body:has(.zt-app-shell) .site-footer-global {
     transition: none !important;
   }
 }
+
+
+/* =========================================================
+   ZOOPTRACK SOFT — one friendly type voice for the whole site.
+   Replaces the mixed Trebuchet / Arial Narrow / Bodoni stacks.
+   ========================================================= */
+html body,
+html body:has(.marketing-page),
+html body:has(.zt-app-shell),
+html body:has(.brand-vault-page) {
+  --font-sans: var(--zt-font), "Segoe UI", system-ui, -apple-system, sans-serif !important;
+  --font-display: var(--zt-font), "Segoe UI", system-ui, -apple-system, sans-serif !important;
+}
+html body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+html body :where(h1, h2, h3, h4) {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+html body :where(button, input, select, textarea) {
+  font-family: inherit;
+}
