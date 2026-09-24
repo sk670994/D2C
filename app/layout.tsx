@@ -61,6 +61,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <ul className="footer-list">
                   <li><a href="/contact">Contact</a></li>
                   <li><a href="/faq">FAQ</a></li>
+                  <li><a href="/compare">Compare tools</a></li>
                   <li><a href="/sitemap">Sitemap</a></li>
                 </ul>
               </div>
