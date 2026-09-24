@@ -1,9 +1,17 @@
+import type { Metadata } from "next";
 import { EmailAuthForm } from "@/components/auth/EmailAuthForm";
 import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { BrandLogo } from "@/components/app/BrandLogo";
 import { safeNextPath } from "@/lib/security/safe-redirect";
+
+export const metadata: Metadata = {
+  title: "Sign in or start free",
+  description: "Sign in to Zooptrack to search any brand's Facebook and Instagram ads, track competitors and get weekly briefs.",
+  alternates: { canonical: "/login" },
+};
+
 
 export default async function LoginPage({
   searchParams
