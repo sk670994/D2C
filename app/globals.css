@@ -5,19 +5,19 @@
 @source "../lib";
 :root {
   --bg-0: #f3eee3;
-  --bg-1: #e8efe9;
-  --bg-2: #dce9e5;
+  --bg-1: #f3efe7;
+  --bg-2: #ece6db;
   --surface: rgba(255, 253, 247, 0.82);
   --surface-strong: #fffdf7;
   --line: rgba(39, 61, 67, 0.2);
   --text: #172b31;
   --text-muted: #5b6f70;
-  --brand: #0f8f83;
+  --brand: #0255b1;
   --good: #22885e;
   --warn: #c7772f;
   --danger: #d95f58;
   --shadow: 0 16px 42px rgba(38, 58, 57, 0.12);
-  --button-bg: #0f8f83;
+  --button-bg: #0255b1;
   --button-fg: #fffdf7;
   --font-sans: "Manrope", "Segoe UI", "Inter", "Helvetica Neue", Arial, sans-serif;
   --font-display: "Poppins", "Manrope", "Segoe UI", "Inter", sans-serif;
@@ -548,8 +548,8 @@ body {
 }
 
 @keyframes zooptrackPulse {
-  0%, 100% { text-shadow: 0 0 0 rgba(15, 143, 131, 0); }
-  50% { text-shadow: 0 0 22px rgba(15, 143, 131, 0.25); }
+  0%, 100% { text-shadow: 0 0 0 rgba(2, 85, 177, 0); }
+  50% { text-shadow: 0 0 22px rgba(2, 85, 177, 0.25); }
 }
 
 .marketing-page > *,
@@ -572,7 +572,7 @@ body {
 
 .marketing-hero {
   background:
-    linear-gradient(90deg, rgba(15, 143, 131, 0.08), transparent 38%),
+    linear-gradient(90deg, rgba(2, 85, 177, 0.08), transparent 38%),
     #10252b;
   border-color: rgba(231, 198, 106, 0.35);
 }
@@ -630,7 +630,7 @@ body {
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(700px 360px at 12% 10%, rgba(15, 143, 131, 0.11), transparent 70%),
+    radial-gradient(700px 360px at 12% 10%, rgba(2, 85, 177, 0.11), transparent 70%),
     radial-gradient(520px 320px at 88% 30%, rgba(217, 95, 88, 0.08), transparent 72%);
 }
 
@@ -638,7 +638,7 @@ body {
   position: relative;
   overflow: hidden;
   background:
-    linear-gradient(115deg, rgba(15, 143, 131, 0.12), transparent 42%),
+    linear-gradient(115deg, rgba(2, 85, 177, 0.12), transparent 42%),
     #10252b;
 }
 
@@ -683,7 +683,7 @@ body {
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(600px 420px at 12% 12%, rgba(15, 143, 131, 0.12), transparent 72%),
+    radial-gradient(600px 420px at 12% 12%, rgba(2, 85, 177, 0.12), transparent 72%),
     radial-gradient(620px 400px at 88% 22%, rgba(231, 198, 106, 0.12), transparent 72%);
 }
 
@@ -725,9 +725,9 @@ body:has(.marketing-page) {
 
 body:has(.marketing-page)::before {
   background:
-    radial-gradient(680px 420px at 10% 2%, rgba(15, 143, 131, 0.18), transparent 70%),
+    radial-gradient(680px 420px at 10% 2%, rgba(2, 85, 177, 0.18), transparent 70%),
     radial-gradient(560px 380px at 92% 28%, rgba(217, 95, 88, 0.14), transparent 72%),
-    linear-gradient(135deg, #f0eadc 0%, #e4eee7 56%, #dbe9e2 100%);
+    linear-gradient(135deg, #f0eadc 0%, #efe9df 56%, #e8e1d4 100%);
 }
 
 body:has(.marketing-page)::after {
@@ -738,9 +738,9 @@ body:has(.marketing-page)::after {
 body:has(.zt-app-shell) {
   --font-sans: "Trebuchet MS", "Segoe UI", sans-serif;
   --font-display: "Arial Narrow", "Trebuchet MS", sans-serif;
-  --bg-0: #dfe8e2;
+  --bg-0: #f2eee6;
   --bg-1: #e8e2d4;
-  --bg-2: #d5e1d8;
+  --bg-2: #e9e3d8;
   --surface-strong: #f7f3e8;
   --surface: rgba(247, 243, 232, 0.94);
   --line: rgba(34, 61, 58, 0.2);
@@ -748,13 +748,13 @@ body:has(.zt-app-shell) {
   --text-muted: #627371;
   --brand: #d99b43;
   --good: #258e65;
-  background: #dfe8e2;
+  background: #f2eee6;
 }
 
 body:has(.zt-app-shell)::before {
   background:
     radial-gradient(640px 360px at 82% 0%, rgba(217, 155, 67, 0.18), transparent 72%),
-    linear-gradient(135deg, #dfe8e2, #e8e2d4 52%, #d5e1d8);
+    linear-gradient(135deg, #f2eee6, #e8e2d4 52%, #e9e3d8);
 }
 
 body:has(.zt-app-shell)::after {
@@ -822,10 +822,10 @@ body:has(.zt-adspy) .zt-stat {
 body:has(.zwirk-page) {
   --font-sans: "Manrope", "Segoe UI", sans-serif;
   --font-display: "Arial Black", Impact, sans-serif;
-  --brand: #08a8c7;
-  --bg-0: #edf7f5;
-  --bg-1: #e4f0f5;
-  --bg-2: #dbe9f2;
+  --brand: #6a4cff;
+  --bg-0: #f5f3fb;
+  --bg-1: #eeebf8;
+  --bg-2: #e6e2f5;
   background: #e4f0f5;
 }
 
@@ -886,15 +886,15 @@ body:has(.auth-page) .auth-shell {
 
 body:has(.policy-page) {
   --font-display: Georgia, "Times New Roman", serif;
-  --brand: #607c66;
+  --brand: #3d5a99;
   --bg-0: #f4f1e8;
   --bg-1: #ece9dd;
-  --bg-2: #e1e6d8;
+  --bg-2: #e6e2d8;
   background: #ece9dd;
 }
 
 body:has(.policy-page)::before {
-  background: linear-gradient(120deg, #f4f1e8, #ece9dd 60%, #e1e6d8);
+  background: linear-gradient(120deg, #f4f1e8, #ece9dd 60%, #e6e2d8);
 }
 
 body:has(.policy-page) .policy-page {
@@ -928,12 +928,12 @@ body:has(.brand-vault-page) {
   --brand: #b88735;
   --bg-0: #f4ead7;
   --bg-1: #e9e0cf;
-  --bg-2: #dfe4d5;
+  --bg-2: #e8dfcf;
   background: #e9e0cf;
 }
 
 body:has(.brand-vault-page)::before {
-  background: radial-gradient(500px 420px at 84% 4%, rgba(184, 135, 53, 0.18), transparent 72%), linear-gradient(135deg, #f4ead7, #e9e0cf 58%, #dfe4d5);
+  background: radial-gradient(500px 420px at 84% 4%, rgba(184, 135, 53, 0.18), transparent 72%), linear-gradient(135deg, #f4ead7, #e9e0cf 58%, #e8dfcf);
 }
 
 body:has(.brand-vault-page) .brand-vault-page {
@@ -987,7 +987,7 @@ body:has(.terms-page)::after { background-image: linear-gradient(90deg, rgba(154
 body:has(.terms-page) .terms-page { animation: termsSlide 760ms cubic-bezier(.2, .8, .2, 1) both; }
 @keyframes termsSlide { from { opacity: 0; transform: translateX(-24px); } to { opacity: 1; transform: translateX(0); } }
 
-body:has(.cookies-page) { --brand: #5b8d76; }
+body:has(.cookies-page) { --brand: #b0643a; }
 body:has(.cookies-page)::before { background: radial-gradient(560px 420px at 10% 0%, rgba(91,141,118,.15), transparent 70%), linear-gradient(135deg, #eef3ea, #dfe9df); }
 body:has(.cookies-page)::after { background-image: radial-gradient(rgba(91,141,118,.22) 1px, transparent 1px); background-size: 16px 16px; }
 body:has(.cookies-page) .cookies-page { animation: cookiesSettle 850ms cubic-bezier(.2, .8, .2, 1) both; }
@@ -1005,7 +1005,7 @@ body:has(.faq-page)::after { background-image: radial-gradient(rgba(106,100,162,
 body:has(.faq-page) .faq-page { animation: faqExpand 680ms cubic-bezier(.2, .8, .2, 1) both; }
 @keyframes faqExpand { from { opacity: 0; letter-spacing: .04em; } to { opacity: 1; letter-spacing: normal; } }
 
-body:has(.sitemap-page) { --brand: #3c7d8a; }
+body:has(.sitemap-page) { --brand: #0255b1; }
 body:has(.sitemap-page)::before { background: linear-gradient(135deg, #e7f2f1, #d7e9ed); }
 body:has(.sitemap-page)::after { background-image: linear-gradient(90deg, rgba(60,125,138,.08) 1px, transparent 1px), linear-gradient(rgba(60,125,138,.08) 1px, transparent 1px); background-size: 48px 48px; }
 body:has(.sitemap-page) .sitemap-page { animation: sitemapTrace 780ms cubic-bezier(.2, .8, .2, 1) both; }
@@ -1058,7 +1058,7 @@ body::before {
   z-index: -2;
   pointer-events: none;
   background:
-    radial-gradient(720px 420px at 8% 0%, rgba(15, 143, 131, 0.12), transparent 68%),
+    radial-gradient(720px 420px at 8% 0%, rgba(2, 85, 177, 0.12), transparent 68%),
     radial-gradient(620px 420px at 96% 18%, rgba(217, 95, 88, 0.1), transparent 70%),
     linear-gradient(135deg, var(--bg-0) 0%, var(--bg-1) 52%, var(--bg-2) 100%);
 }
@@ -1380,7 +1380,7 @@ select:focus {
 
   width: 100%;
   justify-content: center;
-  background: linear-gradient(120deg, #0f3acb 0%, #2196f3 50%, #10b981 100%);
+  background: linear-gradient(120deg, #0255b1 0%, #3d7bd9 55%, #e0775f 100%);
   -webkit-background-clip: text;
   color: transparent;
   gap: 10px;
@@ -2350,7 +2350,7 @@ textarea {
   justify-content: center;
   font-weight: 700;
   color: #0b1b30;
-  background: linear-gradient(120deg, #38bdf8, #34d399);
+  background: linear-gradient(120deg, #0255b1, #e0775f);
   box-shadow: 0 10px 18px rgba(56, 189, 248, 0.3);
 }
 
@@ -2627,7 +2627,7 @@ textarea {
 .zwirk-hero h1 span {
   display: inline-block;
   font-weight: 800;
-  background: linear-gradient(120deg, #3b82f6, #22d3ee, #34d399);
+  background: linear-gradient(120deg, #0255b1, #6a4cff, #e0775f);
   -webkit-background-clip: text;
   color: transparent;
 }
@@ -4525,8 +4525,8 @@ html body,
 html body:has(.marketing-page),
 html body:has(.zt-app-shell),
 html body:has(.brand-vault-page) {
-  --font-sans: var(--zt-font), "Segoe UI", system-ui, -apple-system, sans-serif !important;
-  --font-display: var(--zt-font), "Segoe UI", system-ui, -apple-system, sans-serif !important;
+  --font-sans: var(--pf-body, var(--zt-font)), "Segoe UI", system-ui, -apple-system, sans-serif !important;
+  --font-display: var(--pf-display, var(--pf-body, var(--zt-font))), "Segoe UI", system-ui, -apple-system, sans-serif !important;
 }
 html body {
   font-family: var(--font-sans);
@@ -4541,3 +4541,42 @@ html body :where(h1, h2, h3, h4) {
 html body :where(button, input, select, textarea) {
   font-family: inherit;
 }
+
+/* =========================================================
+   PAGE VOICES — each page gets its own type pair.
+   <html data-route> is set before first paint (app/layout.tsx);
+   the fonts are declared in app/page-fonts.ts.
+   ========================================================= */
+html[data-route="home"]          { --pf-display: var(--f-fraunces);    --pf-body: var(--f-manrope); }
+html[data-route="pricing"]       { --pf-body: var(--f-outfit); }
+html[data-route="decision-loop"] { --pf-body: var(--f-epilogue); }
+html[data-route="adspy"]         { --pf-display: var(--f-bricolage);   --pf-body: var(--f-figtree); }
+html[data-route="dashboard"]     { --pf-display: var(--f-sora);        --pf-body: var(--f-plex); }
+html[data-route="zwirk"]         { --pf-display: var(--f-syne);        --pf-body: var(--f-rubik); }
+html[data-route="brand-vault"]   { --pf-display: var(--f-dmserif);     --pf-body: var(--f-dmsans); }
+html[data-route="records"]       { --pf-display: var(--f-spacemono);   --pf-body: var(--f-karla); }
+html[data-route="login"]         { --pf-display: var(--f-instserif);   --pf-body: var(--f-instsans); }
+html[data-route="faq"]           { --pf-display: var(--f-newsreader);  --pf-body: var(--f-sourcesans); }
+html[data-route="privacy"]       { --pf-display: var(--f-lora);        --pf-body: var(--f-nunito); }
+html[data-route="terms"]         { --pf-display: var(--f-sourceserif); --pf-body: var(--f-publicsans); }
+html[data-route="cookies"]       { --pf-display: var(--f-spectral);    --pf-body: var(--f-mulish); }
+html[data-route="contact"]       { --pf-display: var(--f-youngserif);  --pf-body: var(--f-jakarta, var(--zt-font)); }
+html[data-route="sitemap"]       { --pf-body: var(--f-franklin); }
+html[data-route="brand"]         { --pf-display: var(--f-archivo);     --pf-body: var(--f-worksans); }
+html[data-route="demo"]          { --pf-body: var(--f-schibsted); }
+
+/* Single-weight serif display faces: never fake-bold them. */
+html:is([data-route="brand-vault"], [data-route="login"], [data-route="contact"]) body :is(h1, h2, h3) {
+  font-weight: 400 !important;
+  letter-spacing: -0.01em;
+}
+/* Editorial serifs read better a notch lighter than the sans headings. */
+html:is([data-route="home"], [data-route="faq"], [data-route="privacy"], [data-route="terms"], [data-route="cookies"]) body :is(h1, h2) {
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+html[data-route="home"] body :is(h1, h2) em { font-style: italic; }
+html[data-route="login"] body :is(h1, h2) em { font-style: italic; }
+/* Records reads like a ledger. */
+html[data-route="records"] body :is(h1, h2, h3) { letter-spacing: 0; }
+html[data-route="records"] body :is(td, th, strong) { font-variant-numeric: tabular-nums; }
