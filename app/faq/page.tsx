@@ -1,3 +1,11 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "FAQ — how Zooptrack and AdSpy work",
+  description: "Where the ad data comes from, how often it refreshes, what AdSpy shows, pricing and privacy — answered in plain words.",
+  alternates: { canonical: "/faq" },
+};
+
 const faqs = [
   {
     q: "What does Zooptrack do?",
