@@ -1,0 +1,49 @@
+name: AdSpy nightly pre-fill
+
+on:
+  schedule:
+    - cron: "30 20 * * *" # 02:00 IST
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Time budget in minutes"
+        default: "300"
+      limit:
+        description: "Max seed brands (blank = no limit)"
+        default: ""
+
+concurrency:
+  group: adspy-prefill
+  cancel-in-progress: false
+
+jobs:
+  prefill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Chromium
+        run: npx playwright-core install --with-deps chromium
+
+      - name: Allow server-only modules outside Next.js
+        run: echo "" > node_modules/server-only/index.js
+
+      - name: Collect ads
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ADSPY_SYSTEM_USER_ID: ${{ secrets.ADSPY_SYSTEM_USER_ID }}
+          ADSPY_BROWSER: playwright
+          ADSPY_DEEP_MAX_SCROLLS: "360"
+          ADSPY_PREFILL_MINUTES: ${{ github.event.inputs.minutes || '300' }}
+          ADSPY_PREFILL_LIMIT: ${{ github.event.inputs.limit || '' }}
+        run: npx tsx scripts/adspy-prefill.ts
