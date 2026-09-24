@@ -1123,7 +1123,12 @@ function Patterns({ result }: { result: SearchResponse | null }) {
   const intel = result?.intelligence;
   const groups: Array<{ title: string; icon: ReactNode; items: Array<{ label: string; count: number }> }> = [
     { title: "Recurring hooks", icon: <Sparkles size={14} />, items: intel?.topHooks ?? [] },
-    { title: "Offers", icon: <Tag size={14} />, items: intel?.topOffers ?? [] },
+    {
+      title: "Offers",
+      icon: <Tag size={14} />,
+      // Drop extraction noise such as "53/825"; keep offers with real words, % or ₹.
+      items: (intel?.topOffers ?? []).filter((o) => /[a-z]{3,}|%|₹|rs\.?\s?\d/i.test(o.label)),
+    },
     { title: "Creators", icon: <UserRound size={14} />, items: intel?.topCreators ?? [] },
   ];
   const hasAny = groups.some((g) => g.items.length > 0);
@@ -1149,7 +1154,7 @@ function Patterns({ result }: { result: SearchResponse | null }) {
                 <ul>
                   {group.items.slice(0, 4).map((item) => (
                     <li key={item.label}>
-                      <span>{item.label}</span>
+                      <span title={item.label}>{item.label}</span>
                       <b>{item.count}</b>
                     </li>
                   ))}
@@ -1292,8 +1297,8 @@ function AdCard({ ad, onOpen, showAdvertiser }: { ad: Ad; onOpen: () => void; sh
           </span>
         )}
         {Number(ad.runningDays ?? 0) >= 60 && (
-          <span className="azs-proven" title="Running 60+ days. Advertisers rarely keep paying for ads that lose money.">
-            🏆 Proven
+          <span className="azs-proven" title="Running for 60+ days. Long-running ads are usually worth studying, but Meta does not publish their spend or results.">
+            <Clock3 size={11} /> Long-running
           </span>
         )}
       </div>
