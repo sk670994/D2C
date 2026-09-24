@@ -62,6 +62,9 @@ import {
   type SearchTarget,
 } from "./workspace-utils";
 import { CompareView } from "./CompareView";
+import popularBrands from "@/scripts/adspy-seed-brands.json";
+
+const POPULAR: string[] = (popularBrands as { brands: string[] }).brands;
 
 const PAGE_SIZE = 25;
 const SUGGEST_DEBOUNCE_MS = 90;
@@ -149,6 +152,7 @@ export function AdSpyWorkspace() {
     }
   }, [compare]);
   const [compareOpen, setCompareOpen] = useState(false);
+  const [view, setView] = useState<"ads" | "insights">("ads");
   const [watched, setWatched] = useState<Array<{ pageId: string; name: string; country: string }> | null>(null);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -232,6 +236,7 @@ export function AdSpyWorkspace() {
       setSuggestLoading(false);
       return;
     }
+    let shownFromCache = false;
     for (let len = lower.length - 1; len >= 1; len -= 1) {
       const parent = suggestCache.get(keyFor(lower.slice(0, len)));
       if (parent && Date.now() - parent.at < SUGGEST_CACHE_TTL_MS) {
@@ -239,8 +244,20 @@ export function AdSpyWorkspace() {
         if (filtered.length) {
           setSuggestions(filtered);
           setSuggestedFor(q);
+          shownFromCache = true;
         }
         break;
+      }
+    }
+    // Nothing cached yet: show popular brands instantly while the server answers.
+    if (!shownFromCache) {
+      const local = POPULAR.filter((name) => name.toLocaleLowerCase().includes(lower))
+        .sort((a, b) => Number(!a.toLocaleLowerCase().startsWith(lower)) - Number(!b.toLocaleLowerCase().startsWith(lower)))
+        .slice(0, 6)
+        .map((name) => ({ source: "indexed", id: `popular-${name}`, pageId: "", label: name, type: "advertiser", category: "Popular D2C brand" }) as AutocompleteAdvertiser);
+      if (local.length) {
+        setSuggestions(local);
+        setSuggestedFor(q);
       }
     }
 
@@ -283,6 +300,7 @@ export function AdSpyWorkspace() {
 
   /* ---------------------------- start search ---------------------------- */
   const go = useCallback((next: SearchTarget) => {
+    setView("ads");
     setTarget(next);
     setFilters(NO_FILTERS);
     setPage(1);
@@ -300,7 +318,7 @@ export function AdSpyWorkspace() {
   const pickSuggestion = useCallback(
     (s: AutocompleteAdvertiser) => {
       setInput(s.label);
-      go({ query: s.label, pageId: s.pageId, mode: "advertiser", country, avatar: s.profileImageUrl ?? null });
+      go({ query: s.label, pageId: s.pageId || null, mode: "advertiser", country, avatar: s.profileImageUrl ?? null });
     },
     [country, go],
   );
@@ -571,7 +589,7 @@ export function AdSpyWorkspace() {
         <div className="azs-titlebar">
           <div>
             <h1>AdSpy</h1>
-            <p>Competitor ads from Meta Ad Library, organised into evidence you can act on.</p>
+            <p>Every Facebook and Instagram ad your competitors are running, searchable in seconds.</p>
           </div>
         </div>
       </div>
@@ -603,7 +621,7 @@ export function AdSpyWorkspace() {
               aria-expanded={showDropdown}
               aria-controls="azs-suggestions"
               aria-activedescendant={showDropdown ? `azs-opt-${activeIndex}` : undefined}
-              placeholder={mode === "advertiser" ? "Search a brand, e.g. Mamaearth, boAt, Sugar" : "Search ad copy, offers or products"}
+              placeholder={mode === "advertiser" ? "Try a brand: Mamaearth, boAt, Minimalist…" : "Search words in ads: \"buy 1 get 1\", \"sunscreen\"…"}
               autoComplete="off"
               spellCheck={false}
             />
@@ -730,6 +748,14 @@ export function AdSpyWorkspace() {
             go({ query: item.label, pageId: item.pageId, mode: "advertiser", country: item.country, avatar: item.avatar });
           }}
           onFocusSearch={() => inputRef.current?.focus()}
+          country={country}
+          onOpenAd={(ad) => setSelectedAd(ad)}
+          onAdvertiser={(ad) => {
+            if (!ad.advertiserId || !ad.advertiserName) return;
+            setInput(ad.advertiserName);
+            setMode("advertiser");
+            go({ query: ad.advertiserName, pageId: ad.advertiserId, mode: "advertiser", country });
+          }}
         />
       ) : (
         <div className="azs-main">
@@ -776,14 +802,28 @@ export function AdSpyWorkspace() {
             </div>
           )}
 
-          <Snapshot summary={result?.summary ?? null} facets={facets} filtered={filterCount > 0} loading={loading && !result} />
+          <StatStrip summary={result?.summary ?? null} facets={facets} loading={loading && !result} />
 
-          <div className="azs-insights">
-            <Momentum facets={facets} loading={facetsLoading && !facets} />
-            <Patterns result={result} />
+          <div className="azs-tabs" role="tablist" aria-label="Results view">
+            <button type="button" role="tab" aria-selected={view === "ads"} className={view === "ads" ? "is-on" : ""} onClick={() => setView("ads")}>
+              Ads{total ? <span>{formatInt(total)}</span> : null}
+            </button>
+            <button type="button" role="tab" aria-selected={view === "insights"} className={view === "insights" ? "is-on" : ""} onClick={() => setView("insights")}>
+              Insights
+            </button>
           </div>
 
-          <div className="azs-body" ref={resultsTop}>
+          {view === "insights" && (
+            <div className="azs-insights-tab" role="tabpanel">
+              <Snapshot summary={result?.summary ?? null} facets={facets} filtered={filterCount > 0} loading={loading && !result} />
+              <div className="azs-insights">
+                <Momentum facets={facets} loading={facetsLoading && !facets} />
+                <Patterns result={result} />
+              </div>
+            </div>
+          )}
+
+          <div className="azs-body" ref={resultsTop} role="tabpanel" style={view === "ads" ? undefined : { display: "none" }}>
             <aside className={`azs-filters ${filtersOpenMobile ? "is-open" : ""}`} aria-label="Filters">
               <div className="azs-filters-head">
                 <strong>
@@ -883,7 +923,7 @@ export function AdSpyWorkspace() {
               ) : ads.length ? (
                 <div className={`azs-grid ${loading ? "is-refreshing" : ""}`}>
                   {ads.map((ad) => (
-                    <AdCard key={`${ad.platform}-${ad.id}`} ad={ad} onOpen={() => setSelectedAd(ad)} showAdvertiser={!target.pageId} />
+                    <AdCard key={`${ad.platform}-${ad.id}`} ad={ad} onOpen={() => setSelectedAd(ad)} />
                   ))}
                 </div>
               ) : (
@@ -981,7 +1021,13 @@ function Landing({
   onWatched,
   onPick,
   onFocusSearch,
+  country,
+  onOpenAd,
+  onAdvertiser,
 }: {
+  country: string;
+  onOpenAd: (ad: Ad) => void;
+  onAdvertiser: (ad: Ad) => void;
   recent: RecentItem[];
   watched: Array<{ pageId: string; name: string; country: string }> | null;
   onWatched: (brand: { pageId: string; name: string; country: string }) => void;
@@ -1030,6 +1076,7 @@ function Landing({
           </div>
         </section>
       )}
+      <FreshFeed country={country} onOpenAd={onOpenAd} onAdvertiser={onAdvertiser} />
       <section className="azs-how">
         <button type="button" className="azs-how-step" onClick={onFocusSearch}>
           <Search size={18} />
@@ -1409,18 +1456,37 @@ function AdMedia({ ad, large = false }: { ad: Ad; large?: boolean }) {
   return <img src={src} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />;
 }
 
-function AdCard({ ad, onOpen, showAdvertiser }: { ad: Ad; onOpen: () => void; showAdvertiser: boolean }) {
-  const status = statusLabel(ad);
+function AdCard({ ad, onOpen, onAdvertiser }: { ad: Ad; onOpen: () => void; onAdvertiser?: () => void }) {
   const hook = hookOf(ad);
-  const running = runningLabel(ad);
+  const days = Number(ad.runningDays ?? 0);
   const language = ad.languages?.[0]?.name;
   const domain = domainOf(ad.landingPage);
+  const video = ad.creativeType === "video" ? safeExternalUrl(ad.videoUrl) : null;
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const since = shortDate(ad.firstSeen);
+  const name = ad.advertiserName ?? "Unknown advertiser";
+
+  const startPreview = () => {
+    const el = videoRef.current;
+    if (!el) return;
+    el.muted = true;
+    void el.play().then(() => setPlaying(true)).catch(() => undefined);
+  };
+  const stopPreview = () => {
+    const el = videoRef.current;
+    if (!el) return;
+    el.pause();
+    setPlaying(false);
+  };
 
   return (
     <article
       className="azs-card"
       tabIndex={0}
       onClick={onOpen}
+      onMouseEnter={video ? startPreview : undefined}
+      onMouseLeave={video ? stopPreview : undefined}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
@@ -1428,12 +1494,41 @@ function AdCard({ ad, onOpen, showAdvertiser }: { ad: Ad; onOpen: () => void; sh
         }
       }}
     >
-      <div className="azs-card-media">
+      <header className="azs-post-head">
+        <span className="azs-post-avatar" aria-hidden="true">
+          {name.trim().slice(0, 1).toUpperCase()}
+        </span>
+        <span className="azs-post-who">
+          {onAdvertiser ? (
+            <button
+              type="button"
+              className="azs-post-name"
+              onClick={(event) => {
+                event.stopPropagation();
+                onAdvertiser();
+              }}
+            >
+              {name}
+            </button>
+          ) : (
+            <strong className="azs-post-name">{name}</strong>
+          )}
+          <small>
+            <span className="azs-post-sp">{ad.isActive === false ? "Stopped · " : "Sponsored · "}</span>
+            {since ? `since ${since}` : "start date unknown"}
+          </small>
+        </span>
+        {ad.isActive !== false && <span className="azs-live-dot" title="Running now" />}
+      </header>
+
+      <p className={`azs-post-copy ${hook ? "" : "is-empty"}`}>{hook ?? "No ad text captured"}</p>
+
+      <div className={`azs-card-media ${playing ? "is-playing" : ""}`}>
         <AdMedia ad={ad} />
-        <span className={`azs-status is-${status.tone}`}>{status.label}</span>
-        {ad.creativeType === "video" && (
-          <span className="azs-format">
-            <Play size={11} /> Video
+        {video && <video ref={videoRef} className="azs-card-video" src={video} muted loop playsInline preload="none" aria-hidden="true" />}
+        {ad.creativeType === "video" && !playing && (
+          <span className="azs-play" aria-hidden="true">
+            <Play size={16} />
           </span>
         )}
         {ad.creativeType === "carousel" && (
@@ -1441,22 +1536,25 @@ function AdCard({ ad, onOpen, showAdvertiser }: { ad: Ad; onOpen: () => void; sh
             <Layers size={11} /> Carousel
           </span>
         )}
-        {Number(ad.runningDays ?? 0) >= 60 && (
-          <span className="azs-proven" title="Running for 60+ days. Long-running ads are usually worth studying, but Meta does not publish their spend or results.">
-            <Clock3 size={11} /> Long-running
+        {days > 0 && (
+          <span className={`azs-days ${days >= 60 ? "is-long" : ""}`} title={days >= 60 ? "Running for 60+ days — usually worth studying. Meta does not publish spend or results." : undefined}>
+            <Clock3 size={11} /> {days >= 60 ? `Long-running · ${days}d` : `${days}d running`}
           </span>
         )}
       </div>
-      <div className="azs-card-body">
-        {showAdvertiser && <span className="azs-card-adv">{ad.advertiserName ?? "Unknown advertiser"}</span>}
-        {hook ? <p className="azs-hook">{hook}</p> : <p className="azs-hook azs-muted">No ad copy captured</p>}
-        {ad.headline && <p className="azs-headline">{ad.headline}</p>}
+
+      {(ad.headline || ad.callToAction || domain) && (
+        <div className="azs-post-cta">
+          <div>
+            {domain && <small>{domain}</small>}
+            {ad.headline && <strong>{ad.headline}</strong>}
+          </div>
+          {ad.callToAction && <span className="azs-post-button">{ad.callToAction}</span>}
+        </div>
+      )}
+
+      {(ad.offer || language || ad.creatorName) && (
         <div className="azs-card-tags">
-          {ad.callToAction && (
-            <span className="azs-tag">
-              <MousePointerClick size={11} /> {ad.callToAction}
-            </span>
-          )}
           {ad.offer && <span className="azs-tag azs-tag-offer">{ad.offer}</span>}
           {language && <span className="azs-tag">{language}</span>}
           {ad.creatorName && (
@@ -1465,12 +1563,75 @@ function AdCard({ ad, onOpen, showAdvertiser }: { ad: Ad; onOpen: () => void; sh
             </span>
           )}
         </div>
-        <div className="azs-card-foot">
-          <span>{running ?? (formatDate(ad.firstSeen) ? `Since ${formatDate(ad.firstSeen)}` : "Start date unknown")}</span>
-          {domain && <span className="azs-domain">{domain}</span>}
-        </div>
-      </div>
+      )}
     </article>
+  );
+}
+
+function shortDate(value?: string | null): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return date.toLocaleDateString("en-IN", sameYear ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" });
+}
+
+function StatStrip({ summary, facets, loading }: { summary: Summary | null; facets: Facets | null; loading: boolean }) {
+  if (loading) return <div className="azs-strip is-loading"><span className="azs-sk-inline" /><span className="azs-sk-inline" /><span className="azs-sk-inline" /></div>;
+  if (!summary || !summary.totalAds) return null;
+  const s = summary;
+  const items: Array<[string, string]> = [
+    [formatInt(s.totalAds), s.totalAds === 1 ? "ad" : "ads"],
+    [formatInt(s.activeAds ?? 0), "running now"],
+    [`${Math.round(((s.videoAds ?? 0) / s.totalAds) * 100)}%`, "video"],
+  ];
+  if (facets) items.push([formatInt(facets.momentum.launched30d), "new this month"]);
+  if (s.averageRunningDays) items.push([`${Math.round(s.averageRunningDays)} days`, "avg. run"]);
+  if (s.longestRunningDays) items.push([`${formatInt(s.longestRunningDays)} days`, "longest run"]);
+  return (
+    <div className="azs-strip" aria-label="Summary">
+      {items.map(([value, label]) => (
+        <span key={label}>
+          <strong>{value}</strong> {label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function FreshFeed({ country, onOpenAd, onAdvertiser }: { country: string; onOpenAd: (ad: Ad) => void; onAdvertiser: (ad: Ad) => void }) {
+  const [ads, setAds] = useState<Ad[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setAds(null);
+    fetch(`/api/ad-intelligence/fresh?country=${country}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((data: { success?: boolean; ads?: Ad[] }) => alive && setAds(data.success ? data.ads ?? [] : []))
+      .catch(() => alive && setAds([]));
+    return () => {
+      alive = false;
+    };
+  }, [country]);
+
+  if (ads && ads.length === 0) return null;
+  return (
+    <section className="azs-fresh" aria-label="New ads this week">
+      <h2>
+        <Sparkles size={15} /> Just launched by D2C brands
+      </h2>
+      <div className="azs-grid">
+        {ads === null
+          ? Array.from({ length: 8 }).map((_, i) => (
+              <div className="azs-card azs-card-skeleton" key={i}>
+                <div className="azs-sk-media" />
+                <div className="azs-sk-line" />
+                <div className="azs-sk-line short" />
+              </div>
+            ))
+          : ads.map((ad) => <AdCard key={ad.id} ad={ad} onOpen={() => onOpenAd(ad)} onAdvertiser={() => onAdvertiser(ad)} />)}
+      </div>
+    </section>
   );
 }
 
