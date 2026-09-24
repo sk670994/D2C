@@ -32,7 +32,6 @@ html .adspy-page .azs.azs {
 
 /* ---------- app bar ---------- */
 html .adspy-page .zt-appbar { background: rgba(7, 8, 12, 0.78); border-bottom-color: rgba(255, 255, 255, 0.06); }
-html .adspy-page .zt-brand img { filter: brightness(0) invert(1); }
 html .adspy-page .zt-appnav a { color: #a3acbd; }
 html .adspy-page .zt-appnav a:hover,
 html .adspy-page .zt-appnav a.active { color: #fff; background: rgba(255, 255, 255, 0.08); }
