@@ -81,10 +81,15 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const { advertiser, facets } = await load(slug);
   const name = advertiser?.name ?? nameFromSlug(slug);
   const count = facets?.total ? `${facets.total.toLocaleString("en-IN")} ` : "";
+  const title = `${name} Facebook & Instagram ads (${count ? `${count}ads` : "ad library"})`;
+  const description = `See ${count}${name} ads running on Meta in India: hooks, offers, languages and new launches per week. Free competitor ad research for D2C brands.`;
+  const url = `/brand/${brandSlug(name)}`;
   return {
-    title: `${name} Facebook & Instagram ads (${count ? `${count}ads` : "ad library"}) | Zooptrack`,
-    description: `See ${count}${name} ads running on Meta in India: hooks, offers, languages and new launches per week. Free competitor ad research for D2C brands.`,
-    alternates: { canonical: `/brand/${brandSlug(name)}` },
+    title,
+    description,
+    alternates: { canonical: url },
+    openGraph: { type: "website", siteName: "Zooptrack", locale: "en_IN", url, title: `${title} | Zooptrack`, description },
+    twitter: { card: "summary_large_image", title: `${title} | Zooptrack`, description },
   };
 }
 
