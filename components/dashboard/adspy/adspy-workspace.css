@@ -182,6 +182,8 @@ html[data-theme="dark"] .azs .azs-btn-primary { color: #06101f; }
 
 .azs .azs-pattern-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .azs .azs-pattern-cols > div { min-width: 0; }
+.azs .azs-pattern-cols ul { grid-template-columns: minmax(0, 1fr); }
+.azs .azs-pattern-cols li { min-width: 0; }
 .azs .azs-pattern-title { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; color: var(--azs-muted); margin-bottom: 6px; }
 .azs .azs-pattern-cols ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .azs .azs-pattern-cols li { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
@@ -322,4 +324,13 @@ html[data-theme="dark"] .azs .azs-tag-offer { background: rgba(251, 146, 60, 0.1
 
 @media (prefers-reduced-motion: reduce) {
   .azs *, .azs *::before, .azs *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---------- app bar on phones: keep navigation, stop buttons wrapping ---------- */
+@media (max-width: 820px) {
+  .adspy-page .zt-appbar { flex-wrap: wrap; row-gap: 6px; padding: 8px 16px; }
+  .adspy-page .zt-appnav { display: flex; order: 3; width: 100%; overflow-x: auto; scrollbar-width: none; margin: 0 -4px; }
+  .adspy-page .zt-appnav::-webkit-scrollbar { display: none; }
+  .adspy-page .zt-appnav a { white-space: nowrap; }
+  .adspy-page .zt-app-actions button { white-space: nowrap; height: 34px; padding: 0 10px; font-size: 12.5px; }
 }
