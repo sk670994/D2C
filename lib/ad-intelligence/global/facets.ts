@@ -199,7 +199,34 @@ function weekStartUtc(date: Date): Date {
   return d;
 }
 
+/**
+ * Facets are computed in Postgres (adspy_search_facets): one round trip, no
+ * 5,000-row cap, and unfiltered advertiser views come from the precomputed
+ * adspy_advertiser_summaries row. The Node implementation below is kept only
+ * as a fallback while the migration rolls out.
+ */
 export async function getSearchFacets(input: FacetInput): Promise<FacetResult> {
+  const { data, error } = await createGlobalServiceClient().rpc("adspy_search_facets", {
+    p_query: input.query,
+    p_country: input.country,
+    p_platform: input.platform,
+    p_mode: input.mode,
+    p_advertiser_page_id: input.pageId ?? null,
+    p_language: input.language ?? null,
+    p_region: input.region ?? null,
+    p_creative_type: input.creativeType ?? null,
+    p_active_status: input.activeStatus ?? null,
+  });
+
+  if (!error && data && typeof data === "object") {
+    return data as FacetResult;
+  }
+
+  console.warn("[AdSpy facets] SQL facets unavailable; using fallback", { error: error?.message ?? null });
+  return getSearchFacetsFallback(input);
+}
+
+async function getSearchFacetsFallback(input: FacetInput): Promise<FacetResult> {
   const { rows, capped } = await fetchRows(input);
 
   const status = new Map<string, FacetBucket>();
