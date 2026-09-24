@@ -89,7 +89,8 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 }
 
 function hook(ad: SampleAd): string {
-  const text = (ad.primary_text || ad.headline || "").replace(/\s+/g, " ").trim();
+  const raw = (ad.primary_text || ad.headline || "").replace(/\s+/g, " ").trim();
+  const text = /^started running on\b/i.test(raw) ? "" : raw;
   return text.length > 150 ? `${text.slice(0, 147)}…` : text || "No ad copy captured";
 }
 
