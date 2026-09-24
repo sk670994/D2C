@@ -6,12 +6,14 @@
  */
 import {
   Archivo,
+  Bitter,
   Bricolage_Grotesque,
   DM_Sans,
   DM_Serif_Display,
   Epilogue,
   Figtree,
   Fraunces,
+  Hanken_Grotesk,
   IBM_Plex_Sans,
   Instrument_Sans,
   Instrument_Serif,
@@ -65,7 +67,9 @@ const f_franklin = Libre_Franklin({ subsets: ["latin"], display: "swap", preload
 const f_archivo = Archivo({ subsets: ["latin"], display: "swap", preload: false, variable: "--f-archivo" });
 const f_worksans = Work_Sans({ subsets: ["latin"], display: "swap", preload: false, variable: "--f-worksans" });
 const f_schibsted = Schibsted_Grotesk({ subsets: ["latin"], display: "swap", preload: false, variable: "--f-schibsted" });
+const f_bitter = Bitter({ subsets: ["latin"], display: "swap", preload: false, variable: "--f-bitter" });
+const f_hanken = Hanken_Grotesk({ subsets: ["latin"], display: "swap", preload: false, variable: "--f-hanken" });
 
-export const pageFontVars = [f_fraunces, f_manrope, f_outfit, f_epilogue, f_bricolage, f_figtree, f_sora, f_plex, f_syne, f_rubik, f_dmserif, f_dmsans, f_spacemono, f_karla, f_instserif, f_instsans, f_newsreader, f_sourcesans, f_lora, f_nunito, f_sourceserif, f_publicsans, f_spectral, f_mulish, f_youngserif, f_franklin, f_archivo, f_worksans, f_schibsted]
+export const pageFontVars = [f_bitter, f_hanken, f_fraunces, f_manrope, f_outfit, f_epilogue, f_bricolage, f_figtree, f_sora, f_plex, f_syne, f_rubik, f_dmserif, f_dmsans, f_spacemono, f_karla, f_instserif, f_instsans, f_newsreader, f_sourcesans, f_lora, f_nunito, f_sourceserif, f_publicsans, f_spectral, f_mulish, f_youngserif, f_franklin, f_archivo, f_worksans, f_schibsted]
   .map((f) => f.variable)
   .join(" ");
