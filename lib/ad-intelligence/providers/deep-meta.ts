@@ -34,11 +34,12 @@ import {
   scanMetaIdentity,
   type MetaIdentityScan,
 } from "../meta/graphql-identity";
+import { extractLibraryPage, normalizeLibraryNode } from "../meta/library-json";
 
 const META_LIBRARY_URL = "https://www.facebook.com/ads/library/";
 const DEFAULT_COUNTRY = "IN";
 const QUICK_MAX_SCROLLS = 14;
-const QUICK_TARGET = 25;
+const QUICK_TARGET = 30;
 const QUICK_STABLE_ROUNDS = 3;
 const DEEP_MAX_SCROLLS = 360;
 const DEEP_TARGET = 1200;
@@ -403,6 +404,96 @@ function normalizeCard(
   };
 }
 
+/**
+ * Builds a CompetitorAd from Meta's own JSON (see meta/library-json.ts).
+ * Returns null when the ad belongs to a different advertiser than requested.
+ */
+function jsonNodeToAd(
+  node: Parameters<typeof normalizeLibraryNode>[0],
+  input: AdSearchInput,
+  sourceUrl: string,
+  totalCount: number | null,
+): CompetitorAd | null {
+  const n = normalizeLibraryNode(node);
+  if (!n) return null;
+  const requested = input.advertiserPageId?.trim() || null;
+
+  // Identity boundary: when an exact Page ID was requested, never keep an ad
+  // that Meta attributes to a different advertiser.
+  if (requested && n.pageId && n.pageId !== requested) return null;
+  const advertiserId = n.pageId ?? requested;
+  const advertiserName = n.pageName;
+  const creatorName = n.creatorName;
+
+  const creativeType: AdCreativeType = n.format;
+  const runningDays = calculateRunningDays(n.firstSeen, n.lastSeen);
+  const copy = [n.primaryText, n.headline, n.description].filter(Boolean).join("\n");
+  const lines = copy ? copy.split("\n") : [];
+  const price = parsePrice(copy);
+  const offer = extractOffer(n.primaryText, lines) || null;
+
+  return {
+    id: n.id,
+    platform: "meta",
+    advertiserName: normalizedText(advertiserName) || input.query.trim(),
+    advertiserId,
+    creatorName: creatorName ? normalizedText(creatorName) : null,
+    partnershipType: creatorName ? "paid_partnership" : "direct",
+    country: (input.country ?? DEFAULT_COUNTRY).toUpperCase(),
+    creativeType,
+    imageUrl: n.imageUrl,
+    videoUrl: n.videoUrl,
+    thumbnailUrl: n.thumbnailUrl,
+    videoDurationSeconds: null,
+    primaryText: n.primaryText ? normalizeWhitespace(normalizedText(n.primaryText)) : null,
+    headline: n.headline ? normalizedText(n.headline) : null,
+    description: n.description ? normalizedText(n.description) : null,
+    callToAction: n.callToAction,
+    firstSeen: n.firstSeen,
+    lastSeen: n.lastSeen,
+    isActive: n.isActive,
+    publisherPlatforms: n.publisherPlatforms.length ? n.publisherPlatforms : ["Facebook", "Instagram"],
+    landingPage: n.landingPage,
+    sourceUrl,
+    productName: n.headline ? normalizedText(n.headline) : null,
+    productPrice: price,
+    currency: price != null ? "INR" : null,
+    offer,
+    runningDays,
+    transcript: null,
+    transcriptStatus: creativeType === "video" ? "unavailable" : "not_video",
+    metricSources: {
+      creativeScore: "derived",
+      longevityScore: "derived",
+      relevanceScore: "derived",
+      engagementPotentialScore: "unavailable",
+      reach: "unavailable",
+      clicks: "unavailable",
+      ctr: "unavailable",
+      impressions: "unavailable",
+    },
+    longevityScore: Math.min(100, runningDays > 0 ? 25 + Math.min(75, runningDays * 1.25) : 0),
+    relevanceScore: 0,
+    engagementPotentialScore: 0,
+    intelligence: { rankingReasons: [], badges: [] },
+    metadata: {
+      extractionMethod: "meta-library-json-v1",
+      providerSource: "meta_ad_library",
+      collectedAt: new Date().toISOString(),
+      searchMode: input.mode ?? "advertiser",
+      collectionDepth: input.collectionDepth ?? "deep",
+      identitySource: "meta_graphql",
+      activeStatusSource: n.isActive != null ? "provider" : "heuristic",
+      metaPageProfileUri: null,
+      metaCollationId: n.collationId,
+      metaCollationCount: n.collationCount,
+      metaTotalCount: totalCount,
+      metaDisplayFormat: n.displayFormat,
+      metaCardCount: n.cardCount,
+    },
+  };
+}
+
 function isRelevant(ad: CompetitorAd, input: AdSearchInput): boolean {
   if (input.advertiserPageId) return true;
   if ((input.mode ?? "advertiser") === "keyword") return true;
@@ -550,6 +641,7 @@ async function scrapeOnce(
 
   const b = await getBrowser();
   let context: BrowserContext | null = null;
+  const startedAt = Date.now();
   try {
     context = await b.newContext({
       locale: "en-IN",
@@ -558,24 +650,58 @@ async function scrapeOnce(
     });
     await context.route("**/*", async (route) => {
       const resource = route.request().resourceType();
-      if (["font", "media"].includes(resource)) return route.continue();
-      if (["websocket"].includes(resource)) return route.abort();
+      // The ad data arrives as JSON; pictures, videos and fonts are not needed
+      // to read it (their URLs are in the JSON), so skip downloading them.
+      if (["image", "media", "font", "websocket"].includes(resource)) return route.abort();
       return route.continue();
     });
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
+    page.setDefaultNavigationTimeout(NAV_TIMEOUT);
 
-    // Meta ships authoritative identity (page_id, is_active, collation, total
-    // count) as JSON in the HTML and in /api/graphql responses while scrolling.
+    const sourceUrl = pageUrl;
     const metaIdentity: MetaIdentityScan = { ads: new Map(), totalCount: null };
+    const collected = new Map<string, CompetitorAd>();
+    const pendingBatch: CompetitorAd[] = [];
     const pendingScans = new Set<Promise<void>>();
+    // Mutated from the response listener, so kept in an object (not narrowed by TS).
+    const state: { hasNextPage: boolean | null; jsonResponses: number; rateLimitedAt: number } = {
+      hasNextPage: null,
+      jsonResponses: 0,
+      rateLimitedAt: 0,
+    };
+
+    // Meta's own JSON: first page in the HTML, every next page from /api/graphql.
+    const absorb = (text: string) => {
+      mergeMetaIdentity(metaIdentity, scanMetaIdentity(text));
+      const libraryPage = extractLibraryPage(text);
+      if (libraryPage.rateLimited) state.rateLimitedAt = Date.now();
+      if (libraryPage.totalCount != null) {
+        metaIdentity.totalCount = Math.max(metaIdentity.totalCount ?? 0, libraryPage.totalCount);
+      }
+      if (libraryPage.nodes.length) {
+        state.jsonResponses += 1;
+        if (libraryPage.hasNextPage != null) state.hasNextPage = libraryPage.hasNextPage;
+      }
+      for (const node of libraryPage.nodes) {
+        const ad = jsonNodeToAd(node, input, sourceUrl, metaIdentity.totalCount);
+        if (!ad || !isRelevant(ad, input)) continue;
+        const known = collected.has(ad.id);
+        const previous = collected.get(ad.id);
+        // JSON beats a DOM-read copy of the same ad.
+        if (!known || previous?.metadata?.extractionMethod !== "meta-library-json-v1") {
+          collected.set(ad.id, ad);
+          if (!known) pendingBatch.push(ad);
+        }
+      }
+    };
+
     page.on("response", (response) => {
       if (!response.url().includes("/api/graphql")) return;
       const task = response
         .text()
         .then((body) => {
-          if (body.length > 8_000_000) return;
-          mergeMetaIdentity(metaIdentity, scanMetaIdentity(body));
+          if (body.length <= 8_000_000) absorb(body);
         })
         .catch(() => undefined)
         .finally(() => {
@@ -583,128 +709,109 @@ async function scrapeOnce(
         });
       pendingScans.add(task);
     });
-    page.setDefaultNavigationTimeout(NAV_TIMEOUT);
 
     await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
-    await page.waitForTimeout(INITIAL_WAIT);
-    await page.waitForLoadState('load', { timeout: 10000 }).catch(() => undefined);
-    const initialHtml = await page.content().catch(() => "");
-    mergeMetaIdentity(metaIdentity, scanMetaIdentity(initialHtml));
+    await page.waitForLoadState("load", { timeout: 10_000 }).catch(() => undefined);
+    absorb(await page.content().catch(() => ""));
+
+    // No JSON in the HTML yet: give the page a moment, then read again.
+    if (state.jsonResponses === 0) {
+      await page.waitForTimeout(INITIAL_WAIT);
+      absorb(await page.content().catch(() => ""));
+    }
 
     const bodyText = await page.locator("body").innerText().catch(() => "");
-    if (isLikelyChallenge(bodyText)) {
+    if (collected.size === 0 && isLikelyChallenge(bodyText)) {
       throw new Error("Meta Ad Library is not accessible from the collector session. The source returned a login/security/challenge page.");
     }
 
-    const collected = new Map<string, CompetitorAd>();
-    const pendingBatch: CompetitorAd[] = [];
-    let stableRounds = 0;
-    let previousCount = 0;
-    let previousScrollHeight = 0;
-    let previousMaxScrollTop = 0;
-    let lastProgressAt = Date.now();
+    const flush = async (force = false) => {
+      if (!onBatch) return;
+      while (pendingBatch.length >= 25 || (force && pendingBatch.length > 0)) {
+        await onBatch(pendingBatch.splice(0, 25));
+      }
+    };
 
-    for (let scroll = 0; scroll <= maxScrolls; scroll += 1) {
-      // Meta's Ad Library can virtualize the results list. We therefore
-      // accumulate IDs across scroll positions instead of assuming the
-      // current DOM contains the whole dataset.
+    // DOM reading is only a fallback for when Meta's JSON is missing.
+    const readDom = async () => {
       const raw = await extractVisibleCards(page);
-
-      let added = 0;
       for (const card of raw) {
+        if (collected.has(card.id)) continue;
         const ad = normalizeCard(card, input, page.url() || pageUrl, metaIdentity);
         if (!ad || !isRelevant(ad, input)) continue;
-
-        if (!collected.has(ad.id)) {
-          collected.set(ad.id, ad);
-          pendingBatch.push(ad);
-          added += 1;
-
-          if (onBatch && pendingBatch.length >= 25) {
-            const batch = pendingBatch.splice(0, 25);
-            await onBatch(batch);
-          }
-        }
+        collected.set(ad.id, ad);
+        pendingBatch.push(ad);
       }
+    };
 
-      // Some versions of the library expose an explicit paging control
-      // instead of only lazy-loading when the scroll position changes.
-      const clicked = quick ? 0 : await clickPaginationControls(page);
-      if (clicked > 0) {
-        await page.waitForTimeout(Math.min(900, SCROLL_WAIT));
-      }
+    let stableRounds = 0;
+    let previousCount = -1;
+    const jsonStableLimit = quick ? 2 : 6;
+
+    for (let scroll = 0; scroll <= maxScrolls; scroll += 1) {
+      const jsonMode = state.jsonResponses > 0;
+      if (!jsonMode) await readDom();
+      await flush();
 
       if (collected.size >= target) break;
+      if (quick && jsonMode) break; // quick = Meta's first page (~30 ads), no scrolling
+      if (jsonMode && state.hasNextPage === false) break; // Meta says there is nothing more
 
+      if (state.rateLimitedAt && Date.now() - state.rateLimitedAt < 20_000) {
+        // Meta asked us to slow down (error 1675004): back off, then continue.
+        await page.waitForTimeout(15_000);
+        state.rateLimitedAt = 0;
+      }
+
+      const before = state.jsonResponses;
+      const nextResponse = page
+        .waitForResponse((r) => r.url().includes("/api/graphql") && r.request().method() === "POST", { timeout: 5_000 })
+        .catch(() => null);
       const movement = await scrollToRevealMore(page);
-      const madeProgress =
-        added > 0 ||
-        clicked > 0 ||
-        movement.moved ||
-        movement.scrollHeight > previousScrollHeight ||
-        movement.maxScrollTop > previousMaxScrollTop;
-
-      if (madeProgress) {
-        stableRounds = 0;
-        lastProgressAt = Date.now();
-      } else if (collected.size === previousCount) {
-        stableRounds += 1;
-      } else {
-        stableRounds = 0;
+      if (!quick) await clickPaginationControls(page);
+      const response = await nextResponse;
+      if (response) {
+        await response.text().catch(() => undefined);
+        await Promise.allSettled(Array.from(pendingScans));
+      } else if (!jsonMode) {
+        await page.waitForTimeout(SCROLL_WAIT);
       }
 
+      const grew = collected.size > previousCount;
       previousCount = collected.size;
-      previousScrollHeight = movement.scrollHeight;
-      previousMaxScrollTop = movement.maxScrollTop;
+      if (grew || state.jsonResponses > before || (!jsonMode && movement.moved)) stableRounds = 0;
+      else stableRounds += 1;
 
-      // Quick search should remain fast. Deep search should only stop after
-      // a much longer genuine plateau, not after a handful of virtualized
-      // DOM passes.
-      if (quick && stableRounds >= stableTarget) break;
-
-      if (
-        !quick &&
-        stableRounds >= stableTarget &&
-        Date.now() - lastProgressAt > stableTarget * SCROLL_WAIT
-      ) {
-        break;
+      if (jsonMode && stableRounds >= jsonStableLimit) {
+        // Re-trigger lazy loading once from the top of the last card before giving up.
+        await page.mouse.wheel(0, -600).catch(() => undefined);
+        await page.waitForTimeout(300);
+        await page.mouse.wheel(0, 2400).catch(() => undefined);
+        const retry = await page
+          .waitForResponse((r) => r.url().includes("/api/graphql"), { timeout: 4_000 })
+          .catch(() => null);
+        if (!retry) break;
+        await retry.text().catch(() => undefined);
+        await Promise.allSettled(Array.from(pendingScans));
+        stableRounds = 0;
       }
-
-      await page.waitForTimeout(SCROLL_WAIT);
-    }
-
-    // Final deep pass: a small extra tail sweep catches cards that were
-    // inserted after the last scroll event or after a "See more" click.
-    if (!quick) {
-      for (let tail = 0; tail < 4; tail += 1) {
-        await page.waitForTimeout(400);
-        await clickPaginationControls(page);
-        const tailRaw = await extractVisibleCards(page);
-        for (const card of tailRaw) {
-          const ad = normalizeCard(card, input, page.url() || pageUrl, metaIdentity);
-          if (ad && isRelevant(ad, input)) {
-          if (!collected.has(ad.id)) pendingBatch.push(ad);
-          collected.set(ad.id, ad);
-        }
-        }
-        await scrollToRevealMore(page);
-      }
+      if (!jsonMode && stableRounds >= stableTarget) break;
     }
 
     await Promise.allSettled(Array.from(pendingScans));
-    const finalRaw = await extractVisibleCards(page);
-    for (const card of finalRaw) {
-      const ad = normalizeCard(card, input, page.url() || pageUrl, metaIdentity);
-      if (ad && isRelevant(ad, input)) {
-          if (!collected.has(ad.id)) pendingBatch.push(ad);
-          collected.set(ad.id, ad);
-        }
-    }
+    if (state.jsonResponses === 0) await readDom();
+    await flush(true);
 
-    if (onBatch && pendingBatch.length > 0) {
-      const batch = pendingBatch.splice(0, pendingBatch.length);
-      await onBatch(batch);
-    }
+    console.info("[MetaProvider] scrape finished", {
+      query: input.query,
+      pageId: input.advertiserPageId ?? null,
+      depth: input.collectionDepth ?? "deep",
+      source: state.jsonResponses > 0 ? "json" : "dom",
+      collected: collected.size,
+      metaTotal: metaIdentity.totalCount,
+      hasNextPage: state.hasNextPage,
+      seconds: Math.round((Date.now() - startedAt) / 1000),
+    });
 
     return dedupeAds(Array.from(collected.values())).sort((a, b) => {
       const active = Number(Boolean(b.isActive)) - Number(Boolean(a.isActive));
@@ -715,7 +822,6 @@ async function scrapeOnce(
     if (context) await context.close().catch(() => undefined);
   }
 }
-
 
 export async function collectMetaAdsInBatches(
   input: AdSearchInput,
