@@ -334,3 +334,50 @@ html[data-theme="dark"] .azs .azs-tag-offer { background: rgba(251, 146, 60, 0.1
   .adspy-page .zt-appnav a { white-space: nowrap; }
   .adspy-page .zt-app-actions button { white-space: nowrap; height: 34px; padding: 0 10px; font-size: 12.5px; }
 }
+
+/* ---------- onboarding, compare tray, compare view ---------- */
+.azs .azs-onboard { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 18px 20px; border-radius: var(--azs-radius); border: 1px dashed var(--azs-accent); background: var(--azs-accent-soft); }
+.azs .azs-onboard strong { font-size: 15px; }
+.azs .azs-onboard span { font-size: 13.5px; color: var(--azs-muted); max-width: 620px; line-height: 1.5; margin-bottom: 6px; }
+.azs .azs-btn-ghost.is-on { border-color: var(--azs-accent); color: var(--azs-accent); background: var(--azs-accent-soft); }
+
+.azs .azs-tray { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 900; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px); padding: 8px 8px 8px 14px; border-radius: 14px; background: var(--azs-surface); border: 1px solid var(--azs-line-strong); box-shadow: 0 18px 50px rgba(15, 23, 42, 0.22); }
+.azs .azs-tray-label { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--azs-muted); }
+.azs .azs-tray-chips { display: flex; gap: 6px; overflow-x: auto; min-width: 0; scrollbar-width: none; }
+.azs .azs-tray-chips .azs-chip { white-space: nowrap; }
+
+.azs .azs-compare { width: min(1100px, 100%); }
+.azs .azs-compare h2 { display: flex; align-items: center; gap: 8px; }
+.azs .azs-compare-body { padding: 18px 20px 20px; display: grid; gap: 18px; overflow-y: auto; }
+.azs .azs-compare-diffs { padding: 14px 16px; border-radius: 12px; background: var(--azs-surface-2); border: 1px solid var(--azs-line); }
+.azs .azs-compare-diffs h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--azs-muted); }
+.azs .azs-compare-diffs ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14px; line-height: 1.5; }
+.azs .azs-compare-diffs p { display: flex; align-items: center; gap: 6px; margin: 0; }
+.azs .azs-compare-table { display: grid; border: 1px solid var(--azs-line); border-radius: 12px; overflow: hidden; }
+.azs .azs-compare-table > div:not(.azs-compare-row), .azs .azs-compare-row > div { padding: 10px 12px; border-top: 1px solid var(--azs-line); font-size: 13.5px; min-width: 0; overflow-wrap: anywhere; }
+.azs .azs-compare-corner, .azs .azs-compare-brand { border-top: 0 !important; background: var(--azs-surface-2); }
+.azs .azs-compare-brand { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.azs .azs-compare-brand strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.azs .azs-compare-label { color: var(--azs-muted); font-weight: 600; font-size: 12.5px; }
+.azs .azs-compare-cell { font-weight: 600; font-variant-numeric: tabular-nums; }
+.azs .azs-spark { display: flex; align-items: flex-end; gap: 2px; height: 34px; }
+.azs .azs-spark span { flex: 1; min-width: 3px; border-radius: 2px 2px 0 0; background: var(--azs-accent); }
+.azs .azs-spark span.is-zero { background: var(--azs-line); }
+
+@media (max-width: 860px) {
+  .azs .azs-tray { left: 16px; right: 16px; transform: none; bottom: 78px; }
+  .azs .azs-tray-label { display: none; }
+  .azs .azs-compare-body { padding: 14px; }
+  .azs .azs-compare-brand { align-items: flex-start; }
+  .azs .azs-compare-brand strong { white-space: normal; overflow-wrap: anywhere; font-size: 12.5px; }
+  .azs .azs-compare-table { overflow-x: auto; }
+  .azs .azs-compare-table > div:not(.azs-compare-row), .azs .azs-compare-row > div { padding: 8px; font-size: 12.5px; }
+}
+
+@media (max-width: 860px) {
+  .azs .azs-adv-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .azs .azs-adv-meta { gap: 2px 12px; }
+  .azs .azs-adv-meta span + span::before { display: none; }
+  .azs .azs-adv-actions .azs-btn { width: 100%; padding: 0 8px; }
+  .azs .azs-adv-actions .azs-btn-primary { grid-column: 1 / -1; order: -1; }
+}
