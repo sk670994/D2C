@@ -61,6 +61,7 @@ import {
   type RecentItem,
   type SearchTarget,
 } from "./workspace-utils";
+import { CompareView } from "./CompareView";
 
 const PAGE_SIZE = 25;
 const SUGGEST_DEBOUNCE_MS = 90;
@@ -130,6 +131,9 @@ export function AdSpyWorkspace() {
   const [dataVersion, setDataVersion] = useState(0);
   const [selectedAd, setSelectedAd] = useState<Ad | null>(null);
   const [filtersOpenMobile, setFiltersOpenMobile] = useState(false);
+  const [compare, setCompare] = useState<SearchTarget[]>([]);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [watched, setWatched] = useState<Array<{ pageId: string; name: string; country: string }> | null>(null);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const comboRef = useRef<HTMLDivElement | null>(null);
@@ -160,6 +164,27 @@ export function AdSpyWorkspace() {
   useEffect(() => {
     writeUrlState(target, filters, page);
   }, [target, filters, page]);
+
+  // Watched competitors power the landing view and nightly refresh.
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/ad-intelligence/watchlist", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((data: { success?: boolean; brands?: Array<{ pageId: string; name: string; country: string }> }) => {
+        if (alive) setWatched(data.success ? data.brands ?? [] : []);
+      })
+      .catch(() => alive && setWatched([]));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const sameTarget = (a: SearchTarget, b: SearchTarget) =>
+    a.country === b.country && (a.pageId && b.pageId ? a.pageId === b.pageId : a.query.toLowerCase() === b.query.toLowerCase());
+  const toggleCompare = useCallback((t: SearchTarget) => {
+    setCompare((list) => (list.some((x) => sameTarget(x, t)) ? list.filter((x) => !sameTarget(x, t)) : [...list, t].slice(-3)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* ---------------------------- suggestions ----------------------------- */
   const warmUp = useCallback(() => {
@@ -675,6 +700,13 @@ export function AdSpyWorkspace() {
       {!target ? (
         <Landing
           recent={recent}
+          watched={watched}
+          onWatched={(b) => {
+            setInput(b.name);
+            setCountry(b.country);
+            setMode("advertiser");
+            go({ query: b.name, pageId: b.pageId, mode: "advertiser", country: b.country });
+          }}
           onPick={(item) => {
             setInput(item.label);
             setCountry(item.country);
@@ -692,6 +724,8 @@ export function AdSpyWorkspace() {
             collecting={collecting}
             sampleAd={ads[0] ?? null}
             onRefresh={() => void startCollection("manual")}
+            inCompare={compare.some((x) => sameTarget(x, target))}
+            onCompare={() => toggleCompare(target)}
           />
 
           {collecting && (
@@ -865,6 +899,34 @@ export function AdSpyWorkspace() {
       )}
 
       {selectedAd && <AdDetail ad={selectedAd} onClose={() => setSelectedAd(null)} />}
+
+      {compare.length > 0 && !compareOpen && (
+        <div className="azs-tray" role="region" aria-label="Brands to compare">
+          <span className="azs-tray-label">Compare</span>
+          <div className="azs-tray-chips">
+            {compare.map((t) => (
+              <span className="azs-chip" key={`${t.query}-${t.pageId}`}>
+                {t.query}
+                <button type="button" aria-label={`Remove ${t.query}`} onClick={() => toggleCompare(t)}>
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="azs-btn azs-btn-primary"
+            disabled={compare.length < 2}
+            onClick={() => setCompareOpen(true)}
+            title={compare.length < 2 ? "Add at least 2 brands" : undefined}
+          >
+            {compare.length < 2 ? "Add 1 more brand" : `Compare ${compare.length}`}
+          </button>
+        </div>
+      )}
+      {compareOpen && compare.length > 0 && (
+        <CompareView targets={compare} onClose={() => setCompareOpen(false)} onRemove={(t) => toggleCompare(t)} />
+      )}
     </section>
   );
 }
@@ -899,15 +961,43 @@ function Avatar({ src, label, size = 34 }: { src?: string | null; label: string;
 
 function Landing({
   recent,
+  watched,
+  onWatched,
   onPick,
   onFocusSearch,
 }: {
   recent: RecentItem[];
+  watched: Array<{ pageId: string; name: string; country: string }> | null;
+  onWatched: (brand: { pageId: string; name: string; country: string }) => void;
   onPick: (item: RecentItem) => void;
   onFocusSearch: () => void;
 }) {
   return (
     <div className="azs-landing">
+      {watched && watched.length > 0 ? (
+        <section>
+          <h2>
+            <BookmarkCheck size={15} /> Your competitors
+          </h2>
+          <div className="azs-recent">
+            {watched.map((b) => (
+              <button type="button" key={`${b.pageId}-${b.country}`} onClick={() => onWatched(b)}>
+                <Avatar label={b.name} size={26} />
+                <span>{b.name}</span>
+                <small>{b.country}</small>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : watched ? (
+        <section className="azs-onboard">
+          <strong>Start by watching your 3 closest competitors</strong>
+          <span>Search a brand, pick it from the suggestions and press Watch. We refresh watched brands every night, so their newest ads are waiting for you.</span>
+          <button type="button" className="azs-btn azs-btn-primary" onClick={onFocusSearch}>
+            <Search size={14} /> Find a competitor
+          </button>
+        </section>
+      ) : null}
       {recent.length > 0 && (
         <section>
           <h2>
@@ -952,6 +1042,8 @@ function AdvertiserHeader({
   collecting,
   sampleAd,
   onRefresh,
+  inCompare,
+  onCompare,
 }: {
   target: SearchTarget;
   total: number | null;
@@ -959,6 +1051,8 @@ function AdvertiserHeader({
   collecting: boolean;
   sampleAd: Ad | null;
   onRefresh: () => void;
+  inCompare: boolean;
+  onCompare: () => void;
 }) {
   const [watching, setWatching] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1041,6 +1135,10 @@ function AdvertiserHeader({
         <button type="button" className="azs-btn azs-btn-ghost" onClick={onRefresh} disabled={collecting}>
           <RefreshCw size={14} className={collecting ? "azs-spin" : ""} />
           {collecting ? "Collecting…" : "Refresh data"}
+        </button>
+        <button type="button" className={`azs-btn azs-btn-ghost ${inCompare ? "is-on" : ""}`} onClick={onCompare} aria-pressed={inCompare}>
+          {inCompare ? <Check size={14} /> : <Layers size={14} />}
+          {inCompare ? "In compare" : "Compare"}
         </button>
         <button type="button" className="azs-btn azs-btn-ghost" onClick={() => void copyLink()}>
           {copied ? <Check size={14} /> : <Share2 size={14} />}
