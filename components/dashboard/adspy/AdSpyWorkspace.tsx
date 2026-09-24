@@ -132,6 +132,22 @@ export function AdSpyWorkspace() {
   const [selectedAd, setSelectedAd] = useState<Ad | null>(null);
   const [filtersOpenMobile, setFiltersOpenMobile] = useState(false);
   const [compare, setCompare] = useState<SearchTarget[]>([]);
+  // Keep the compare list across reloads in this tab.
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem("zooptrack.adspy.compare") ?? "[]");
+      if (Array.isArray(saved)) setCompare(saved.slice(0, 3));
+    } catch {
+      // ignore unavailable storage
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("zooptrack.adspy.compare", JSON.stringify(compare));
+    } catch {
+      // ignore unavailable storage
+    }
+  }, [compare]);
   const [compareOpen, setCompareOpen] = useState(false);
   const [watched, setWatched] = useState<Array<{ pageId: string; name: string; country: string }> | null>(null);
 
