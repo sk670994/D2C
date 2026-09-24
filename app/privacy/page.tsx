@@ -1,3 +1,11 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Privacy policy",
+  description: "How Zooptrack collects, uses and protects your data.",
+  alternates: { canonical: "/privacy" },
+};
+
 const sections = [
   {
     title: "Information We Collect",
