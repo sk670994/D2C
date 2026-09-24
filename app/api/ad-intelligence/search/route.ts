@@ -6,6 +6,8 @@ import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
 import type { AdPlatform } from "@/lib/ad-intelligence/types";
 
 export const runtime = "nodejs";
+// Run next to the Supabase database (ap-southeast-2 / Sydney).
+export const preferredRegion = "syd1";
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 25;
