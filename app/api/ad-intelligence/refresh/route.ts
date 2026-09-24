@@ -20,6 +20,8 @@ import {
 } from "@/lib/ad-intelligence/jobs/start-collection";
 
 export const runtime = "nodejs";
+// Run next to the Supabase database (ap-southeast-2 / Sydney).
+export const preferredRegion = "syd1";
 export const dynamic = "force-dynamic";
 
 const MIN_REFRESH_INTERVAL_MS = 10 * 60_000;
