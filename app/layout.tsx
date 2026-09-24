@@ -1,5 +1,8 @@
 import "./globals.css";
 import type { Metadata } from "next";
+import { Plus_Jakarta_Sans } from "next/font/google";
+
+const uiFont = Plus_Jakarta_Sans({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"], variable: "--zt-font", display: "swap" });
 
 export const metadata: Metadata = {
   title: "Zooptrack — Know what makes money, what the market is doing, and what to do next",
@@ -8,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="light" suppressHydrationWarning>
+    <html lang="en" data-theme="light" className={uiFont.variable} suppressHydrationWarning>
       <body>
         {children}
         <footer className="site-footer-global">
