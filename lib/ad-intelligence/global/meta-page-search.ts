@@ -953,6 +953,13 @@ async function createSuggestionSession(
       },
     });
 
+  // Page lookup reads text only; downloading ad images/videos just fills /tmp.
+  await context.route("**/*", (route) =>
+    ["image", "media", "font"].includes(route.request().resourceType())
+      ? route.abort()
+      : route.continue(),
+  );
+
   const page =
     await context.newPage();
 

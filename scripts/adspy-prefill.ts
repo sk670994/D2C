@@ -102,7 +102,7 @@ async function main() {
 
   // 1) Tracked / watched brands first — these are what paying users look at.
   try {
-    const tracked = await refreshTrackedAdSpy();
+    const tracked = await refreshTrackedAdSpy({ depth: "deep" });
     await drain();
     stats.tracked = tracked.dispatched;
     console.log(`tracked brands refreshed: ${tracked.dispatched}/${tracked.targets}`);

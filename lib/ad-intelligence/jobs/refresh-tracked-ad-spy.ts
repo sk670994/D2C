@@ -49,7 +49,10 @@ async function listWatchlistTargets(): Promise<Target[]> {
     }));
 }
 
-export async function refreshTrackedAdSpy(): Promise<{
+export async function refreshTrackedAdSpy(options: {
+  /** "deep" = full history; only for the long-running nightly job, not the 60s Vercel cron. */
+  depth?: "quick" | "deep";
+} = {}): Promise<{
   reapedRequests: number;
   recoveredRuns: number;
   targets: number;
@@ -110,6 +113,7 @@ export async function refreshTrackedAdSpy(): Promise<{
         // A little under the refresh period so a daily cron always qualifies.
         minIntervalMs: Math.max(1, target.refreshHours - 2) * 60 * 60 * 1000,
         reason: "scheduled",
+        depth: options.depth,
       });
 
       if (result.dispatched) dispatched += 1;
