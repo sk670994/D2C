@@ -21,9 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 330
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -35,7 +35,10 @@ jobs:
         run: npx playwright-core install --with-deps chromium
 
       - name: Allow server-only modules outside Next.js
-        run: echo "" > node_modules/server-only/index.js
+        run: |
+          mkdir -p node_modules/server-only
+          echo '{"name":"server-only","version":"0.0.1","main":"index.js"}' > node_modules/server-only/package.json
+          echo "" > node_modules/server-only/index.js
 
       - name: Collect ads
         env:
