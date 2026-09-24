@@ -1,7 +1,8 @@
 ﻿import "server-only";
 
 import path from "node:path";
-import { existsSync } from "node:fs";
+import os from "node:os";
+import { existsSync, readdirSync, rmSync, statSync, statfsSync } from "node:fs";
 
 import {
   chromium as playwrightChromium,
@@ -36,7 +37,8 @@ import {
 } from "../meta/graphql-identity";
 import { extractLibraryPage, normalizeLibraryNode } from "../meta/library-json";
 
-const META_LIBRARY_URL = "https://www.facebook.com/ads/library/";
+// Overridable only for local tests against a mock Ad Library.
+const META_LIBRARY_URL = process.env.ADSPY_META_LIBRARY_URL || "https://www.facebook.com/ads/library/";
 const DEFAULT_COUNTRY = "IN";
 const QUICK_MAX_SCROLLS = 14;
 const QUICK_TARGET = 30;
@@ -97,6 +99,8 @@ async function getBrowser(): Promise<Browser> {
   browser = null;
   if (!browserPromise) {
     browserPromise = (async () => {
+      const cleaned = removeStaleProfiles();
+      if (cleaned) console.info("[MetaProvider] removed stale browser profiles", { cleaned, tmpFreeMb: tmpFreeMb() });
       const local = process.platform === "win32" || process.env.IS_LOCAL === "true";
       let executablePath = "";
       let args: string[] = [];
@@ -128,6 +132,66 @@ async function getBrowser(): Promise<Browser> {
     });
   }
   return browserPromise;
+}
+
+/** Free MB in the temp dir (for logs; Chromium needs >64MB there). */
+function tmpFreeMb(): number | null {
+  try {
+    const st = statfsSync(os.tmpdir());
+    return Math.round((st.bavail * st.bsize) / 1_048_576);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A function killed at its time limit never runs `finally`, so Chromium
+ * profiles leak into /tmp and fill it (FILE_ERROR_NO_SPACE). Remove profile
+ * dirs older than 10 minutes before launching a new browser.
+ */
+function removeStaleProfiles(): number {
+  let removed = 0;
+  try {
+    const dir = os.tmpdir();
+    const cutoff = Date.now() - 10 * 60_000;
+    for (const name of readdirSync(dir)) {
+      if (!/^playwright_chromiumdev_profile-|^core\.chrom/.test(name)) continue;
+      const full = path.join(dir, name);
+      try {
+        if (statSync(full).mtimeMs < cutoff) {
+          rmSync(full, { recursive: true, force: true });
+          removed += 1;
+        }
+      } catch {
+        // in use or already gone
+      }
+    }
+  } catch {
+    // tmp not listable: nothing to clean
+  }
+  return removed;
+}
+
+/** Close and forget the shared browser (next call relaunches cleanly). */
+async function resetBrowser(): Promise<void> {
+  const current = browser;
+  browser = null;
+  if (current) await current.close().catch(() => undefined);
+}
+
+/** On Vercel, one scrape per instance at a time: they share one browser and /tmp. */
+let scrapeQueue: Promise<unknown> = Promise.resolve();
+function serialize<T>(task: () => Promise<T>): Promise<T> {
+  const run = scrapeQueue.then(task, task);
+  scrapeQueue = run.catch(() => undefined);
+  return run;
+}
+
+const IS_SERVERLESS = Boolean(process.env.VERCEL) && process.env.ADSPY_BROWSER !== "playwright";
+
+function isDeadBrowserError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Target page, context or browser has been closed|Browser has been closed|browser has disconnected/i.test(message);
 }
 
 function buildLibraryUrl(input: AdSearchInput): string {
@@ -628,7 +692,31 @@ async function scrapeOnce(
   input: AdSearchInput,
   onBatch?: (ads: CompetitorAd[]) => Promise<void> | void,
 ): Promise<CompetitorAd[]> {
+  const run = async () => {
+    try {
+      return await scrapeWithBrowser(input, onBatch);
+    } catch (error) {
+      // A browser left half-dead by an earlier crash: relaunch once, never loop.
+      if (!isDeadBrowserError(error)) throw error;
+      console.warn("[MetaProvider] browser was dead; relaunching once", { tmpFreeMb: tmpFreeMb() });
+      await resetBrowser();
+      return scrapeWithBrowser(input, onBatch);
+    } finally {
+      // Serverless: never keep Chromium between jobs (leaks /tmp and memory).
+      if (IS_SERVERLESS) await resetBrowser();
+    }
+  };
+  return IS_SERVERLESS ? serialize(run) : run();
+}
+
+async function scrapeWithBrowser(
+  input: AdSearchInput,
+  onBatch?: (ads: CompetitorAd[]) => Promise<void> | void,
+): Promise<CompetitorAd[]> {
   const pageUrl = buildLibraryUrl(input);
+  const deadlineAt = input.deadlineAt ?? null;
+  const remaining = () => (deadlineAt ? deadlineAt - Date.now() : Number.POSITIVE_INFINITY);
+  const outOfTime = () => remaining() <= 1_500;
   const quick = input.collectionDepth !== "deep";
   const deepCap = Number(process.env.ADSPY_DEEP_MAX_SCROLLS);
   const maxScrolls = quick
@@ -710,12 +798,15 @@ async function scrapeOnce(
       pendingScans.add(task);
     });
 
-    await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
-    await page.waitForLoadState("load", { timeout: 10_000 }).catch(() => undefined);
+    const navTimeout = Math.max(5_000, Math.min(NAV_TIMEOUT, remaining() - 5_000));
+    await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: navTimeout });
+    await page
+      .waitForLoadState("load", { timeout: Math.max(1_000, Math.min(10_000, remaining() - 3_000)) })
+      .catch(() => undefined);
     absorb(await page.content().catch(() => ""));
 
     // No JSON in the HTML yet: give the page a moment, then read again.
-    if (state.jsonResponses === 0) {
+    if (state.jsonResponses === 0 && !outOfTime()) {
       await page.waitForTimeout(INITIAL_WAIT);
       absorb(await page.content().catch(() => ""));
     }
@@ -746,6 +837,8 @@ async function scrapeOnce(
 
     let stableRounds = 0;
     let previousCount = -1;
+    let retriedAtCount = -1;
+    let stoppedBy: "done" | "deadline" | "rate_limited" = "done";
     const jsonStableLimit = quick ? 2 : 6;
 
     for (let scroll = 0; scroll <= maxScrolls; scroll += 1) {
@@ -756,16 +849,28 @@ async function scrapeOnce(
       if (collected.size >= target) break;
       if (quick && jsonMode) break; // quick = Meta's first page (~30 ads), no scrolling
       if (jsonMode && state.hasNextPage === false) break; // Meta says there is nothing more
+      // Meta's own total reached (exact page search): nothing left to fetch.
+      if (input.advertiserPageId && metaIdentity.totalCount && collected.size >= metaIdentity.totalCount) break;
+      if (outOfTime()) {
+        stoppedBy = "deadline";
+        break;
+      }
 
       if (state.rateLimitedAt && Date.now() - state.rateLimitedAt < 20_000) {
         // Meta asked us to slow down (error 1675004): back off, then continue.
+        if (remaining() < 20_000) {
+          stoppedBy = "rate_limited";
+          break;
+        }
         await page.waitForTimeout(15_000);
         state.rateLimitedAt = 0;
       }
 
       const before = state.jsonResponses;
       const nextResponse = page
-        .waitForResponse((r) => r.url().includes("/api/graphql") && r.request().method() === "POST", { timeout: 5_000 })
+        .waitForResponse((r) => r.url().includes("/api/graphql") && r.request().method() === "POST", {
+          timeout: Math.max(500, Math.min(5_000, remaining() - 1_000)),
+        })
         .catch(() => null);
       const movement = await scrollToRevealMore(page);
       if (!quick) await clickPaginationControls(page);
@@ -779,20 +884,24 @@ async function scrapeOnce(
 
       const grew = collected.size > previousCount;
       previousCount = collected.size;
-      if (grew || state.jsonResponses > before || (!jsonMode && movement.moved)) stableRounds = 0;
+      if (grew || (!jsonMode && (state.jsonResponses > before || movement.moved))) stableRounds = 0;
       else stableRounds += 1;
 
       if (jsonMode && stableRounds >= jsonStableLimit) {
-        // Re-trigger lazy loading once from the top of the last card before giving up.
+        // Re-trigger lazy loading once before giving up. Only NEW ads count as
+        // progress: Meta fires unrelated /api/graphql calls all the time, and
+        // treating those as progress kept deep scrapes running for 40+ minutes.
+        if (retriedAtCount === collected.size || outOfTime()) break;
+        retriedAtCount = collected.size;
         await page.mouse.wheel(0, -600).catch(() => undefined);
         await page.waitForTimeout(300);
         await page.mouse.wheel(0, 2400).catch(() => undefined);
-        const retry = await page
-          .waitForResponse((r) => r.url().includes("/api/graphql"), { timeout: 4_000 })
-          .catch(() => null);
-        if (!retry) break;
-        await retry.text().catch(() => undefined);
+        await page
+          .waitForResponse((r) => r.url().includes("/api/graphql"), { timeout: Math.max(500, Math.min(4_000, remaining() - 1_000)) })
+          .then((r) => r.text())
+          .catch(() => undefined);
         await Promise.allSettled(Array.from(pendingScans));
+        if (collected.size === retriedAtCount) break;
         stableRounds = 0;
       }
       if (!jsonMode && stableRounds >= stableTarget) break;
@@ -810,6 +919,8 @@ async function scrapeOnce(
       collected: collected.size,
       metaTotal: metaIdentity.totalCount,
       hasNextPage: state.hasNextPage,
+      stoppedBy,
+      tmpFreeMb: tmpFreeMb(),
       seconds: Math.round((Date.now() - startedAt) / 1000),
     });
 
