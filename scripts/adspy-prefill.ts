@@ -68,8 +68,36 @@ async function drain() {
 const timeLeft = () => budgetMs - (Date.now() - started);
 const mins = (ms: number) => (ms / 60_000).toFixed(1);
 
+/**
+ * tsx (esbuild keepNames) wraps functions with a `__name` helper. Functions
+ * sent into the browser via page.evaluate then fail with
+ * "__name is not defined". Define it inside every page we open.
+ */
+async function patchBrowserForTsx() {
+  const { chromium } = await import("playwright-core");
+  const shim = "globalThis.__name = globalThis.__name || ((f) => f);";
+  const launch = chromium.launch.bind(chromium);
+  chromium.launch = (async (...args: Parameters<typeof chromium.launch>) => {
+    const browser = await launch(...args);
+    const newContext = browser.newContext.bind(browser);
+    browser.newContext = (async (...a: Parameters<typeof browser.newContext>) => {
+      const context = await newContext(...a);
+      await context.addInitScript(shim);
+      return context;
+    }) as typeof browser.newContext;
+    const newPage = browser.newPage.bind(browser);
+    browser.newPage = (async (...a: Parameters<typeof browser.newPage>) => {
+      const page = await newPage(...a);
+      await page.addInitScript(shim);
+      return page;
+    }) as typeof browser.newPage;
+    return browser;
+  }) as typeof chromium.launch;
+}
+
 async function main() {
   if (!userId) throw new Error("Missing ADSPY_SYSTEM_USER_ID.");
+  await patchBrowserForTsx();
   const stats = { tracked: 0, collected: 0, skippedRecent: 0, noPage: 0, errors: 0 };
 
   // 1) Tracked / watched brands first — these are what paying users look at.
