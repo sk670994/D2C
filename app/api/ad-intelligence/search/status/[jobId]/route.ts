@@ -14,6 +14,8 @@ import {
 import type { CollectionJob } from "@/lib/ad-intelligence/global/types";
 
 export const runtime = "nodejs";
+// Run next to the Supabase database (ap-southeast-2 / Sydney).
+export const preferredRegion = "syd1";
 export const dynamic = "force-dynamic";
 
 const JOB_STALE_AFTER_MS =
