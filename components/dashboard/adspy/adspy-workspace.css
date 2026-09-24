@@ -381,3 +381,66 @@ html[data-theme="dark"] .azs .azs-tag-offer { background: rgba(251, 146, 60, 0.1
   .azs .azs-adv-actions .azs-btn { width: 100%; padding: 0 8px; }
   .azs .azs-adv-actions .azs-btn-primary { grid-column: 1 / -1; order: -1; }
 }
+
+/* ---------- v3: results tabs, summary strip, feed-style ad cards ---------- */
+.azs .azs-strip { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 20px; padding: 0 4px; font-size: 13.5px; color: var(--azs-muted); }
+.azs .azs-strip strong { color: var(--azs-ink); font-size: 16px; letter-spacing: -0.01em; }
+.azs .azs-strip.is-loading { gap: 12px; }
+.azs .azs-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--azs-line); }
+.azs .azs-tabs button { display: inline-flex; align-items: center; gap: 6px; margin-bottom: -1px; padding: 10px 14px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--azs-muted); font-size: 14px; font-weight: 700; cursor: pointer; }
+.azs .azs-tabs button:hover { color: var(--azs-ink); }
+.azs .azs-tabs button.is-on { color: var(--azs-ink); border-bottom-color: var(--azs-accent); }
+.azs .azs-tabs button span { padding: 1px 7px; border-radius: 999px; background: var(--azs-accent-soft); color: var(--azs-accent); font-size: 12px; }
+.azs .azs-insights-tab { display: grid; gap: 14px; }
+
+.azs .azs-card { box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); }
+.azs .azs-post-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; }
+.azs .azs-post-avatar { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg, #6366f1, #ec4899); color: #fff; font-size: 12px; font-weight: 800; }
+.azs .azs-post-who { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.azs .azs-post-name { padding: 0; border: 0; background: none; color: var(--azs-ink); font-size: 13px; font-weight: 700; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.azs button.azs-post-name { cursor: pointer; }
+.azs button.azs-post-name:hover { color: var(--azs-accent); text-decoration: underline; }
+.azs .azs-post-who small { color: var(--azs-soft); font-size: 11.5px; }
+.azs .azs-live-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18); }
+.azs .azs-post-copy { margin: 0; padding: 0 12px 10px; font-size: 13.5px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.azs .azs-card-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.2s; }
+.azs .azs-card-media.is-playing .azs-card-video { opacity: 1; }
+.azs .azs-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; background: rgba(15, 23, 42, 0.55); color: #fff; backdrop-filter: blur(4px); transition: transform 0.15s; }
+.azs .azs-card:hover .azs-play { transform: translate(-50%, -50%) scale(1.08); }
+.azs .azs-days { position: absolute; left: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; background: rgba(15, 23, 42, 0.72); color: #fff; font-size: 11px; font-weight: 700; }
+.azs .azs-days.is-long { background: #f59e0b; color: #1f1300; }
+.azs .azs-post-cta { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--azs-line); background: var(--azs-surface-2); }
+.azs .azs-post-cta > div { min-width: 0; display: flex; flex-direction: column; }
+.azs .azs-post-cta small { color: var(--azs-soft); font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.azs .azs-post-cta strong { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.azs .azs-post-button { flex: none; padding: 6px 10px; border-radius: 6px; background: var(--azs-line); color: var(--azs-ink); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.azs .azs-card > .azs-card-tags { padding: 8px 12px 12px; }
+.azs .azs-fresh { display: grid; gap: 0; }
+
+@media (max-width: 860px) {
+  .azs .azs-strip { gap: 4px 14px; font-size: 12.5px; }
+  .azs .azs-strip strong { font-size: 14px; }
+  .azs .azs-post-copy { font-size: 12.5px; }
+  .azs .azs-post-head { padding: 8px 10px 6px; }
+  .azs .azs-post-cta { padding: 8px 10px; }
+  .azs .azs-post-button { display: none; }
+}
+.azs .azs-post-copy { min-height: calc(2 * 1.45em + 10px); }
+.azs .azs-post-copy.is-empty { color: var(--azs-soft); font-style: italic; }
+.azs .azs-adv-meta span + span::before { display: none; }
+.azs .azs-adv-meta { gap: 2px 14px; }
+
+@media (max-width: 860px) {
+  .azs .azs-titlebar p { display: none; }
+  .azs .azs-adv { padding: 14px; gap: 12px; }
+  .azs .azs-adv .azs-avatar { width: 40px !important; height: 40px !important; }
+  .azs .azs-adv-main h2 { font-size: 19px; }
+  .azs .azs-adv-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .azs .azs-adv-actions .azs-btn { height: 34px; padding: 0 6px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+  .azs .azs-post-copy { min-height: calc(2 * 1.45em + 6px); padding-bottom: 6px; }
+}
+.azs .azs-post-copy { padding-bottom: 0; margin-bottom: 10px; line-height: 1.5; min-height: 3em; }
+@media (max-width: 860px) {
+  .azs .azs-post-sp { display: none; }
+  .azs .azs-post-copy { margin-bottom: 8px; }
+}
