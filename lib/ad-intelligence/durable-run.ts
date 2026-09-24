@@ -260,14 +260,15 @@ export async function updateAdSpyRunCounts(input: {
 }): Promise<void> {
   const now = new Date().toISOString();
 
-  const { error } = await createGlobalServiceClient()
+  const client = createGlobalServiceClient();
+
+  // Counters are always safe to record.
+  const { error } = await client
     .from("adspy_runs")
     .update({
       discovered_ads: input.discoveredAds,
       normalized_ads: input.normalizedAds,
       persisted_ads: input.persistedAds,
-      stage: input.stage,
-      ...(input.status ? { status: input.status } : {}),
       heartbeat_at: now,
       updated_at: now,
     })
@@ -275,6 +276,22 @@ export async function updateAdSpyRunCounts(input: {
 
   if (error) {
     throw new Error(`Failed to update durable AdSpy run: ${error.message}`);
+  }
+
+  // Status/stage may only change while the run is still active. Writing
+  // "running" onto a finished run re-opened it and violated
+  // adspy_runs_one_active_collection_idx.
+  const { error: statusError } = await client
+    .from("adspy_runs")
+    .update({
+      stage: input.stage,
+      ...(input.status ? { status: input.status } : {}),
+    })
+    .eq("id", input.runId)
+    .in("status", ["queued", "running", "retrying"]);
+
+  if (statusError) {
+    throw new Error(`Failed to update durable AdSpy run status: ${statusError.message}`);
   }
 }
 
