@@ -9,6 +9,7 @@ type Scene = "home" | "radar" | "conveyor" | "ledger" | "unfold" | "cockpit" | "
 
 const nav = [
   ["AdSpy", "/adspy"],
+  ["Brand ads", "/brand"],
   ["Decision Loop", "/decision-loop"],
   ["Pricing", "/pricing"],
   ["FAQ", "/faq"],
@@ -214,7 +215,7 @@ export function ZooptrackHome() {
       eyebrow="D2C GROWTH INTELLIGENCE / LIVE SYSTEM"
       title={<>Know what makes money.<br /><em>Know what to do next.</em></>}
       copy="Zooptrack connects your economics, market signals and competitor creatives into one decision loop — so growth decisions come with evidence."
-      actions={<><Button href="/login">Enter the command center</Button><Button href="/adspy" secondary>Explore AdSpy</Button></>}
+      actions={<><Button href="/login">Enter the command center</Button><Button href="/brand" secondary>See competitor ads free</Button></>}
     >
       <section className={styles.brief}>
         <div><span className={styles.kicker}>LIVE BRIEF / 09:42</span><strong>ATTENTION 01</strong><p>CAC is drifting above the allowable guardrail.</p><small>Meta prospecting / estimated leakage ₹18.4k weekly</small></div>
