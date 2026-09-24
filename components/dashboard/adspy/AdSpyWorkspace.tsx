@@ -25,6 +25,7 @@ import {
   Play,
   RefreshCw,
   Search,
+  Share2,
   Sparkles,
   Tag,
   TrendingUp,
@@ -996,6 +997,17 @@ function AdvertiserHeader({
     }
   };
 
+  const [copied, setCopied] = useState(false);
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      // Clipboard blocked: the address bar already holds the shareable URL.
+    }
+  };
+
   const metaUrl = target.pageId
     ? `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=${target.country}&view_all_page_id=${target.pageId}`
     : `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=${target.country}&q=${encodeURIComponent(target.query)}&search_type=keyword_unordered`;
@@ -1030,6 +1042,25 @@ function AdvertiserHeader({
           <RefreshCw size={14} className={collecting ? "azs-spin" : ""} />
           {collecting ? "Collecting…" : "Refresh data"}
         </button>
+        <button type="button" className="azs-btn azs-btn-ghost" onClick={() => void copyLink()}>
+          {copied ? <Check size={14} /> : <Share2 size={14} />}
+          {copied ? "Link copied" : "Share"}
+        </button>
+        {total > 0 && (
+          <button
+            type="button"
+            className="azs-btn azs-btn-primary"
+            onClick={() =>
+              window.dispatchEvent(
+                new CustomEvent("zooptrack:ask-zwirk", {
+                  detail: `Study ${name}'s Meta ads (${total} indexed, country ${target.country}). Summarise their main hooks, offers, formats and languages, point out the gaps they are not covering, and give me 3 counter-ad concepts to test for my brand (hook, 20-second script outline, offer, format, language).`,
+                }),
+              )
+            }
+          >
+            <Sparkles size={14} /> Counter-strategy
+          </button>
+        )}
         <a className="azs-btn azs-btn-ghost" href={metaUrl} target="_blank" rel="noreferrer">
           <ExternalLink size={14} /> Meta Ad Library
         </a>
