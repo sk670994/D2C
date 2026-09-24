@@ -1,0 +1,153 @@
+/*
+ * AdSpy "cinema" theme — dark, media-first, always on for the AdSpy page.
+ * Loaded after adspy-workspace.css and only overrides it.
+ */
+
+html .adspy-page {
+  background: #07080c;
+  color-scheme: dark;
+}
+
+html .adspy-page .azs.azs {
+  --azs-bg: #07080c;
+  --azs-surface: #10131b;
+  --azs-surface-2: #161a24;
+  --azs-ink: #f2f4f8;
+  --azs-muted: #a3acbd;
+  --azs-soft: #6f7a8f;
+  --azs-line: rgba(255, 255, 255, 0.08);
+  --azs-line-strong: rgba(255, 255, 255, 0.14);
+  --azs-accent: #6f9bff;
+  --azs-accent-soft: rgba(111, 155, 255, 0.14);
+  --azs-good: #34d399;
+  --azs-good-soft: rgba(52, 211, 153, 0.14);
+  --azs-warn: #fbbf24;
+  --azs-bad: #f87171;
+  --azs-bad-soft: rgba(248, 113, 113, 0.12);
+  --azs-mark: rgba(250, 204, 21, 0.35);
+  --azs-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --azs-display: var(--font-display), "Space Grotesk", "Aptos", "Segoe UI", system-ui, sans-serif;
+  isolation: isolate;
+}
+
+/* ---------- app bar ---------- */
+html .adspy-page .zt-appbar { background: rgba(7, 8, 12, 0.78); border-bottom-color: rgba(255, 255, 255, 0.06); }
+html .adspy-page .zt-brand img { filter: brightness(0) invert(1); }
+html .adspy-page .zt-appnav a { color: #a3acbd; }
+html .adspy-page .zt-appnav a:hover,
+html .adspy-page .zt-appnav a.active { color: #fff; background: rgba(255, 255, 255, 0.08); }
+html .adspy-page .zt-app-email { color: #6f7a8f; }
+html .adspy-page .zt-app-actions button { background: rgba(255, 255, 255, 0.06) !important; color: #e5e9f2 !important; border: 1px solid rgba(255, 255, 255, 0.12) !important; box-shadow: none !important; }
+
+/* ---------- hero ---------- */
+html .adspy-page .azs .azs-titlebar { position: relative; }
+html .adspy-page .azs .azs-titlebar.is-hero { padding: 36px 0 14px; max-width: 860px; }
+html .adspy-page .azs .azs-titlebar.is-hero::before {
+  content: "";
+  position: absolute;
+  inset: -120px -240px auto -240px;
+  height: 460px;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(560px 240px at 22% 40%, rgba(111, 155, 255, 0.28), transparent 70%),
+    radial-gradient(520px 240px at 72% 25%, rgba(236, 72, 153, 0.2), transparent 70%);
+}
+html .adspy-page .azs .azs-eyebrow { display: inline-block; color: var(--azs-accent); font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+html .adspy-page .azs .azs-titlebar h1 { font-family: var(--azs-display); }
+html .adspy-page .azs .azs-titlebar.is-hero h1 { margin: 10px 0 12px; font-size: clamp(34px, 5.2vw, 60px); line-height: 1.02; letter-spacing: -0.035em; }
+html .adspy-page .azs .azs-titlebar.is-hero h1 em { font-style: normal; background: linear-gradient(90deg, #6f9bff, #c084fc 55%, #f472b6); -webkit-background-clip: text; background-clip: text; color: transparent; }
+html .adspy-page .azs .azs-titlebar p { color: var(--azs-muted); }
+html .adspy-page .azs .azs-titlebar.is-hero p { max-width: 640px; font-size: 16px; line-height: 1.55; }
+html .adspy-page .azs .azs-titlebar:not(.is-hero) p { display: none; }
+
+/* ---------- search ---------- */
+html .adspy-page .azs .azs-search { background: rgba(7, 8, 12, 0.82); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+html .adspy-page .azs .azs-combobox,
+html .adspy-page .azs .azs-select,
+html .adspy-page .azs .azs-segment { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.12); box-shadow: none; }
+html .adspy-page .azs .azs-combobox:focus-within { border-color: var(--azs-accent); box-shadow: 0 0 0 4px rgba(111, 155, 255, 0.18), 0 0 40px rgba(111, 155, 255, 0.15); }
+html .adspy-page .azs .azs-select select option { background: #10131b; color: #f2f4f8; }
+html .adspy-page .azs .azs-dropdown { background: #11141c; border-color: rgba(255, 255, 255, 0.12); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6); }
+
+/* ---------- buttons ---------- */
+html .adspy-page .azs.azs .azs-btn-primary { background: linear-gradient(135deg, #5b8cff, #8b5cf6); color: #fff; border: 0; }
+html .adspy-page .azs.azs .azs-btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
+html .adspy-page .azs .azs-btn-ghost { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.12); color: var(--azs-ink); }
+html .adspy-page .azs .azs-btn-ghost:hover:not(:disabled) { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.2); }
+
+/* ---------- advertiser header: blurred backdrop from their own ad ---------- */
+html .adspy-page .azs .azs-adv { position: relative; overflow: hidden; padding: 26px 26px; border-radius: 20px; background: #0e1118; border-color: rgba(255, 255, 255, 0.08); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45); }
+html .adspy-page .azs .azs-adv::before { content: ""; position: absolute; inset: -60px; z-index: 0; background-image: var(--azs-hero, none); background-size: cover; background-position: center; filter: blur(48px) saturate(1.4); opacity: 0.45; }
+html .adspy-page .azs .azs-adv::after { content: ""; position: absolute; inset: 0; z-index: 0; background: linear-gradient(90deg, rgba(10, 12, 18, 0.94) 25%, rgba(10, 12, 18, 0.6)); }
+html .adspy-page .azs .azs-adv > * { position: relative; z-index: 1; }
+html .adspy-page .azs .azs-adv-main h2 { font-family: var(--azs-display); font-size: 34px; letter-spacing: -0.03em; }
+
+/* ---------- summary strip + tabs ---------- */
+html .adspy-page .azs .azs-strip strong { font-family: var(--azs-display); font-size: 20px; }
+html .adspy-page .azs .azs-tabs button { font-family: var(--azs-display); font-size: 15px; }
+
+/* ---------- landing rows ---------- */
+html .adspy-page .azs .azs-landing { gap: 30px; margin-top: 18px; }
+html .adspy-page .azs .azs-rowsec { display: grid; gap: 12px; min-width: 0; }
+html .adspy-page .azs .azs-rowhead { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+html .adspy-page .azs .azs-landing .azs-rowhead h2 { display: block; margin: 0; font-family: var(--azs-display); font-size: 24px; font-weight: 700; color: var(--azs-ink); letter-spacing: -0.02em; }
+html .adspy-page .azs .azs-rowhead p { margin: 2px 0 0; color: var(--azs-muted); font-size: 13.5px; }
+html .adspy-page .azs .azs-rownav { display: flex; gap: 8px; }
+html .adspy-page .azs .azs-rownav button { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(255, 255, 255, 0.05); color: var(--azs-ink); cursor: pointer; }
+html .adspy-page .azs .azs-rownav button:hover { background: rgba(255, 255, 255, 0.12); }
+html .adspy-page .azs .azs-row { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 236px); gap: 16px; overflow-x: auto; padding: 4px 2px 10px; scroll-snap-type: x mandatory; scrollbar-width: none; }
+html .adspy-page .azs .azs-row::-webkit-scrollbar { display: none; }
+html .adspy-page .azs .azs-row > * { scroll-snap-align: start; }
+
+/* ---------- ad cards: media first, text below, no box ---------- */
+html .adspy-page .azs .azs-card { overflow: visible; border: 0; border-radius: 16px; background: transparent; box-shadow: none; }
+html .adspy-page .azs .azs-card:hover,
+html .adspy-page .azs .azs-card:focus-visible { transform: none; box-shadow: none; }
+html .adspy-page .azs .azs-card:focus-visible .azs-card-media { outline: 2px solid var(--azs-accent); outline-offset: 3px; }
+html .adspy-page .azs .azs-card-media { border-radius: 14px; overflow: hidden; background: #11151e; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45); transition: transform 0.25s ease, box-shadow 0.25s ease; }
+html .adspy-page .azs .azs-card:hover .azs-card-media { transform: translateY(-4px); box-shadow: 0 22px 44px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.1); }
+html .adspy-page .azs .azs-card-overlay { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 8px; padding: 36px 10px 10px; background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.82)); }
+html .adspy-page .azs .azs-card-overlay .azs-post-name { color: #fff; font-size: 13px; }
+html .adspy-page .azs .azs-card-overlay small { color: rgba(255, 255, 255, 0.72); font-size: 11px; }
+html .adspy-page .azs .azs-post-avatar { width: 28px; height: 28px; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85); }
+html .adspy-page .azs .azs-days { top: 8px; bottom: auto; left: 8px; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(6px); }
+html .adspy-page .azs .azs-days.is-long { background: #fbbf24; color: #1a1200; }
+html .adspy-page .azs .azs-format { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(6px); }
+html .adspy-page .azs .azs-play { width: 50px; height: 50px; background: rgba(255, 255, 255, 0.16); border: 1px solid rgba(255, 255, 255, 0.35); backdrop-filter: blur(8px); }
+html .adspy-page .azs .azs-card-text { display: grid; gap: 8px; padding: 10px 2px 2px; }
+html .adspy-page .azs .azs-post-copy { margin: 0; padding: 0; min-height: 3em; color: #dfe4ee; font-size: 13.5px; }
+html .adspy-page .azs .azs-post-copy.is-empty { color: var(--azs-soft); }
+html .adspy-page .azs .azs-post-cta { padding: 0; border: 0; background: transparent; }
+html .adspy-page .azs .azs-post-cta strong { color: var(--azs-ink); font-size: 12.5px; }
+html .adspy-page .azs .azs-post-cta small { color: var(--azs-soft); }
+html .adspy-page .azs .azs-post-button { display: inline-block; padding: 5px 11px; border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 999px; background: rgba(255, 255, 255, 0.06); color: var(--azs-ink); font-size: 11.5px; }
+html .adspy-page .azs .azs-card-text .azs-card-tags { padding: 0; }
+html .adspy-page .azs .azs-tag { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.1); color: var(--azs-muted); }
+html .adspy-page .azs .azs-tag-offer { background: rgba(251, 191, 36, 0.12); border-color: rgba(251, 191, 36, 0.35); color: #fcd34d; }
+html .adspy-page .azs .azs-grid { gap: 22px 16px; }
+html .adspy-page .azs .azs-sk-media { border-radius: 14px; }
+
+/* ---------- panels, filters, modal ---------- */
+html .adspy-page .azs .azs-filters,
+html .adspy-page .azs .azs-panel,
+html .adspy-page .azs .azs-snapshot,
+html .adspy-page .azs .azs-onboard,
+html .adspy-page .azs .azs-empty { background: rgba(255, 255, 255, 0.03); }
+html .adspy-page .azs .azs-modal-backdrop { background: rgba(0, 0, 0, 0.72); }
+html .adspy-page .azs .azs-modal { background: #0f121a; border-color: rgba(255, 255, 255, 0.1); }
+html .adspy-page .azs .azs-status { background: rgba(0, 0, 0, 0.6); color: #fff; }
+
+@media (max-width: 860px) {
+  html .adspy-page .azs .azs-titlebar.is-hero { padding: 18px 0 8px; }
+  html .adspy-page .azs .azs-titlebar.is-hero p { font-size: 14px; }
+  html .adspy-page .azs .azs-titlebar.is-hero::before { inset: -80px -60px auto -60px; height: 320px; }
+  html .adspy-page .azs .azs-rownav { display: none; }
+  html .adspy-page .azs .azs-row { grid-auto-columns: 62%; gap: 12px; }
+  html .adspy-page .azs .azs-landing .azs-rowhead h2 { font-size: 20px; }
+  html .adspy-page .azs .azs-adv { padding: 16px; }
+  html .adspy-page .azs .azs-adv-main h2 { font-size: 24px; }
+  html .adspy-page .azs .azs-grid { gap: 18px 10px; }
+  html .adspy-page .azs .azs-post-copy { font-size: 12.5px; }
+  html .adspy-page .azs .azs-card-overlay small { display: none; }
+}
