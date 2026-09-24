@@ -5,6 +5,7 @@ import type { AdPlatform, CompetitorAd } from "../types";
 import { detectLanguages } from "./language";
 import { extractGeography } from "./geography";
 import { createGlobalServiceClient } from "./supabase";
+import { isStoredMediaUrl, persistAdMedia } from "./media-store";
 
 function normalize(value: string | null | undefined): string {
   return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -59,6 +60,12 @@ function observationKey(input: { creativeId: string; country: string | null; reg
 export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOrUpdated: number; observations: number; languages: number; markets: number }> {
   if (!ads.length) return { insertedOrUpdated: 0, observations: 0, languages: 0, markets: 0 };
 
+  // Keep previews alive after Meta's CDN links expire (collector only by default).
+  await persistAdMedia(ads).catch((error) => {
+    console.error("[AdSpy media] rehost skipped:", error instanceof Error ? error.message : error);
+    return 0;
+  });
+
   const client = createGlobalServiceClient();
   const now = new Date().toISOString();
   const day = now.slice(0, 10);
@@ -111,6 +118,8 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
     first_seen_at: string | null;
     last_seen_at: string | null;
     advertiser_id: string | null;
+    image_url: string | null;
+    thumbnail_url: string | null;
   }> = [];
 
   if (externalKeys.length) {
@@ -120,7 +129,7 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
     } = await client
       .from("ad_intelligence_creatives")
       .select(
-        "platform,external_ad_key,first_seen_at,last_seen_at,advertiser_id",
+        "platform,external_ad_key,first_seen_at,last_seen_at,advertiser_id,image_url,thumbnail_url",
       )
       .in(
         "external_ad_key",
@@ -144,6 +153,8 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
         first_seen_at: string | null;
         last_seen_at: string | null;
         advertiser_id: string | null;
+        image_url: string | null;
+        thumbnail_url: string | null;
       }
     >(
       existingCreativeHistory.map(
@@ -159,6 +170,8 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
             advertiser_id:
               row.advertiser_id ??
               null,
+            image_url: row.image_url ?? null,
+            thumbnail_url: row.thumbnail_url ?? null,
           },
         ],
       ),
@@ -197,9 +210,10 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
     creator_name: ad.creatorName ?? null,
     partnership_type: ad.partnershipType ?? "unknown",
     creative_type: ad.creativeType ?? "unknown",
-    image_url: ad.imageUrl ?? null,
+    // A stored (non-expiring) copy is never replaced by a fresh Meta CDN link.
+    image_url: isStoredMediaUrl(history?.image_url) ? history!.image_url : ad.imageUrl ?? null,
     video_url: ad.videoUrl ?? null,
-    thumbnail_url: ad.thumbnailUrl ?? null,
+    thumbnail_url: isStoredMediaUrl(history?.thumbnail_url) ? history!.thumbnail_url : ad.thumbnailUrl ?? null,
     video_duration_seconds: ad.videoDurationSeconds ?? null,
     primary_text: ad.primaryText ?? null,
     headline: ad.headline ?? null,
