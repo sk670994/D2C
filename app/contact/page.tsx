@@ -1,3 +1,11 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Contact the Zooptrack team",
+  description: "Questions about AdSpy, pricing, agency plans or a demo? Write to the Zooptrack team.",
+  alternates: { canonical: "/contact" },
+};
+
 export default function ContactPage() {
   return (
     <main className="main policy-page contact-page">
