@@ -33,6 +33,12 @@ export type AdSearchInput = {
   advertiserPageId?: string | null;
 
   /**
+   * Wall-clock deadline (epoch ms). Collectors must stop and return what they
+   * have before this moment, so a serverless function is never killed mid-write.
+   */
+  deadlineAt?: number | null;
+
+  /**
    * Quick user search can use active ads.
    * Deep historical collection should use all ads
    * where the underlying source supports it.
