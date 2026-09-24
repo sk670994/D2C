@@ -29,24 +29,26 @@ function differences(columns: Column[]): string[] {
   const pace = [...ready].sort((a, b) => b.facets.momentum.launched30d - a.facets.momentum.launched30d);
   const [fast, slow] = [pace[0], pace[pace.length - 1]];
   if (fast.facets.momentum.launched30d > 0 && fast.facets.momentum.launched30d !== slow.facets.momentum.launched30d) {
-    const ratio = slow.facets.momentum.launched30d > 0 ? fast.facets.momentum.launched30d / slow.facets.momentum.launched30d : null;
+    const a = fast.facets.momentum.launched30d;
+    const b = slow.facets.momentum.launched30d;
+    const ratio = b >= 5 ? a / b : null;
     out.push(
-      ratio && ratio >= 1.3
-        ? `${name(fast)} launched ${ratio.toFixed(1)}× more new ads than ${name(slow)} in the last 30 days (${formatInt(fast.facets.momentum.launched30d)} vs ${formatInt(slow.facets.momentum.launched30d)}).`
-        : `${name(fast)} launched the most new ads in the last 30 days (${formatInt(fast.facets.momentum.launched30d)}).`,
+      ratio && ratio >= 1.5 && ratio < 10
+        ? `${name(fast)} is testing about ${Math.round(ratio)}× as many new ads as ${name(slow)} this month (${formatInt(a)} vs ${formatInt(b)}).`
+        : `${name(fast)} launched ${formatInt(a)} new ads this month; ${name(slow)} launched ${formatInt(b)}.`,
     );
   }
 
   const video = ready.map((c) => ({ c, v: share(bucketCount(c.facets, "format", "video"), c.facets.total) }));
   video.sort((a, b) => b.v - a.v);
   if (video[0].v - video[video.length - 1].v >= 20) {
-    out.push(`${name(video[0].c)} is video-led (${video[0].v}% video) while ${name(video[video.length - 1].c)} is at ${video[video.length - 1].v}%.`);
+    out.push(`${name(video[0].c)} leans on video (${video[0].v}% of ads); ${name(video[video.length - 1].c)} uses video in ${video[video.length - 1].v}%.`);
   }
 
   const langSets = ready.map((c) => new Set(c.facets.language.filter((l) => l.count >= Math.max(3, c.facets.total * 0.05)).map((l) => l.label)));
   ready.forEach((c, i) => {
     const only = [...langSets[i]].filter((l) => langSets.every((set, j) => j === i || !set.has(l)));
-    if (only.length) out.push(`Only ${name(c)} runs a meaningful share of ads in ${only.slice(0, 2).join(" and ")}.`);
+    if (only.length) out.push(`Only ${name(c)} is advertising in ${only.slice(0, 2).join(" and ")} — an opening if your buyers speak it.`);
   });
 
   const active = ready.map((c) => ({ c, a: share(bucketCount(c.facets, "status", "active"), c.facets.total) }));
@@ -98,7 +100,7 @@ export function CompareView({ targets, onClose, onRemove }: { targets: SearchTar
 
   const rows: Array<{ label: string; value: (c: Column) => string }> = [
     { label: "Ads indexed", value: (c) => formatInt(c.facets?.total ?? 0) },
-    { label: "Live now", value: (c) => (c.facets ? `${share(bucketCount(c.facets, "status", "active"), c.facets.total)}%` : "–") },
+    { label: "Running now", value: (c) => formatInt(bucketCount(c.facets, "status", "active")) },
     { label: "New in last 30 days", value: (c) => formatInt(c.facets?.momentum.launched30d ?? 0) },
     { label: "New in last 7 days", value: (c) => formatInt(c.facets?.momentum.launched7d ?? 0) },
     { label: "Video share", value: (c) => (c.facets ? `${share(bucketCount(c.facets, "format", "video"), c.facets.total)}%` : "–") },
