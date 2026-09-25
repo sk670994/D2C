@@ -230,7 +230,12 @@ export async function claimAdSpyRequest(input: {
     throw new Error(`Failed to claim durable AdSpy request: ${error.message}`);
   }
 
-  return data ? mapRequest(data) : null;
+  // A plpgsql function that RETURNs NULL for a composite type comes back from
+  // PostgREST as an object whose fields are all null, not as null. Treating
+  // that as a successful claim let workers scrape requests they did not own
+  // (then fail with "is not running or no longer exists").
+  const row = data as { id?: string | null } | null;
+  return row && row.id ? mapRequest(data) : null;
 }
 
 export async function heartbeatAdSpyRun(
