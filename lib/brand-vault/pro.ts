@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
+import { startAdSpyCollection } from "@/lib/ad-intelligence/jobs/start-collection";
 import {
   EMPTY_ECONOMICS,
   type BrandEconomics,
@@ -33,6 +34,7 @@ const LANGUAGE_FALLBACK = ["en", "hi", "hinglish", "ta", "te", "mr", "bn", "gu",
 
 const clean = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
 const normalize = (value: unknown) => clean(value).toLowerCase();
+const compactName = (value: unknown) => normalize(value).replace(/[^a-z0-9]+/g, "");
 
 function safeDate(value: unknown): number | null {
   const ms = value ? new Date(String(value)).getTime() : NaN;
@@ -99,6 +101,43 @@ function ranked(values: string[], total: number, provenance: Provenance = "Deriv
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, 5)
     .map(([label, count]) => ({ label, count, share: percent(count, total), provenance }));
+}
+
+function rankedHooks(rows: RawAd[], total: number): RankedItem[] {
+  const map = new Map<string, { label: string; count: number; score: number; creators: Set<string> }>();
+  for (const row of rows) {
+    const label = firstSentence(row.primary_text ?? row.headline);
+    if (!label) continue;
+    const key = normalize(label);
+    const entry = map.get(key) ?? { label, count: 0, score: 0, creators: new Set<string>() };
+    entry.count += 1;
+    entry.score += row.is_currently_active === false ? 1 : Math.min(90, runningDays(row.first_seen_at, row.last_seen_at));
+    const creator = clean(row.creator_name);
+    if (creator) entry.creators.add(normalize(creator));
+    map.set(key, entry);
+  }
+  return [...map.values()]
+    .sort((a, b) => b.score - a.score || b.creators.size - a.creators.size || b.count - a.count || a.label.localeCompare(b.label))
+    .slice(0, 5)
+    .map((item) => ({ label: item.label, count: item.count, share: percent(item.count, total), provenance: "Derived" }));
+}
+
+function rankedCreators(rows: RawAd[], total: number): RankedItem[] {
+  const map = new Map<string, { label: string; count: number; active: number; longevity: number }>();
+  for (const row of rows) {
+    const label = clean(row.creator_name);
+    if (!label) continue;
+    const key = normalize(label);
+    const entry = map.get(key) ?? { label, count: 0, active: 0, longevity: 0 };
+    entry.count += 1;
+    if (row.is_currently_active !== false) entry.active += 1;
+    entry.longevity += Math.min(90, runningDays(row.first_seen_at, row.last_seen_at));
+    map.set(key, entry);
+  }
+  return [...map.values()]
+    .sort((a, b) => b.active - a.active || b.count - a.count || b.longevity - a.longevity || a.label.localeCompare(b.label))
+    .slice(0, 5)
+    .map((item) => ({ label: item.label, count: item.count, share: percent(item.count, total), provenance: "Source" }));
 }
 
 function parsePrice(value: string | null): number | null {
@@ -194,7 +233,6 @@ export type RawAd = {
   product_name: string | null;
   product_price: number | string | null;
   max_price: number | string | null;
-  country: string | null;
   source_url: string | null;
   thumbnail_url: string | null;
   currency: string | null;
@@ -233,30 +271,67 @@ function mapSupportingAd(row: RawAd, provenance: Provenance = "Source"): Support
   };
 }
 
-async function loadAds(pageId: string, name: string): Promise<RawAd[]> {
+async function resolveIndexedPageId(name: string, country: string): Promise<string | null> {
   const service = createGlobalServiceClient();
-  const byId = await service
-    .from("ad_intelligence_creatives")
-    .select("id,advertiser_name,advertiser_id,creator_name,creative_type,primary_text,headline,offer,call_to_action,first_seen_at,last_seen_at,is_currently_active,product_name,product_price,max_price,country,source_url,thumbnail_url,currency")
-    .eq("platform", "meta")
-    .eq("advertiser_id", pageId)
-    .order("last_seen_at", { ascending: false, nullsFirst: false })
-    .limit(MAX_ADS_PER_COMPETITOR);
+  const result = await service.rpc("adspy_autocomplete_advertisers", {
+    p_query: name,
+    p_platform: "meta",
+    p_country: country,
+    p_limit: 12,
+  });
+  if (result.error || !result.data?.length) return null;
 
-  if (!byId.error && byId.data?.length) return (byId.data ?? []) as RawAd[];
+  const query = compactName(name);
+  for (const candidate of result.data as Array<{ page_id?: string | null; label?: string | null }>) {
+    const pageId = clean(candidate.page_id);
+    const label = compactName(candidate.label);
+    if (!/^\d+$/.test(pageId)) continue;
+    if (!query || !label) continue;
+    if (label === query || label.startsWith(query) || query.startsWith(label)) return pageId;
+  }
+  return null;
+}
 
-  const fallback = await service
+async function loadAds(pageId: string, name: string, country = "IN"): Promise<RawAd[]> {
+  const service = createGlobalServiceClient();
+  const select = "id,advertiser_name,advertiser_id,creator_name,creative_type,primary_text,headline,offer,call_to_action,first_seen_at,last_seen_at,is_currently_active,product_name,product_price,max_price,source_url,thumbnail_url,currency";
+  let resolvedPageId = /^\d+$/.test(pageId) ? pageId : null;
+
+  if (!resolvedPageId) resolvedPageId = await resolveIndexedPageId(name, country);
+
+  if (resolvedPageId) {
+    const byId = await service
+      .from("ad_intelligence_creatives")
+      .select(select)
+      .eq("platform", "meta")
+      .eq("advertiser_id", resolvedPageId)
+      .order("last_seen_at", { ascending: false, nullsFirst: false })
+      .limit(MAX_ADS_PER_COMPETITOR);
+
+    if (!byId.error && byId.data?.length) return (byId.data ?? []) as RawAd[];
+  }
+
+  const exact = await service
     .from("ad_intelligence_creatives")
-    .select("id,advertiser_name,advertiser_id,creator_name,creative_type,primary_text,headline,offer,call_to_action,first_seen_at,last_seen_at,is_currently_active,product_name,product_price,max_price,country,source_url,thumbnail_url,currency")
+    .select(select)
     .eq("platform", "meta")
     .ilike("advertiser_name", name)
     .order("last_seen_at", { ascending: false, nullsFirst: false })
     .limit(MAX_ADS_PER_COMPETITOR);
 
-  if (fallback.error) {
-    throw new Error(`Brand Vault ad query failed for ${name}: ${fallback.error.message}`);
-  }
+  if (!exact.error && exact.data?.length) return (exact.data ?? []) as RawAd[];
 
+  const safeName = clean(name).replace(/[%_]/g, "");
+  if (!safeName) return [];
+  const fallback = await service
+    .from("ad_intelligence_creatives")
+    .select(select)
+    .eq("platform", "meta")
+    .ilike("advertiser_name", `%${safeName}%`)
+    .order("last_seen_at", { ascending: false, nullsFirst: false })
+    .limit(MAX_ADS_PER_COMPETITOR);
+
+  if (fallback.error) throw new Error(`Brand Vault ad query failed for ${name}: ${fallback.error.message}`);
   return (fallback.data ?? []) as RawAd[];
 }
 
@@ -269,6 +344,7 @@ async function loadLanguages(creativeIds: string[], start: number): Promise<Map<
     .from("ad_intelligence_observations")
     .select("creative_id,language,observation_day")
     .gte("observation_day", new Date(start).toISOString().slice(0, 10))
+    .in("creative_id", creativeIds)
     .not("language", "is", null)
     .limit(MAX_LANGUAGE_ROWS);
 
@@ -337,7 +413,15 @@ function buildProducts(rows: RawAd[]): ProductPressure[] {
   }
   const total = rows.length;
   return [...groups.entries()]
-    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+    .sort((a, b) => {
+      const score = (group: RawAd[]) => {
+        const active = group.filter((row) => row.is_currently_active !== false).length;
+        const persistent = group.filter((row) => runningDays(row.first_seen_at, row.last_seen_at) >= 60).length;
+        const longest = Math.min(90, Math.max(...group.map((row) => runningDays(row.first_seen_at, row.last_seen_at)), 0));
+        return active * 3 + persistent * 2 + longest + group.length;
+      };
+      return score(b[1]) - score(a[1]) || b[1].length - a[1].length || a[0].localeCompare(b[0]);
+    })
     .slice(0, 5)
     .map(([, group]) => {
       const activeAds = group.filter((row) => row.is_currently_active !== false).length;
@@ -399,12 +483,32 @@ async function analyzeCompetitor(input: {
   competitor: BrandVaultCompetitor;
   period: BrandVaultPeriod;
   breakEvenPrice: number | null;
+  userId: string;
 }): Promise<CompetitorAnalytics> {
   const now = Date.now();
   const days = periodDays(input.period);
   const recentStart = now - days * DAY_MS;
   const previousStart = now - days * 2 * DAY_MS;
-  const rows = await loadAds(input.competitor.advertiserPageId ?? "", input.competitor.name);
+  const rows = await loadAds(input.competitor.advertiserPageId ?? "", input.competitor.name, input.competitor.country);
+  let collectionState: "indexed" | "collecting" | "empty" = rows.length ? "indexed" : "empty";
+  if (!rows.length) {
+    try {
+      const collection = await startAdSpyCollection({
+        userId: input.userId,
+        query: input.competitor.name,
+        country: input.competitor.country,
+        platform: "meta",
+        mode: "advertiser",
+        pageId: input.competitor.advertiserPageId,
+        minIntervalMs: 30 * 60_000,
+        reason: "user",
+        depth: "quick",
+      });
+      collectionState = collection.dispatched || collection.outcome === "already_running" ? "collecting" : "empty";
+    } catch (error) {
+      console.warn("[BrandVault] collection kickoff failed", input.competitor.name, error);
+    }
+  }
   const filteredRows = rows.filter((row) => {
     const last = safeDate(row.last_seen_at) ?? safeDate(row.first_seen_at);
     return last == null || last >= previousStart;
@@ -468,8 +572,8 @@ async function analyzeCompetitor(input: {
     persistent30,
     persistent60,
     persistent90,
-    topHooks: ranked(recent.map((row) => firstSentence(row.primary_text ?? row.headline) || ""), recent.length),
-    topCreators: ranked(recent.map((row) => row.creator_name).filter((name): name is string => Boolean(name)), recent.length),
+    topHooks: rankedHooks(recent, recent.length),
+    topCreators: rankedCreators(recent, recent.length),
     topLanguages: ranked(languages, languages.length, "Derived"),
     topProducts: products,
     topOffers: offers,
@@ -480,15 +584,16 @@ async function analyzeCompetitor(input: {
     usedCreatorNames: [...new Set(creators.map(normalize).filter(Boolean))].slice(0, 200),
     usedLanguageCodes: [...new Set(languages.map(normalize).filter(Boolean))],
     dataCoverage,
+    collectionState,
   };
 }
 
 function buildGaps(competitors: CompetitorAnalytics[]): BrandVaultAnalytics["gaps"] {
   const active = competitors.filter((item) => item.dataCoverage !== "none");
   const angles = ANGLES.filter((angle) => active.every((item) => (item.angleCoverage[angle] ?? 0) === 0)).map((angle) => angle);
-  const creatorSet = new Set(active.flatMap((item) => item.usedCreatorNames));
+  const creatorUniverse = [...new Set(active.flatMap((item) => item.topCreators.map((row) => normalize(row.label))))].filter(Boolean);
   const creators = active.length >= 2
-    ? [...new Set(active.flatMap((item) => item.topCreators.map((row) => normalize(row.label))))].filter((creator) => creator && !creatorSet.has(creator)).slice(0, 5)
+    ? creatorUniverse.filter((creator) => active.every((item) => !item.usedCreatorNames.includes(creator))).slice(0, 5)
     : [];
   const languageSet = new Set(active.flatMap((item) => item.usedLanguageCodes));
   const languages = LANGUAGE_FALLBACK.filter((language) => !languageSet.has(language)).slice(0, 5);
@@ -522,13 +627,14 @@ function buildCounterBrief(
 }
 
 export async function getBrandVaultAnalytics(input: {
+  userId: string;
   competitors: BrandVaultCompetitor[];
   period: BrandVaultPeriod;
   economics: BrandEconomics;
   brandName: string;
 }): Promise<BrandVaultAnalytics> {
   const { breakEvenPrice, targetMarginPrice, contributionBeforeAds } = calculateBreakEven(input.economics);
-  const competitors = (await Promise.all(input.competitors.map((competitor) => analyzeCompetitor({ competitor, period: input.period, breakEvenPrice })))).filter(Boolean);
+  const competitors = (await Promise.all(input.competitors.map((competitor) => analyzeCompetitor({ competitor, period: input.period, breakEvenPrice, userId: input.userId })))).filter(Boolean);
   const gaps = buildGaps(competitors);
   const compareRows = competitors.map((item) => ({
     slot: item.slot,
@@ -569,4 +675,3 @@ export async function getBrandVaultAnalytics(input: {
 }
 
 export { normalizeEconomics };
-

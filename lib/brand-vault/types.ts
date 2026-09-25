@@ -123,6 +123,7 @@ export type CompetitorAnalytics = {
   usedCreatorNames: string[];
   usedLanguageCodes: string[];
   dataCoverage: "strong" | "thin" | "none";
+  collectionState?: "indexed" | "collecting" | "empty";
 };
 
 export type BrandVaultAnalytics = {

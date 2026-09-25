@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
     createdAt: row.created_at, updatedAt: row.updated_at,
   }));
   const analytics = await getBrandVaultAnalytics({
+    userId: user.id,
     competitors: mappedCompetitors,
     period,
     economics: normalizeEconomics(vault?.economics),
