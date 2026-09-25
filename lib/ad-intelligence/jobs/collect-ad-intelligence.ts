@@ -89,6 +89,23 @@ function uniqueBatch(
   return unique;
 }
 
+async function refreshAdvertiserSummaries(platform: string, country: string, pageIds: Set<string>): Promise<void> {
+  // Best effort: a failed refresh must never fail the collection. Search
+  // recomputes a summary lazily when it is missing or older than 6 hours.
+  const { createGlobalServiceClient } = await import("@/lib/ad-intelligence/global/supabase");
+  const client = createGlobalServiceClient();
+  for (const pageId of Array.from(pageIds).slice(0, 25)) {
+    const { error } = await client.rpc("adspy_refresh_advertiser_summary", {
+      p_platform: platform,
+      p_page_id: pageId,
+      p_country: country,
+    });
+    if (error) {
+      console.warn("[AdSpy collect] summary refresh failed", { pageId, error: error.message });
+    }
+  }
+}
+
 export async function collectAdIntelligence(
   data: CollectionEvent,
 ): Promise<State & { jobId: string }> {
@@ -135,6 +152,8 @@ export async function collectAdIntelligence(
   };
 
   const seenIds = new Set<string>();
+  // Advertisers whose precomputed summary must be refreshed after this run.
+  const touchedAdvertisers = new Set<string>();
   // Meta's own total for this query/page (source-backed), when observed.
   let metaTotalCount: number | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -151,6 +170,10 @@ export async function collectAdIntelligence(
 
     const ads = uniqueBatch(incoming, seenIds);
     if (!ads.length) return;
+    for (const ad of ads) {
+      const pageId = String(ad.advertiserId ?? "").trim();
+      if (/^\d+$/.test(pageId)) touchedAdvertisers.add(pageId);
+    }
 
     state.discoveredAds += ads.length;
 
@@ -325,6 +348,8 @@ export async function collectAdIntelligence(
         status: "exhausted",
       });
 
+      await refreshAdvertiserSummaries(data.platform, data.country, touchedAdvertisers);
+
       return {
         jobId: data.jobId,
         ...state,
@@ -366,6 +391,8 @@ export async function collectAdIntelligence(
         errorMessage: null,
       },
     );
+
+    await refreshAdvertiserSummaries(data.platform, data.country, touchedAdvertisers);
 
     await markTrackedBrandCollected({
       query: data.query,
