@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
+import type { BrandEconomics } from "@/lib/brand-vault/types";
 
 type BrandVaultPayload = {
   brandName?: string;
@@ -10,6 +11,7 @@ type BrandVaultPayload = {
   heroProduct?: string;
   mainObjection?: string;
   competitorFocus?: string;
+  economics?: BrandEconomics;
 };
 
 
@@ -23,6 +25,7 @@ type BrandVaultRow = {
   main_objection: string | null;
   competitor_focus: string | null;
   updated_at: string | null;
+  economics: BrandEconomics | null;
 };
 
 function toClient(row: BrandVaultRow) {
@@ -35,6 +38,7 @@ function toClient(row: BrandVaultRow) {
     heroProduct: row.hero_product ?? "",
     mainObjection: row.main_objection ?? "",
     competitorFocus: row.competitor_focus ?? "",
+    economics: row.economics ?? null,
     updatedAt: row.updated_at ?? null
   };
 }
@@ -53,7 +57,7 @@ export async function GET() {
 
     const { data, error } = await authClient
       .from("brand_vaults")
-      .select("brand_name,website_url,tone,audience,do_not_say,hero_product,main_objection,competitor_focus,updated_at")
+      .select("brand_name,website_url,tone,audience,do_not_say,hero_product,main_objection,competitor_focus,economics,updated_at")
       .eq("user_id", user.id)
       .maybeSingle();
 
@@ -91,13 +95,14 @@ export async function POST(request: Request) {
       hero_product: body.heroProduct?.trim() || null,
       main_objection: body.mainObjection?.trim() || null,
       competitor_focus: body.competitorFocus?.trim() || null,
+      economics: body.economics ?? {},
       updated_at: new Date().toISOString()
     };
 
     const { data, error } = await authClient
       .from("brand_vaults")
       .upsert(payload, { onConflict: "user_id" })
-      .select("brand_name,website_url,tone,audience,do_not_say,hero_product,main_objection,competitor_focus,updated_at")
+      .select("brand_name,website_url,tone,audience,do_not_say,hero_product,main_objection,competitor_focus,economics,updated_at")
       .maybeSingle();
 
     if (error) {

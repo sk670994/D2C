@@ -6,6 +6,7 @@ import { detectLanguages } from "./language";
 import { extractGeography } from "./geography";
 import { createGlobalServiceClient } from "./supabase";
 import { isStoredMediaUrl, persistAdMedia } from "./media-store";
+import { upsertAdSpyContextGraph } from "../hawky/context";
 
 function normalize(value: string | null | undefined): string {
   return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -61,6 +62,10 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
   if (!ads.length) return { insertedOrUpdated: 0, observations: 0, languages: 0, markets: 0 };
 
   // Keep previews alive after Meta's CDN links expire (collector only by default).
+  void upsertAdSpyContextGraph(ads.slice(0, 250)).catch((error) => {
+    console.warn("[AdSpy context] graph update skipped:", error instanceof Error ? error.message : error);
+  });
+
   await persistAdMedia(ads).catch((error) => {
     console.error("[AdSpy media] rehost skipped:", error instanceof Error ? error.message : error);
     return 0;

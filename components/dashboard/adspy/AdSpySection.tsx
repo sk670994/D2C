@@ -22,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { AdvertiserIntelligenceCard } from "./AdvertiserIntelligenceCard";
+import { HawkyIntelligencePanel } from "./HawkyIntelligencePanel";
 import type {
   Ad,
   AutocompleteAdvertiser,
@@ -889,6 +890,12 @@ export function AdSpySection({
                 <div className="adspy-intelligence-panel"><div className="adspy-panel-title"><CircleAlert size={15} /> Performance data</div><p>Public Meta sources used here do not provide reliable per-ad reach, CTR, spend or ROAS. Those fields stay unavailable rather than being inferred.</p></div>
               </div>
             </section>
+
+            <HawkyIntelligencePanel
+              query={submittedQuery}
+              country={countryInput.trim().toUpperCase() || "IN"}
+              platform={platform}
+            />
 
 <div className="adspy-filter-row" aria-label="Creative filters">
               {([
