@@ -1,4 +1,5 @@
 import "server-only";
+import type { AdSortKey } from "./sort";
 
 import type {
   AdPlatform,
@@ -856,6 +857,29 @@ function emptyResult(
   };
 }
 
+export { AD_SORT_KEYS, parseAdSort, type AdSortKey } from "./sort";
+
+/**
+ * Creative page for the current filters. "relevant" keeps the proven v4 RPC;
+ * other sorts use v5 (same filters + ORDER BY). If v5 is not deployed yet the
+ * result falls back to v4 ordering instead of failing the search.
+ */
+async function searchCreativesPage(
+  client: ReturnType<typeof createGlobalServiceClient>,
+  args: Record<string, unknown>,
+  sort: AdSortKey | undefined,
+) {
+  if (!sort || sort === "relevant") {
+    return client.rpc("adspy_search_creatives_v4", args);
+  }
+  const sorted = await client.rpc("adspy_search_creatives_v5", { ...args, p_sort: sort });
+  if (sorted.error && /PGRST202|could not find the function/i.test(`${sorted.error.code ?? ""} ${sorted.error.message}`)) {
+    console.warn("[AdSpy search] adspy_search_creatives_v5 missing; using v4 ordering");
+    return client.rpc("adspy_search_creatives_v4", args);
+  }
+  return sorted;
+}
+
 export async function searchGlobalAdsAccurate(
   input: {
     query: string;
@@ -882,6 +906,7 @@ export async function searchGlobalAdsAccurate(
       | "active"
       | "inactive"
       | undefined;
+    sort?: AdSortKey | undefined;
   },
 ) {
   const client =
@@ -982,48 +1007,19 @@ export async function searchGlobalAdsAccurate(
         },
       ),
 
-      client.rpc(
-        "adspy_search_creatives_v4",
-        {
-          p_query:
-            query,
-
-          p_country:
-            country,
-
-          p_platform:
-            input.platform,
-
-          p_mode:
-            input.mode,
-
-          p_page:
-            input.page,
-
-          p_limit:
-            input.limit,
-
-          p_advertiser_page_id:
-            advertiserPageId ||
-            null,
-
-          p_language:
-            language ||
-            null,
-
-          p_region:
-            region ||
-            null,
-
-          p_creative_type:
-            creativeType ||
-            null,
-
-          p_active_status:
-            activeStatus ||
-            null,
-        },
-      ),
+      searchCreativesPage(client, {
+        p_query: query,
+        p_country: country,
+        p_platform: input.platform,
+        p_mode: input.mode,
+        p_page: input.page,
+        p_limit: input.limit,
+        p_advertiser_page_id: advertiserPageId || null,
+        p_language: language || null,
+        p_region: region || null,
+        p_creative_type: creativeType || null,
+        p_active_status: activeStatus || null,
+      }, input.sort),
     ]);
 
   /*

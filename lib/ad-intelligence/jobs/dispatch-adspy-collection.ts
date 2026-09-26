@@ -1,9 +1,9 @@
-﻿import "server-only";
+import "server-only";
 
 import { send } from "@vercel/queue";
 import type { CollectionEvent } from "./collect-ad-intelligence";
 
-export type AdSpyDispatchMode = "queue" | "inline" | "runner";
+export type AdSpyDispatchMode = "queue" | "inline" | "runner" | "worker";
 
 type InlineRunner = (payload: CollectionEvent) => void;
 let inlineRunner: InlineRunner | null = null;
@@ -16,8 +16,15 @@ export function setAdSpyInlineRunner(runner: InlineRunner | null) {
   inlineRunner = runner;
 }
 
+/**
+ * ADSPY_COLLECTOR=worker: the persistent VPS worker (worker/adspy-worker.ts)
+ * polls adspy_requests in Postgres and claims work itself, so nothing is sent
+ * anywhere. The request row written by startAdSpyCollection IS the job.
+ * Unset: Vercel Queue on Vercel, in-process locally (previous behaviour).
+ */
 export function getAdSpyDispatchMode(): AdSpyDispatchMode {
   if (inlineRunner) return "runner";
+  if (process.env.ADSPY_COLLECTOR === "worker") return "worker";
   return process.env.VERCEL ? "queue" : "inline";
 }
 
@@ -29,6 +36,11 @@ export async function dispatchAdSpyCollection(
 
   if (mode === "runner" && inlineRunner) {
     inlineRunner(payload);
+    return { mode };
+  }
+
+  if (mode === "worker") {
+    // Durable request row already exists (status "queued"); the worker picks it up.
     return { mode };
   }
 

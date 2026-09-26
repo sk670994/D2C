@@ -1,4 +1,4 @@
-﻿import "server-only";
+import "server-only";
 
 import path from "node:path";
 import os from "node:os";
@@ -177,6 +177,37 @@ async function resetBrowser(): Promise<void> {
   const current = browser;
   browser = null;
   if (current) await current.close().catch(() => undefined);
+}
+
+/**
+ * For the persistent worker: close the shared browser and delete every
+ * Chromium profile dir in os.tmpdir(). Only call this between jobs, and only
+ * when TMPDIR is a directory the worker owns (see worker/Dockerfile).
+ */
+export async function recycleMetaBrowser(): Promise<{ removedProfiles: number; tmpFreeMb: number | null }> {
+  await resetBrowser();
+  let removedProfiles = 0;
+  try {
+    const dir = os.tmpdir();
+    for (const name of readdirSync(dir)) {
+      if (!/^playwright_chromiumdev_profile-|^playwright-artifacts-|^core\.chrom/.test(name)) continue;
+      try {
+        rmSync(path.join(dir, name), { recursive: true, force: true });
+        removedProfiles += 1;
+      } catch {
+        // already gone
+      }
+    }
+  } catch {
+    // tmp not listable
+  }
+  return { removedProfiles, tmpFreeMb: tmpFreeMb() };
+}
+
+/** Whether a Chromium process is currently held by this module. */
+export function metaBrowserState(): "none" | "connected" | "launching" {
+  if (browserPromise) return "launching";
+  return browser?.isConnected() ? "connected" : "none";
 }
 
 /** On Vercel, one scrape per instance at a time: they share one browser and /tmp. */

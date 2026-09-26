@@ -860,7 +860,9 @@ export function extractAdvertiserIdentity(
 
   const xMatch =
     candidate.match(
-      /^(.+?)\s*(?:x|×)\s*(@?[A-Za-z0-9][A-Za-z0-9._-]{1,60})$/iu,
+      // "x" must stand alone ("Brand x Creator"); a bare \s* split "Foxtale"
+      // into advertiser "Fo" + creator "tale". "×" may touch the words.
+      /^(.+?)(?:\s+x\s+|\s*×\s*)(@?[A-Za-z0-9][A-Za-z0-9._-]{1,60})$/iu,
     );
 
   if (xMatch) {

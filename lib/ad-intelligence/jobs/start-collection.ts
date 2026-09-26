@@ -27,8 +27,16 @@ import { dispatchAdSpyCollection } from "./dispatch-adspy-collection";
  * and stuck runs are recovered before a new one is started.
  */
 
-/** Queue worker maxDuration is 60s and it heartbeats every 15s. */
+/** A claimed (running) collection heartbeats every 15s. */
 export const RUN_STALE_AFTER_MS = 3 * 60_000;
+/**
+ * A run that is only waiting (queued / retrying backoff) has no heartbeat.
+ * With one persistent worker, waiting behind an 8-minute job is normal, so
+ * waiting runs are only given up on after this much longer window.
+ */
+export const WAITING_RUN_STALE_AFTER_MS =
+  Number(process.env.ADSPY_WAITING_RUN_STALE_MS) ||
+  (process.env.ADSPY_COLLECTOR === "worker" ? 30 * 60_000 : RUN_STALE_AFTER_MS);
 
 const ACTIVE_JOB_STATUSES = new Set([
   "queued",
@@ -80,7 +88,7 @@ export async function recoverStaleRuns(collectionKey?: string): Promise<number> 
   const client = createGlobalServiceClient();
   let query = client
     .from("adspy_runs")
-    .select("id,collection_job_id,heartbeat_at,updated_at")
+    .select("id,collection_job_id,status,heartbeat_at,updated_at")
     .in("status", Array.from(ACTIVE_RUN_STATUSES))
     .limit(200);
   if (collectionKey) query = query.eq("collection_key", collectionKey);
@@ -90,7 +98,8 @@ export async function recoverStaleRuns(collectionKey?: string): Promise<number> 
 
   let recovered = 0;
   for (const row of data ?? []) {
-    if (heartbeatAgeMs(row) < RUN_STALE_AFTER_MS) continue;
+    const limit = row.status === "running" ? RUN_STALE_AFTER_MS : WAITING_RUN_STALE_AFTER_MS;
+    if (heartbeatAgeMs(row) < limit) continue;
 
     await finishAdSpyRun({
       runId: String(row.id),

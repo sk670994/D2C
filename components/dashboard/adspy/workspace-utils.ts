@@ -10,6 +10,15 @@ export type Filters = {
   region: string;
 };
 
+/** Must match AD_SORT_KEYS in lib/ad-intelligence/global/accurate-search.ts. */
+export type SortKey = "relevant" | "newest" | "longest" | "stopped";
+export const SORT_OPTIONS: ReadonlyArray<readonly [SortKey, string]> = [
+  ["relevant", "Active first"],
+  ["newest", "Newest launched"],
+  ["longest", "Longest running"],
+  ["stopped", "Recently stopped"],
+];
+
 export const NO_FILTERS: Filters = { status: "", format: "", language: "", region: "" };
 
 export type FacetBucket = { value: string; label: string; count: number };

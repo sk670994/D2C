@@ -1,0 +1,11 @@
+# Only used by worker/Dockerfile (Vercel ignores this file).
+node_modules
+.next
+.git
+**/*.png
+**/*.bak
+zwirk-*
+zooptrack-3d-package
+*.log
+.env*
+worker/.env
