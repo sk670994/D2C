@@ -11,7 +11,8 @@ import { recoverStaleRuns, startAdSpyCollection } from "./start-collection";
  * Timelines, momentum and change detection only work if the same advertiser
  * is observed repeatedly. This job:
  *   1. recovers collections whose worker died (stale runs / expired leases),
- *   2. re-collects every watched advertiser (exact Page ID) and every
+ *   2. re-collects every watched advertiser (exact Page ID), every Brand
+ *      Vault competitor, and every
  *      tracked brand that is due, through the single dispatch path.
  */
 
@@ -24,7 +25,7 @@ type Target = {
   country: string;
   pageId: string | null;
   refreshHours: number;
-  source: "watchlist" | "tracked";
+  source: "watchlist" | "tracked" | "brand_vault";
 };
 
 async function listWatchlistTargets(): Promise<Target[]> {
@@ -47,6 +48,37 @@ async function listWatchlistTargets(): Promise<Target[]> {
       refreshHours: 24,
       source: "watchlist" as const,
     }));
+}
+
+/**
+ * Brand Vault competitors are re-observed nightly too, so the vault's
+ * "changes this week" have data. Best effort: the table may not exist yet.
+ */
+async function listBrandVaultTargets(): Promise<Target[]> {
+  const { data, error } = await createGlobalServiceClient()
+    .from("brand_vault_competitors")
+    .select("user_id,name,advertiser_page_id,country,platform")
+    .eq("platform", "meta")
+    .limit(1000);
+
+  if (error) {
+    console.warn("[AdSpy scheduled] brand vault competitors skipped", error.message);
+    return [];
+  }
+
+  return (data ?? [])
+    .filter((row: any) => String(row.name ?? "").trim().length >= 2 || /^\d+$/.test(String(row.advertiser_page_id ?? "")))
+    .map((row: any) => {
+      const pageId = String(row.advertiser_page_id ?? "").trim();
+      return {
+        userId: String(row.user_id),
+        query: String(row.name || pageId).trim(),
+        country: String(row.country || "IN").toUpperCase(),
+        pageId: /^\d+$/.test(pageId) ? pageId : null,
+        refreshHours: 24,
+        source: "brand_vault" as const,
+      };
+    });
 }
 
 export async function refreshTrackedAdSpy(options: {
@@ -81,11 +113,12 @@ export async function refreshTrackedAdSpy(options: {
     }));
 
   const watched = await listWatchlistTargets();
+  const vault = await listBrandVaultTargets();
 
   // Watchlists (exact Page ID) first; one dispatch per advertiser identity.
   const seen = new Set<string>();
   const targets: Target[] = [];
-  for (const target of [...watched, ...tracked]) {
+  for (const target of [...watched, ...vault, ...tracked]) {
     const key = `${target.country}|${target.pageId ?? target.query.toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);

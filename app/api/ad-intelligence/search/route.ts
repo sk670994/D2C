@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { parseAdSort, searchGlobalAdsAccurate } from "@/lib/ad-intelligence/global/accurate-search";
 import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
+import { getSourceCounts } from "@/lib/ad-intelligence/global/source-counts";
+import { sourceScopeFor } from "@/lib/ad-intelligence/global/source-scope";
 import type { AdPlatform } from "@/lib/ad-intelligence/types";
 
 export const runtime = "nodejs";
@@ -85,6 +87,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // Meta's own count for the same scope (exact page or keyword), read in
+    // parallel. Null for brand-name searches: not comparable (see source-scope).
+    const scope = p === "meta" ? sourceScopeFor({ mode: m, query: q, pageId: pid }) : null;
+    const metaSourcePromise = scope ? getSourceCounts({ platform: p, country: c, scope }) : Promise.resolve(null);
+
     const result = await searchGlobalAdsAccurate({
       query: q,
       country: c,
@@ -114,6 +121,7 @@ export async function GET(request: NextRequest) {
         activeStatus: activeStatusValue ?? null,
         sort,
         ...result,
+        metaSource: await metaSourcePromise,
         limit: PAGE_SIZE,
         dataSource: "indexed",
       },

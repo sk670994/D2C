@@ -309,8 +309,26 @@ export type Intelligence = {
   };
 };
 
+/** Meta Ad Library's own count for the same scope (see source-scope.ts). */
+export type MetaSourceCount = {
+  total: number;
+  collectedAds: number;
+  observedAt: string;
+};
+
+export type MetaSourceCounts = {
+  scopeType: "page" | "keyword";
+  active: MetaSourceCount | null;
+  all: MetaSourceCount | null;
+};
+
 export type SearchResponse = {
   success: boolean;
+
+  metaSource?:
+    | MetaSourceCounts
+    | null
+    | undefined;
 
   query?:
     | string

@@ -57,7 +57,6 @@ export async function POST(request: Request) {
       pageId: resolvedPageId,
       minIntervalMs: 10 * 60_000,
       reason: "user",
-      depth: "quick",
     });
   } catch (collectionError) {
     console.warn("[BrandVault competitor] collection kickoff failed", name, collectionError);
