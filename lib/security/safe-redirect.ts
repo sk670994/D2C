@@ -7,7 +7,7 @@
  */
 export function safeNextPath(
   value: string | null | undefined,
-  fallback = "/dashboard",
+  fallback = "/today",
 ): string {
   if (typeof value !== "string") return fallback;
 

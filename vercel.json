@@ -3,6 +3,14 @@
     {
       "path": "/api/cron/fetch-ad-data",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/refresh-tracked-adspy",
+      "schedule": "30 20 * * *"
+    },
+    {
+      "path": "/api/cron/weekly-report",
+      "schedule": "30 3 * * 1"
     }
   ],
   "functions": {

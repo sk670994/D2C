@@ -188,6 +188,7 @@ export default function BrandVaultPage() {
           {menuOpen ? (
             <div className="bvp-brand-menu">
               <button onClick={() => { setMenuOpen(false); setSettingsOpen(true); }}>Edit vault</button>
+              <Link href="/today">Today</Link>
               <Link href="/dashboard">Dashboard</Link>
               <Link href="/adspy">AdSpy</Link>
             </div>

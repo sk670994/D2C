@@ -59,7 +59,7 @@ export function productKey(landingUrl: string | null | undefined, productName: s
 export type OfferType = "bogo" | "percent_off" | "flat_off" | "code" | "free_gift" | "combo" | "prepaid" | "free_shipping" | "sale";
 
 const OFFER_RULES: Array<[OfferType, RegExp]> = [
-  ["bogo", /\bbuy\s*\d+\s*get\s*\d+|\bb\d+g\d+\b|\bbogo\b/i],
+  ["bogo", /\bbuy\s*\d+[\s.,:-]*get\s*\d+|\bb\d+g\d+\b|\bbogo\b/i],
   ["percent_off", /\d{1,2}\s*%\s*(off|discount)|(flat|upto|up to)\s*\d{1,2}\s*%/i],
   ["flat_off", /(flat|save|get)\s*(₹|rs\.?|inr)\s*\d+|(₹|rs\.?|inr)\s*\d+\s*off/i],
   ["code", /\b(use|apply)\s+(code|coupon)\b|\bcode\s*[:\-]?\s*[A-Z0-9]{4,}\b/i],

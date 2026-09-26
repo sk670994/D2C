@@ -23,6 +23,7 @@ export default async function AdSpyPage() {
       <header className="zt-appbar relative z-[300]">
         <BrandLogo />
         <nav className="zt-appnav" aria-label="Product navigation">
+          <Link href="/today">Today</Link>
           <Link href="/dashboard">Profit OS</Link>
           <Link href="/adspy" className="active" aria-current="page">
             AdSpy

@@ -37,6 +37,7 @@ import {
 import type { Ad, AutocompleteAdvertiser, Job, MetaSourceCounts, SearchResponse, Summary } from "./adspy-types";
 import { pageChoices, pickExactPage } from "@/lib/ad-intelligence/discovery/pick-page";
 import { coveragePercent } from "@/lib/ad-intelligence/global/source-scope";
+import { decodeAd } from "@/lib/today/insights";
 import {
   NO_FILTERS,
   activeFilterCount,
@@ -1413,6 +1414,11 @@ function AdvertiserHeader({
       </div>
       <div className="azs-adv-actions">
         {target.pageId && (
+          <a className="azs-btn azs-btn-ghost" href={`/today/brand/${encodeURIComponent(target.pageId)}?country=${target.country}`}>
+            <Sparkles size={14} /> Overview
+          </a>
+        )}
+        {target.pageId && (
           <button type="button" className="azs-btn azs-btn-ghost" onClick={() => void toggleWatch()} disabled={busy || watching === null}>
             {busy ? <Loader2 size={14} className="azs-spin" /> : watching ? <BookmarkCheck size={14} /> : <Bookmark size={14} />}
             {watching ? "Watching" : "Watch"}
@@ -2005,6 +2011,34 @@ function AdDetail({ ad, onClose }: { ad: Ad; onClose: () => void }) {
             )}
           </div>
           <div className="azs-modal-info">
+            <section>
+              <h3>Decoded</h3>
+              <dl className="azs-facts">
+                {decodeAd({
+                  headline: ad.headline ?? null,
+                  primaryText: ad.primaryText ?? null,
+                  offer: ad.offer ?? null,
+                  creativeType: ad.creativeType ?? null,
+                  callToAction: ad.callToAction ?? null,
+                  landingPage: ad.landingPage ?? null,
+                  productName: ad.productName ?? null,
+                  languages: ad.languages ?? null,
+                  firstSeen: ad.firstSeen ?? null,
+                  lastSeen: ad.lastSeen ?? null,
+                  isActive: ad.isActive ?? null,
+                }).map((line) => (
+                  <div key={line.label}>
+                    <dt>{line.label}</dt>
+                    <dd>
+                      {line.value}{" "}
+                      <span className="azs-muted" style={{ fontSize: 11, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                        {line.provenance}
+                      </span>
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
             <section>
               <h3>Ad copy</h3>
               <p className="azs-copy">{ad.primaryText || <span className="azs-muted">Not captured</span>}</p>
