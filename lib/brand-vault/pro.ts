@@ -3,219 +3,60 @@ import "server-only";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { startAdSpyCollection } from "@/lib/ad-intelligence/jobs/start-collection";
 import {
-  EMPTY_ECONOMICS,
-  type BrandEconomics,
-  type BrandVaultAnalytics,
-  type BrandVaultCompetitor,
-  type BrandVaultPeriod,
-  type CompetitorAnalytics,
-  type OfferItem,
-  type ProductPressure,
-  type RankedItem,
-  type SupportingAd,
-  type Provenance,
+  DAY_MS,
+  OFFER_LABEL,
+  calculateBreakEven,
+  classifyOffer,
+  clean,
+  discountDepth,
+  firstSentence,
+  hookKey,
+  languageName,
+  normalize,
+  normalizeEconomics,
+  parseRupees,
+  pickPageForName,
+  productKey,
+  runningDays,
+  safeDate,
+  type OfferType,
+} from "./signals";
+import type {
+  BrandEconomics,
+  BrandVaultAnalytics,
+  BrandVaultCompetitor,
+  BrandVaultPeriod,
+  ChangeItem,
+  CompetitorAnalytics,
+  OfferItem,
+  ProductPressure,
+  Provenance,
+  RankedItem,
+  SupportingAd,
 } from "./types";
 
-const DAY_MS = 86_400_000;
-const MAX_ADS_PER_COMPETITOR = 5_000;
+/** PostgREST returns at most 1000 rows per request; we page up to this many. */
+const MAX_ADS_PER_COMPETITOR = 3_000;
+const PAGE_SIZE = 1_000;
+/** Keep `.in()` URLs well under proxy limits (36-char UUIDs). */
+const ID_CHUNK = 150;
 const MAX_SUPPORTING_ADS = 6;
-const MAX_LANGUAGE_ROWS = 50_000;
+const TOP_N = 5;
 
-const ANGLES = [
-  "discount-led",
-  "problem-solution",
-  "benefit-led",
-  "social-proof",
-  "product-demo",
-  "urgency-led",
-] as const;
+const ANGLES: Array<{ label: string; re: RegExp }> = [
+  { label: "discount-led", re: /\b(discount|sale|deal|coupon|save|off)\b|%/i },
+  { label: "problem-solution", re: /\b(problem|solve|fix|struggle|pain|tired of|say goodbye)\b/i },
+  { label: "social-proof", re: /\b(reviews?|customers?|trusted|loved by|rated|testimonial|bestseller|best seller)\b/i },
+  { label: "expert-claim", re: /\b(dermat\w*|doctor|clinically|tested|expert|formulated)\b/i },
+  { label: "product-demo", re: /\b(watch|demo|how to|before|after|results?)\b/i },
+  { label: "urgency-led", re: /\b(today|now|limited|hurry|ends|last chance|only)\b/i },
+];
 
-const LANGUAGE_FALLBACK = ["en", "hi", "hinglish", "ta", "te", "mr", "bn", "gu", "kn", "ml"];
+/** Indian-language whitespace we can suggest; only used when language data exists. */
+const GAP_LANGUAGES = ["hinglish", "hi", "ta", "te", "mr", "bn", "gu", "kn", "ml"];
 
-const clean = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
-const normalize = (value: unknown) => clean(value).toLowerCase();
-const compactName = (value: unknown) => normalize(value).replace(/[^a-z0-9]+/g, "");
-
-function safeDate(value: unknown): number | null {
-  const ms = value ? new Date(String(value)).getTime() : NaN;
-  return Number.isFinite(ms) ? ms : null;
-}
-
-function runningDays(firstSeenAt: string | null, lastSeenAt: string | null, now = Date.now()): number {
-  const first = safeDate(firstSeenAt);
-  if (first == null) return 0;
-  const last = safeDate(lastSeenAt) ?? now;
-  return Math.max(1, Math.floor((last - first) / DAY_MS) + 1);
-}
-
-function periodDays(period: BrandVaultPeriod): number {
-  return period === "week" ? 7 : period === "month" ? 30 : 90;
-}
-
-function firstSentence(text: string | null): string | null {
-  const value = clean(text);
-  if (!value) return null;
-  const first = value.split(/[.!?।！？]/)[0]?.trim() ?? value;
-  const cleaned = first.replace(/\bhttps?:\/\/\S+/gi, "").replace(/\s+/g, " ").trim().slice(0, 120);
-  return cleaned || null;
-}
-
-function messageAngle(text: string | null): string | null {
-  const value = normalize(text);
-  if (!value) return null;
-  const groups: Array<{ label: string; words: string[] }> = [
-    { label: "discount-led", words: ["discount", "off", "sale", "deal", "save", "coupon", "%"] },
-    { label: "problem-solution", words: ["problem", "solve", "fix", "struggle", "pain", "without", "stop"] },
-    { label: "benefit-led", words: ["benefit", "better", "faster", "easier", "premium", "quality", "results"] },
-    { label: "social-proof", words: ["review", "reviews", "customer", "customers", "trusted", "loved", "rated", "testimonial"] },
-    { label: "product-demo", words: ["watch", "see", "demo", "how", "before", "after", "works"] },
-    { label: "urgency-led", words: ["today", "now", "limited", "hurry", "ends", "last", "only"] },
-  ];
-  let best: string | null = null;
-  let score = 0;
-  for (const group of groups) {
-    let current = 0;
-    for (const word of group.words) {
-      current += value.includes(word) ? 1 : 0;
-    }
-    if (current > score) {
-      score = current;
-      best = group.label;
-    }
-  }
-  return best;
-}
-
-function percent(part: number, total: number): number {
-  return total ? Math.round((part / total) * 1000) / 10 : 0;
-}
-
-function ranked(values: string[], total: number, provenance: Provenance = "Derived"): RankedItem[] {
-  const map = new Map<string, number>();
-  for (const raw of values) {
-    const label = clean(raw);
-    if (!label) continue;
-    map.set(label, (map.get(label) ?? 0) + 1);
-  }
-  return [...map.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, 5)
-    .map(([label, count]) => ({ label, count, share: percent(count, total), provenance }));
-}
-
-function rankedHooks(rows: RawAd[], total: number): RankedItem[] {
-  const map = new Map<string, { label: string; count: number; score: number; creators: Set<string> }>();
-  for (const row of rows) {
-    const label = firstSentence(row.primary_text ?? row.headline);
-    if (!label) continue;
-    const key = normalize(label);
-    const entry = map.get(key) ?? { label, count: 0, score: 0, creators: new Set<string>() };
-    entry.count += 1;
-    entry.score += row.is_currently_active === false ? 1 : Math.min(90, runningDays(row.first_seen_at, row.last_seen_at));
-    const creator = clean(row.creator_name);
-    if (creator) entry.creators.add(normalize(creator));
-    map.set(key, entry);
-  }
-  return [...map.values()]
-    .sort((a, b) => b.score - a.score || b.creators.size - a.creators.size || b.count - a.count || a.label.localeCompare(b.label))
-    .slice(0, 5)
-    .map((item) => ({ label: item.label, count: item.count, share: percent(item.count, total), provenance: "Derived" }));
-}
-
-function rankedCreators(rows: RawAd[], total: number): RankedItem[] {
-  const map = new Map<string, { label: string; count: number; active: number; longevity: number }>();
-  for (const row of rows) {
-    const label = clean(row.creator_name);
-    if (!label) continue;
-    const key = normalize(label);
-    const entry = map.get(key) ?? { label, count: 0, active: 0, longevity: 0 };
-    entry.count += 1;
-    if (row.is_currently_active !== false) entry.active += 1;
-    entry.longevity += Math.min(90, runningDays(row.first_seen_at, row.last_seen_at));
-    map.set(key, entry);
-  }
-  return [...map.values()]
-    .sort((a, b) => b.active - a.active || b.count - a.count || b.longevity - a.longevity || a.label.localeCompare(b.label))
-    .slice(0, 5)
-    .map((item) => ({ label: item.label, count: item.count, share: percent(item.count, total), provenance: "Source" }));
-}
-
-function parsePrice(value: string | null): number | null {
-  const raw = clean(value).replace(/[,\s]/g, " ");
-  if (!raw) return null;
-  const rupee = raw.match(/(?:₹|rs\.?|inr)\s*(\d+(?:\.\d{1,2})?)/i);
-  if (rupee) return Number(rupee[1]);
-  return null;
-}
-
-function visibleOfferPrice(row: RawAd): number | null {
-  return row.product_price != null && Number.isFinite(Number(row.product_price))
-    ? Number(row.product_price)
-    : parsePrice(row.offer);
-}
-
-function relationToBreakEven(price: number | null, breakEven: number | null): OfferItem["relation"] {
-  if (price == null || breakEven == null) return "unknown";
-  const delta = price - breakEven;
-  if (delta < -breakEven * 0.05) return "below";
-  if (Math.abs(delta) <= Math.max(50, breakEven * 0.05)) return "near";
-  return "above";
-}
-
-function formatCurrency(value: number | null): string {
-  if (value == null || !Number.isFinite(value)) return "not set";
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
-}
-
-function normalizeEconomics(value: unknown): BrandEconomics {
-  if (!value || typeof value !== "object") return { ...EMPTY_ECONOMICS };
-  const input = value as Record<string, unknown>;
-  const numberOrNull = (key: keyof BrandEconomics) => {
-    const raw = input[key];
-    const number = typeof raw === "number" ? raw : Number(raw);
-    return Number.isFinite(number) ? number : null;
-  };
-  return {
-    sellingPrice: numberOrNull("sellingPrice"),
-    cogs: numberOrNull("cogs"),
-    packagingCost: numberOrNull("packagingCost"),
-    shippingCost: numberOrNull("shippingCost"),
-    paymentFeePercent: numberOrNull("paymentFeePercent"),
-    paymentFeeFixed: numberOrNull("paymentFeeFixed"),
-    rtoRatePercent: numberOrNull("rtoRatePercent"),
-    rtoCost: numberOrNull("rtoCost"),
-    refundAllowancePercent: numberOrNull("refundAllowancePercent"),
-    targetContributionMarginPercent: numberOrNull("targetContributionMarginPercent"),
-  };
-}
-
-export function calculateBreakEven(economics: BrandEconomics): {
-  breakEvenPrice: number | null;
-  targetMarginPrice: number | null;
-  contributionBeforeAds: number | null;
-} {
-  const fixed =
-    (economics.cogs ?? 0) +
-    (economics.packagingCost ?? 0) +
-    (economics.shippingCost ?? 0) +
-    ((economics.rtoCost ?? 0) * (economics.rtoRatePercent ?? 0)) / 100 +
-    (economics.paymentFeeFixed ?? 0);
-  const feeRate = Math.max(0, (economics.paymentFeePercent ?? 0) + (economics.refundAllowancePercent ?? 0)) / 100;
-  const denominator = 1 - feeRate;
-  const breakEvenPrice = denominator > 0 ? fixed / denominator : null;
-  const targetMargin = Math.max(0, economics.targetContributionMarginPercent ?? 0) / 100;
-  const targetDenominator = 1 - feeRate - targetMargin;
-  const targetMarginPrice = targetDenominator > 0 ? fixed / targetDenominator : null;
-
-  if (economics.sellingPrice == null) {
-    return { breakEvenPrice, targetMarginPrice, contributionBeforeAds: null };
-  }
-
-  const revenue = economics.sellingPrice;
-  const contributionBeforeAds =
-    revenue - fixed - revenue * feeRate;
-  return { breakEvenPrice, targetMarginPrice, contributionBeforeAds };
-}
+const SELECT =
+  "id,advertiser_name,advertiser_id,creator_name,creative_type,primary_text,headline,offer,call_to_action,landing_page_url,first_seen_at,last_seen_at,is_currently_active,product_name,product_price,source_url,thumbnail_url";
 
 export type RawAd = {
   id: string;
@@ -227,256 +68,373 @@ export type RawAd = {
   headline: string | null;
   offer: string | null;
   call_to_action: string | null;
+  landing_page_url: string | null;
   first_seen_at: string | null;
   last_seen_at: string | null;
   is_currently_active: boolean | null;
   product_name: string | null;
   product_price: number | string | null;
-  max_price: number | string | null;
   source_url: string | null;
   thumbnail_url: string | null;
-  currency: string | null;
 };
 
-type LanguageRow = {
-  creative_id: string;
-  language: string | null;
-  language_name?: string | null;
-};
+const isActive = (row: RawAd) => row.is_currently_active !== false;
+const days = (row: RawAd) => runningDays(row.first_seen_at, row.last_seen_at);
+const hookOf = (row: RawAd) => firstSentence(row.primary_text ?? row.headline);
 
-type ObservationRow = {
-  creative_id: string;
-  language: string | null;
-  observation_day: string;
-};
+function percent(part: number, total: number): number {
+  return total ? Math.round((part / total) * 1000) / 10 : 0;
+}
+
+function formatCurrency(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return "not set";
+  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
+}
+
+function visiblePrice(row: RawAd): number | null {
+  const direct = row.product_price != null ? Number(row.product_price) : NaN;
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  return parseRupees(row.offer) ?? parseRupees(row.headline);
+}
+
+function relationToBreakEven(price: number | null, breakEven: number | null): OfferItem["relation"] {
+  if (price == null || breakEven == null) return "unknown";
+  const delta = price - breakEven;
+  if (Math.abs(delta) <= Math.max(10, breakEven * 0.03)) return "near";
+  return delta < 0 ? "below" : "above";
+}
 
 function mapSupportingAd(row: RawAd, provenance: Provenance = "Source"): SupportingAd {
-  const days = runningDays(row.first_seen_at, row.last_seen_at);
+  const d = days(row);
   return {
     id: row.id,
     productName: clean(row.product_name) || null,
-    hook: firstSentence(row.primary_text ?? row.headline),
+    hook: hookOf(row),
     creatorName: clean(row.creator_name) || null,
     offer: clean(row.offer) || null,
-    price: visibleOfferPrice(row),
+    price: visiblePrice(row),
     creativeType: clean(row.creative_type) || null,
     firstSeenAt: row.first_seen_at,
     lastSeenAt: row.last_seen_at,
-    runningDays: days,
+    runningDays: d,
     active: row.is_currently_active,
     sourceUrl: clean(row.source_url) || null,
     thumbnailUrl: clean(row.thumbnail_url) || null,
     provenance,
-    heuristicLabel: row.is_currently_active && days >= 60 ? "Likely proven · heuristic" : null,
+    heuristicLabel: isActive(row) && d >= 60 ? "Likely proven · heuristic" : null,
   };
 }
 
+const byLongest = (a: RawAd, b: RawAd) => days(b) - days(a);
+
+/* ------------------------------------------------------------------ */
+/* Loading                                                             */
+/* ------------------------------------------------------------------ */
+
 async function resolveIndexedPageId(name: string, country: string): Promise<string | null> {
-  const service = createGlobalServiceClient();
-  const result = await service.rpc("adspy_autocomplete_advertisers", {
+  const { data, error } = await createGlobalServiceClient().rpc("adspy_autocomplete_advertisers", {
     p_query: name,
     p_platform: "meta",
     p_country: country,
     p_limit: 12,
   });
-  if (result.error || !result.data?.length) return null;
-
-  const query = compactName(name);
-  for (const candidate of result.data as Array<{ page_id?: string | null; label?: string | null }>) {
-    const pageId = clean(candidate.page_id);
-    const label = compactName(candidate.label);
-    if (!/^\d+$/.test(pageId)) continue;
-    if (!query || !label) continue;
-    if (label === query || label.startsWith(query) || query.startsWith(label)) return pageId;
-  }
-  return null;
+  if (error || !Array.isArray(data)) return null;
+  return pickPageForName(name, data as Array<{ page_id?: string | null; label?: string | null }>);
 }
 
-async function loadAds(pageId: string, name: string, country = "IN"): Promise<RawAd[]> {
+async function fetchPaged(build: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<RawAd[]> {
+  const rows: RawAd[] = [];
+  for (let from = 0; from < MAX_ADS_PER_COMPETITOR; from += PAGE_SIZE) {
+    const { data, error } = await build(from, Math.min(from + PAGE_SIZE, MAX_ADS_PER_COMPETITOR) - 1);
+    if (error) throw new Error(error.message);
+    const batch = (data ?? []) as RawAd[];
+    rows.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+  }
+  return rows;
+}
+
+/**
+ * Page ID is authoritative. Without one, only an exact (case-insensitive)
+ * advertiser-name match is used, never a substring: "Plum" must not pull in
+ * "Plum Goodness x creator" or unrelated brands.
+ */
+async function loadAds(competitor: BrandVaultCompetitor): Promise<{ rows: RawAd[]; identity: CompetitorAnalytics["identity"]; pageId: string | null }> {
   const service = createGlobalServiceClient();
-  const select = "id,advertiser_name,advertiser_id,creator_name,creative_type,primary_text,headline,offer,call_to_action,first_seen_at,last_seen_at,is_currently_active,product_name,product_price,max_price,source_url,thumbnail_url,currency";
-  let resolvedPageId = /^\d+$/.test(pageId) ? pageId : null;
+  let pageId = competitor.advertiserPageId && /^\d+$/.test(competitor.advertiserPageId) ? competitor.advertiserPageId : null;
+  if (!pageId) pageId = await resolveIndexedPageId(competitor.name, competitor.country);
 
-  if (!resolvedPageId) resolvedPageId = await resolveIndexedPageId(name, country);
+  if (pageId) {
+    const rows = await fetchPaged((from, to) =>
+      service
+        .from("ad_intelligence_creatives")
+        .select(SELECT)
+        .eq("platform", "meta")
+        .eq("advertiser_id", pageId)
+        .order("last_seen_at", { ascending: false, nullsFirst: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+    if (rows.length || competitor.advertiserPageId) return { rows, identity: "page_id", pageId };
+  }
 
-  if (resolvedPageId) {
-    const byId = await service
+  const exactName = clean(competitor.name).replace(/[\\%_]/g, (c) => `\\${c}`);
+  if (!exactName) return { rows: [], identity: "none", pageId };
+  const rows = await fetchPaged((from, to) =>
+    service
       .from("ad_intelligence_creatives")
-      .select(select)
+      .select(SELECT)
       .eq("platform", "meta")
-      .eq("advertiser_id", resolvedPageId)
+      .ilike("advertiser_name", exactName)
       .order("last_seen_at", { ascending: false, nullsFirst: false })
-      .limit(MAX_ADS_PER_COMPETITOR);
-
-    if (!byId.error && byId.data?.length) return (byId.data ?? []) as RawAd[];
-  }
-
-  const exact = await service
-    .from("ad_intelligence_creatives")
-    .select(select)
-    .eq("platform", "meta")
-    .ilike("advertiser_name", name)
-    .order("last_seen_at", { ascending: false, nullsFirst: false })
-    .limit(MAX_ADS_PER_COMPETITOR);
-
-  if (!exact.error && exact.data?.length) return (exact.data ?? []) as RawAd[];
-
-  const safeName = clean(name).replace(/[%_]/g, "");
-  if (!safeName) return [];
-  const fallback = await service
-    .from("ad_intelligence_creatives")
-    .select(select)
-    .eq("platform", "meta")
-    .ilike("advertiser_name", `%${safeName}%`)
-    .order("last_seen_at", { ascending: false, nullsFirst: false })
-    .limit(MAX_ADS_PER_COMPETITOR);
-
-  if (fallback.error) throw new Error(`Brand Vault ad query failed for ${name}: ${fallback.error.message}`);
-  return (fallback.data ?? []) as RawAd[];
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  return { rows, identity: rows.length ? "name" : "none", pageId };
 }
 
-async function loadLanguages(creativeIds: string[], start: number): Promise<Map<string, string[]>> {
-  const service = createGlobalServiceClient();
+async function loadLanguages(creativeIds: string[]): Promise<Map<string, string[]>> {
   const result = new Map<string, string[]>();
   if (!creativeIds.length) return result;
-
-  const observations = await service
-    .from("ad_intelligence_observations")
-    .select("creative_id,language,observation_day")
-    .gte("observation_day", new Date(start).toISOString().slice(0, 10))
-    .in("creative_id", creativeIds)
-    .not("language", "is", null)
-    .limit(MAX_LANGUAGE_ROWS);
-
-  if (!observations.error && observations.data?.length) {
-    for (const row of observations.data as ObservationRow[]) {
-      if (!creativeIds.includes(row.creative_id)) continue;
-      const value = clean(row.language).toLowerCase();
-      if (!value) continue;
+  const service = createGlobalServiceClient();
+  for (let i = 0; i < creativeIds.length; i += ID_CHUNK) {
+    const chunk = creativeIds.slice(i, i + ID_CHUNK);
+    const { data, error } = await service
+      .from("ad_intelligence_languages")
+      .select("creative_id,language_code")
+      .in("creative_id", chunk)
+      .limit(PAGE_SIZE);
+    if (error) {
+      console.warn("[BrandVault] language lookup failed", error.message);
+      return result;
+    }
+    for (const row of (data ?? []) as Array<{ creative_id: string; language_code: string | null }>) {
+      const code = normalize(row.language_code);
+      if (!code) continue;
       const list = result.get(row.creative_id) ?? [];
-      if (!list.includes(value)) list.push(value);
+      if (!list.includes(code)) list.push(code);
       result.set(row.creative_id, list);
     }
-    return result;
-  }
-
-  const languages = await service
-    .from("ad_intelligence_languages")
-    .select("creative_id,language_code,language_name")
-    .in("creative_id", creativeIds)
-    .limit(MAX_LANGUAGE_ROWS);
-  if (languages.error) return result;
-  for (const row of languages.data as Array<LanguageRow & { language_code?: string | null }>) {
-    const value = clean(row.language ?? row.language_code).toLowerCase();
-    if (!value) continue;
-    const list = result.get(row.creative_id) ?? [];
-    if (!list.includes(value)) list.push(value);
-    result.set(row.creative_id, list);
   }
   return result;
 }
 
-function buildOffers(rows: RawAd[], breakEvenPrice: number | null): OfferItem[] {
-  const counts = new Map<string, { count: number; price: number | null }>();
-  for (const row of rows) {
-    const label = clean(row.offer);
-    if (!label) continue;
-    const key = normalize(label);
-    const current = counts.get(key) ?? { count: 0, price: null };
-    current.count += 1;
-    current.price = current.price ?? visibleOfferPrice(row);
-    counts.set(key, current);
+/* ------------------------------------------------------------------ */
+/* Modules                                                             */
+/* ------------------------------------------------------------------ */
+
+/** Top hooks: reused opening lines that stay live. Rank = Σ active × days (≤90) + reuse across creators. */
+function buildHooks(live: RawAd[]): RankedItem[] {
+  const groups = new Map<string, { label: string; ads: RawAd[]; creators: Set<string> }>();
+  for (const row of live) {
+    const hook = hookOf(row);
+    if (!hook) continue;
+    const key = hookKey(hook);
+    if (key.length < 4) continue;
+    const g = groups.get(key) ?? { label: hook, ads: [], creators: new Set<string>() };
+    g.ads.push(row);
+    const creator = normalize(row.creator_name);
+    if (creator) g.creators.add(creator);
+    groups.set(key, g);
   }
-  const total = rows.length;
-  return [...counts.entries()]
-    .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
-    .slice(0, 5)
-    .map(([, value]) => ({
-      label: value.price != null ? `${value.count}× · ${formatCurrency(value.price)}` : `${value.count}× · offer text`,
-      count: value.count,
-      share: percent(value.count, total),
-      visiblePrice: value.price,
-      vsBreakEven: value.price != null && breakEvenPrice != null ? Math.round((value.price - breakEvenPrice) * 100) / 100 : null,
-      relation: relationToBreakEven(value.price, breakEvenPrice),
+  const score = (g: { ads: RawAd[]; creators: Set<string> }) =>
+    g.ads.reduce((sum, row) => sum + (isActive(row) ? Math.min(90, days(row)) : 1), 0) + g.creators.size * 10;
+  return [...groups.values()]
+    .sort((a, b) => score(b) - score(a) || b.ads.length - a.ads.length || a.label.localeCompare(b.label))
+    .slice(0, TOP_N)
+    .map((g) => ({
+      label: g.label,
+      count: g.ads.length,
+      share: percent(g.ads.length, live.length),
+      activeCount: g.ads.filter(isActive).length,
+      longestDays: Math.max(0, ...g.ads.map(days)),
       provenance: "Derived" as const,
+      supportingAds: g.ads.slice().sort(byLongest).slice(0, MAX_SUPPORTING_ADS).map((row) => mapSupportingAd(row, "Derived")),
     }));
 }
 
-function buildProducts(rows: RawAd[]): ProductPressure[] {
+/** Top creators from Meta's partnership tag. "New" = first seen inside the period. */
+function buildCreators(live: RawAd[], recentStart: number): { items: RankedItem[]; total: number; newCount: number } {
+  const groups = new Map<string, { label: string; ads: RawAd[]; firstSeen: number }>();
+  for (const row of live) {
+    const label = clean(row.creator_name);
+    if (!label) continue;
+    const key = normalize(label);
+    const g = groups.get(key) ?? { label, ads: [], firstSeen: Number.POSITIVE_INFINITY };
+    g.ads.push(row);
+    g.firstSeen = Math.min(g.firstSeen, safeDate(row.first_seen_at) ?? Number.POSITIVE_INFINITY);
+    groups.set(key, g);
+  }
+  const all = [...groups.values()];
+  const items = all
+    .map((g) => ({ g, active: g.ads.filter(isActive).length, longest: Math.max(0, ...g.ads.map(days)) }))
+    .sort((a, b) => b.active - a.active || b.longest - a.longest || a.g.label.localeCompare(b.g.label))
+    .slice(0, TOP_N)
+    .map(({ g, active, longest }) => ({
+      label: g.label,
+      count: g.ads.length,
+      share: percent(g.ads.length, live.length),
+      activeCount: active,
+      longestDays: longest,
+      isNew: g.firstSeen >= recentStart,
+      provenance: "Source" as const,
+      supportingAds: g.ads.slice().sort(byLongest).slice(0, MAX_SUPPORTING_ADS).map((row) => mapSupportingAd(row)),
+    }));
+  return { items, total: all.length, newCount: all.filter((g) => g.firstSeen >= recentStart).length };
+}
+
+function buildLanguages(live: RawAd[], languageMap: Map<string, string[]>): RankedItem[] {
+  const counts = new Map<string, number>();
+  let tagged = 0;
+  for (const row of live) {
+    const codes = languageMap.get(row.id);
+    if (!codes?.length) continue;
+    tagged += 1;
+    for (const code of codes) counts.set(code, (counts.get(code) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, TOP_N)
+    .map(([code, count]) => ({ label: languageName(code), count, share: percent(count, tagged), provenance: "Heuristic" as const }));
+}
+
+/** "Most ad pressure", not sales. Grouped by landing product/collection URL. */
+function buildProducts(live: RawAd[], recentStart: number): ProductPressure[] {
   const groups = new Map<string, RawAd[]>();
-  for (const row of rows) {
-    const product = clean(row.product_name) || "Unspecified product";
-    const key = normalize(product);
+  for (const row of live) {
+    const key = productKey(row.landing_page_url, row.product_name);
+    if (!key) continue;
     const list = groups.get(key) ?? [];
     list.push(row);
     groups.set(key, list);
   }
-  const total = rows.length;
+  const withProduct = [...groups.values()].reduce((sum, g) => sum + g.length, 0);
   return [...groups.entries()]
-    .sort((a, b) => {
-      const score = (group: RawAd[]) => {
-        const active = group.filter((row) => row.is_currently_active !== false).length;
-        const persistent = group.filter((row) => runningDays(row.first_seen_at, row.last_seen_at) >= 60).length;
-        const longest = Math.min(90, Math.max(...group.map((row) => runningDays(row.first_seen_at, row.last_seen_at)), 0));
-        return active * 3 + persistent * 2 + longest + group.length;
-      };
-      return score(b[1]) - score(a[1]) || b[1].length - a[1].length || a[0].localeCompare(b[0]);
+    .map(([product, group]) => {
+      const activeAds = group.filter(isActive).length;
+      const longestDays = Math.max(0, ...group.map(days));
+      const persistent60 = group.filter((row) => isActive(row) && days(row) >= 60).length;
+      const newAds = group.filter((row) => (safeDate(row.first_seen_at) ?? 0) >= recentStart).length;
+      const variants = new Set(group.map((row) => hookKey(hookOf(row) ?? row.id))).size;
+      const status: ProductPressure["status"] =
+        persistent60 > 0 ? "Likely proven" : newAds >= Math.max(2, group.length / 2) ? "New push" : "Steady";
+      return { product, group, activeAds, longestDays, persistent60, variants, status, score: activeAds * 3 + variants + Math.min(90, longestDays) / 10 };
     })
-    .slice(0, 5)
-    .map(([, group]) => {
-      const activeAds = group.filter((row) => row.is_currently_active !== false).length;
-      const persistent60 = group.filter((row) => runningDays(row.first_seen_at, row.last_seen_at) >= 60).length;
+    .sort((a, b) => b.score - a.score || b.group.length - a.group.length || a.product.localeCompare(b.product))
+    .slice(0, TOP_N)
+    .map(({ product, group, activeAds, longestDays, persistent60, variants, status }) => ({
+      product,
+      ads: group.length,
+      activeAds,
+      persistent60,
+      variants,
+      longestDays,
+      status,
+      share: percent(group.length, withProduct),
+      provenance: "Derived" as const,
+      supportingAds: group.slice().sort(byLongest).slice(0, MAX_SUPPORTING_ADS).map((row) => mapSupportingAd(row)),
+    }));
+}
+
+function offerText(row: RawAd): string {
+  return [row.offer, row.headline, firstSentence(row.primary_text)].filter(Boolean).join(" · ");
+}
+
+function buildOffers(live: RawAd[], breakEvenPrice: number | null): OfferItem[] {
+  const groups = new Map<OfferType, RawAd[]>();
+  for (const row of live) {
+    for (const type of classifyOffer(offerText(row))) {
+      const list = groups.get(type) ?? [];
+      list.push(row);
+      groups.set(type, list);
+    }
+  }
+  return [...groups.entries()]
+    .sort((a, b) => b[1].filter(isActive).length - a[1].filter(isActive).length || b[1].length - a[1].length)
+    .slice(0, TOP_N)
+    .map(([type, group]) => {
+      const prices = group.map(visiblePrice).filter((p): p is number => p != null);
+      const price = prices.length ? Math.min(...prices) : null;
+      const depths = group.map((row) => discountDepth(offerText(row))).filter((d): d is number => d != null);
+      const example = group.map((row) => clean(row.offer) || firstSentence(row.headline)).find(Boolean) ?? null;
       return {
-        product: clean(group[0].product_name) || "Unspecified product",
-        ads: group.length,
-        activeAds,
-        persistent60,
-        share: percent(group.length, total),
-        provenance: "Derived",
-        supportingAds: group
-          .slice()
-          .sort((a, b) => runningDays(b.first_seen_at, b.last_seen_at) - runningDays(a.first_seen_at, a.last_seen_at))
-          .slice(0, MAX_SUPPORTING_ADS)
-          .map((row) => mapSupportingAd(row)),
+        label: OFFER_LABEL[type],
+        type,
+        depthPercent: depths.length ? Math.max(...depths) : null,
+        example,
+        count: group.length,
+        share: percent(group.length, live.length),
+        visiblePrice: price,
+        vsBreakEven: price != null && breakEvenPrice != null ? Math.round((price - breakEvenPrice) * 100) / 100 : null,
+        relation: relationToBreakEven(price, breakEvenPrice),
+        provenance: "Derived" as const,
       };
     });
 }
 
-function buildChanges(recent: RawAd[], previous: RawAd[], rows: RawAd[], periodStart: number): { items: CompetitorAnalytics["changes"]; counts: [number, number, number, number] } {
-  const previousOffers = new Set(previous.map((row) => normalize(row.offer)).filter(Boolean));
-  const previousHooks = new Set(previous.map((row) => normalize(firstSentence(row.primary_text ?? row.headline))).filter(Boolean));
+function buildChanges(recent: RawAd[], previous: RawAd[], all: RawAd[], recentStart: number) {
+  const prevTypes = new Set(previous.flatMap((row) => classifyOffer(offerText(row))));
+  const prevHooks = new Set(previous.map((row) => hookKey(hookOf(row) ?? "")).filter(Boolean));
 
-  const newTests = recent.length;
-  const newOfferRows = recent.filter((row) => {
-    const offer = normalize(row.offer);
-    return offer && !previousOffers.has(offer);
-  });
+  const newOfferRows = recent.filter((row) => classifyOffer(offerText(row)).some((type) => !prevTypes.has(type)));
   const newMessageRows = recent.filter((row) => {
-    const hook = normalize(firstSentence(row.primary_text ?? row.headline));
-    return hook && !previousHooks.has(hook);
+    const key = hookKey(hookOf(row) ?? "");
+    return key.length >= 4 && !prevHooks.has(key);
   });
-  const retiredRows = rows.filter((row) => row.is_currently_active === false && (safeDate(row.last_seen_at) ?? 0) >= periodStart);
+  const retiredRows = all
+    .filter((row) => row.is_currently_active === false && (safeDate(row.last_seen_at) ?? 0) >= recentStart)
+    .sort((a, b) => (safeDate(b.last_seen_at) ?? 0) - (safeDate(a.last_seen_at) ?? 0));
 
-  const newOfferLabels = newOfferRows.map((row) => clean(row.offer)).filter(Boolean);
-  const newMessageLabels = newMessageRows.map((row) => firstSentence(row.primary_text ?? row.headline)).filter(Boolean) as string[];
-
-  const items: CompetitorAnalytics["changes"] = [];
-  if (newTests) {
-    items.push({ type: "new_test", label: "New ads entered the index", detail: `${newTests} creatives were first observed in this period.`, count: newTests, provenance: "Source", supportingAds: newTests ? recent.slice(0, MAX_SUPPORTING_ADS).map((row) => mapSupportingAd(row)) : [] });
+  const items: ChangeItem[] = [];
+  if (recent.length) {
+    const formats = [...new Set(recent.map((row) => clean(row.creative_type)).filter((f) => f && f !== "unknown"))].slice(0, 2).join(" + ");
+    items.push({
+      type: "new_test",
+      label: `Launched ${recent.length} new ad${recent.length === 1 ? "" : "s"}${formats ? ` (${formats})` : ""}`,
+      detail: `${recent.length} creatives were first observed in this period.`,
+      count: recent.length,
+      provenance: "Source",
+      supportingAds: recent.slice(0, MAX_SUPPORTING_ADS).map((row) => mapSupportingAd(row)),
+    });
   }
   if (newOfferRows.length) {
-    const unique = [...new Set(newOfferLabels)].slice(0, 2).join(" · ");
-    items.push({ type: "new_offer", label: unique || "New offer message", detail: `${newOfferRows.length} recent creatives introduce an offer not seen in the previous comparison window.`, count: newOfferRows.length, provenance: "Derived", supportingAds: newOfferRows.slice(0, MAX_SUPPORTING_ADS).map((row) => mapSupportingAd(row, "Derived")) });
+    const types = [...new Set(newOfferRows.flatMap((row) => classifyOffer(offerText(row)).filter((t) => !prevTypes.has(t))))];
+    items.push({
+      type: "new_offer",
+      label: `New offer: ${types.map((t) => OFFER_LABEL[t]).join(", ")}`,
+      detail: `${newOfferRows.length} new ads use an offer type not seen in the previous period.`,
+      count: newOfferRows.length,
+      provenance: "Derived",
+      supportingAds: newOfferRows.slice(0, MAX_SUPPORTING_ADS).map((row) => mapSupportingAd(row, "Derived")),
+    });
   }
   if (newMessageRows.length) {
-    const unique = [...new Set(newMessageLabels)].slice(0, 2).join(" · ");
-    items.push({ type: "new_message", label: unique || "New messaging", detail: `${newMessageRows.length} recent creatives introduce a hook not seen in the previous comparison window.`, count: newMessageRows.length, provenance: "Derived", supportingAds: newMessageRows.slice(0, MAX_SUPPORTING_ADS).map((row) => mapSupportingAd(row, "Derived")) });
+    const sample = hookOf(newMessageRows[0]);
+    items.push({
+      type: "new_message",
+      label: sample ? `New message: “${sample}”` : "New messaging",
+      detail: `${newMessageRows.length} new ads open with a line not used in the previous period.`,
+      count: newMessageRows.length,
+      provenance: "Derived",
+      supportingAds: newMessageRows.slice(0, MAX_SUPPORTING_ADS).map((row) => mapSupportingAd(row, "Derived")),
+    });
   }
   if (retiredRows.length) {
-    items.push({ type: "retired", label: "Ads stopped appearing", detail: `${retiredRows.length} creatives have a last-seen date inside this period and are currently inactive.`, count: retiredRows.length, provenance: "Source", supportingAds: retiredRows.slice(0, MAX_SUPPORTING_ADS).map((row) => mapSupportingAd(row)) });
+    const quick = retiredRows.filter((row) => days(row) <= 7).length;
+    items.push({
+      type: "retired",
+      label: `Stopped ${retiredRows.length} ad${retiredRows.length === 1 ? "" : "s"}${quick ? ` (${quick} live under 7 days)` : ""}`,
+      detail: `${retiredRows.length} creatives were last seen in this period and are no longer active.`,
+      count: retiredRows.length,
+      provenance: "Source",
+      supportingAds: retiredRows.slice(0, MAX_SUPPORTING_ADS).map((row) => mapSupportingAd(row)),
+    });
   }
+  return { items, newOffers: newOfferRows.length, newMessages: newMessageRows.length, retired: retiredRows.length };
+}
 
-  return { items: items.slice(0, 6), counts: [newTests, newOfferRows.length, newMessageRows.length, retiredRows.length] };
+function periodDays(period: BrandVaultPeriod): number {
+  return period === "week" ? 7 : period === "month" ? 30 : 90;
 }
 
 async function analyzeCompetitor(input: {
@@ -486,12 +444,15 @@ async function analyzeCompetitor(input: {
   userId: string;
 }): Promise<CompetitorAnalytics> {
   const now = Date.now();
-  const days = periodDays(input.period);
-  const recentStart = now - days * DAY_MS;
-  const previousStart = now - days * 2 * DAY_MS;
-  const rows = await loadAds(input.competitor.advertiserPageId ?? "", input.competitor.name, input.competitor.country);
-  let collectionState: "indexed" | "collecting" | "empty" = rows.length ? "indexed" : "empty";
+  const span = periodDays(input.period);
+  const recentStart = now - span * DAY_MS;
+  const previousStart = now - span * 2 * DAY_MS;
+
+  const { rows, identity, pageId } = await loadAds(input.competitor);
+
+  let collectionState: CompetitorAnalytics["collectionState"] = rows.length ? "indexed" : "empty";
   if (!rows.length) {
+    // Nothing indexed yet: queue a background collection (rate-limited per key).
     try {
       const collection = await startAdSpyCollection({
         userId: input.userId,
@@ -499,131 +460,137 @@ async function analyzeCompetitor(input: {
         country: input.competitor.country,
         platform: "meta",
         mode: "advertiser",
-        pageId: input.competitor.advertiserPageId,
+        pageId,
         minIntervalMs: 30 * 60_000,
         reason: "user",
         depth: "quick",
       });
-      collectionState = collection.dispatched || collection.outcome === "already_running" ? "collecting" : "empty";
+      collectionState = collection.dispatched || collection.outcome === "already_running" || collection.outcome === "running_for_another_request" ? "collecting" : "empty";
     } catch (error) {
       console.warn("[BrandVault] collection kickoff failed", input.competitor.name, error);
     }
   }
-  const filteredRows = rows.filter((row) => {
-    const last = safeDate(row.last_seen_at) ?? safeDate(row.first_seen_at);
-    return last == null || last >= previousStart;
-  });
-  const recent = filteredRows.filter((row) => (safeDate(row.first_seen_at) ?? Number.POSITIVE_INFINITY) >= recentStart);
-  const previous = filteredRows.filter((row) => {
+
+  // Ads observed live during the period (the basis for "top" modules).
+  const live = rows.filter((row) => (safeDate(row.last_seen_at) ?? safeDate(row.first_seen_at) ?? 0) >= recentStart);
+  const recent = rows.filter((row) => (safeDate(row.first_seen_at) ?? 0) >= recentStart);
+  const previous = rows.filter((row) => {
     const first = safeDate(row.first_seen_at);
     return first != null && first >= previousStart && first < recentStart;
   });
-  const relevantForWinners = rows.slice();
-  const languageMap = await loadLanguages(rows.map((row) => row.id), previousStart);
-  const languageValues: string[] = [];
-  for (const values of languageMap.values()) languageValues.push(...values);
 
-  const changes = buildChanges(recent, previous, filteredRows, recentStart);
-  const [newTests, newOffers, newMessages, retiredAds] = changes.counts;
-  const activeAds = rows.filter((row) => row.is_currently_active !== false).length;
-  const persistent30 = rows.filter((row) => runningDays(row.first_seen_at, row.last_seen_at) >= 30).length;
-  const persistent60 = rows.filter((row) => runningDays(row.first_seen_at, row.last_seen_at) >= 60).length;
-  const persistent90 = rows.filter((row) => runningDays(row.first_seen_at, row.last_seen_at) >= 90).length;
-
-  const hooks = rows.map((row) => firstSentence(row.primary_text ?? row.headline)).filter(Boolean) as string[];
-  const creators = rows.map((row) => clean(row.creator_name)).filter(Boolean);
-  const languages = languageValues.length ? languageValues : LANGUAGE_FALLBACK.filter((language) => rows.some((row) => normalize(`${row.primary_text ?? ""} ${row.headline ?? ""}`).includes(language)));
-  const products = buildProducts(rows);
-  const offers = buildOffers(rows, input.breakEvenPrice);
-  const winnersBoard = relevantForWinners
-    .filter((row) => row.is_currently_active !== false && runningDays(row.first_seen_at, row.last_seen_at) >= 30)
-    .sort((a, b) => runningDays(b.first_seen_at, b.last_seen_at) - runningDays(a.first_seen_at, a.last_seen_at))
-    .slice(0, 10)
-    .map((row) => mapSupportingAd(row, runningDays(row.first_seen_at, row.last_seen_at) >= 60 ? "Heuristic" : "Derived"));
-  const stoppedWithin7Days = relevantForWinners
-    .filter((row) => row.is_currently_active === false && (safeDate(row.last_seen_at) ?? 0) >= now - 7 * DAY_MS)
-    .sort((a, b) => (safeDate(b.last_seen_at) ?? 0) - (safeDate(a.last_seen_at) ?? 0))
-    .slice(0, 10)
-    .map((row) => mapSupportingAd(row));
+  const languageMap = await loadLanguages(live.map((row) => row.id));
+  const changes = buildChanges(recent, previous, rows, recentStart);
+  const creators = buildCreators(live, recentStart);
+  const topLanguages = buildLanguages(live, languageMap);
 
   const angleCoverage: Record<string, number> = {};
-  for (const angle of ANGLES) angleCoverage[angle] = 0;
-  for (const row of rows) {
-    const angle = messageAngle(`${row.primary_text ?? ""} ${row.headline ?? ""} ${row.offer ?? ""}`);
-    if (angle) angleCoverage[angle] = (angleCoverage[angle] ?? 0) + 1;
+  for (const angle of ANGLES) angleCoverage[angle.label] = 0;
+  for (const row of live) {
+    const text = `${row.primary_text ?? ""} ${row.headline ?? ""} ${row.offer ?? ""}`;
+    for (const angle of ANGLES) if (angle.re.test(text)) angleCoverage[angle.label] += 1;
   }
 
-  const latestSeen = rows.map((row) => safeDate(row.last_seen_at)).filter((x): x is number => x != null).sort((a, b) => b - a)[0] ?? null;
-  const dataCoverage: CompetitorAnalytics["dataCoverage"] = rows.length >= 20 ? "strong" : rows.length > 0 ? "thin" : "none";
+  const latestSeen = rows.reduce<number | null>((max, row) => {
+    const t = safeDate(row.last_seen_at);
+    return t != null && (max == null || t > max) ? t : max;
+  }, null);
 
   return {
     slot: input.competitor.slot,
     name: input.competitor.name,
-    pageId: input.competitor.advertiserPageId,
+    pageId,
     country: input.competitor.country,
-    periodDays: days,
+    periodDays: span,
     lastObservedAt: latestSeen ? new Date(latestSeen).toISOString() : null,
     totalAds: rows.length,
-    activeAds,
-    newTests,
-    newOffers,
-    newMessages,
-    retiredAds,
-    persistent30,
-    persistent60,
-    persistent90,
-    topHooks: rankedHooks(recent, recent.length),
-    topCreators: rankedCreators(recent, recent.length),
-    topLanguages: ranked(languages, languages.length, "Derived"),
-    topProducts: products,
-    topOffers: offers,
+    activeAds: rows.filter(isActive).length,
+    newTests: recent.length,
+    newOffers: changes.newOffers,
+    newMessages: changes.newMessages,
+    retiredAds: changes.retired,
+    creatorsCount: creators.total,
+    newCreators: creators.newCount,
+    identity,
+    persistent30: rows.filter((row) => isActive(row) && days(row) >= 30).length,
+    persistent60: rows.filter((row) => isActive(row) && days(row) >= 60).length,
+    persistent90: rows.filter((row) => isActive(row) && days(row) >= 90).length,
+    topHooks: buildHooks(live),
+    topCreators: creators.items,
+    topLanguages,
+    topProducts: buildProducts(live, recentStart),
+    topOffers: buildOffers(live, input.breakEvenPrice),
     changes: changes.items,
-    winnersBoard,
-    stoppedWithin7Days,
+    winnersBoard: rows
+      .filter((row) => isActive(row) && days(row) >= 30)
+      .sort(byLongest)
+      .slice(0, 10)
+      .map((row) => mapSupportingAd(row, days(row) >= 60 ? "Heuristic" : "Derived")),
+    // Killed fast: stopped inside the period after at most 7 days live.
+    stoppedWithin7Days: rows
+      .filter((row) => row.is_currently_active === false && days(row) <= 7 && (safeDate(row.last_seen_at) ?? 0) >= recentStart)
+      .sort((a, b) => (safeDate(b.last_seen_at) ?? 0) - (safeDate(a.last_seen_at) ?? 0))
+      .slice(0, 10)
+      .map((row) => mapSupportingAd(row)),
     angleCoverage,
-    usedCreatorNames: [...new Set(creators.map(normalize).filter(Boolean))].slice(0, 200),
-    usedLanguageCodes: [...new Set(languages.map(normalize).filter(Boolean))],
-    dataCoverage,
+    usedCreatorNames: [...new Set(live.map((row) => normalize(row.creator_name)).filter(Boolean))].slice(0, 200),
+    usedLanguageCodes: [...new Set([...languageMap.values()].flat())],
+    dataCoverage: rows.length >= 20 ? "strong" : rows.length > 0 ? "thin" : "none",
     collectionState,
   };
 }
 
 function buildGaps(competitors: CompetitorAnalytics[]): BrandVaultAnalytics["gaps"] {
-  const active = competitors.filter((item) => item.dataCoverage !== "none");
-  const angles = ANGLES.filter((angle) => active.every((item) => (item.angleCoverage[angle] ?? 0) === 0)).map((angle) => angle);
-  const creatorUniverse = [...new Set(active.flatMap((item) => item.topCreators.map((row) => normalize(row.label))))].filter(Boolean);
-  const creators = active.length >= 2
-    ? creatorUniverse.filter((creator) => active.every((item) => !item.usedCreatorNames.includes(creator))).slice(0, 5)
-    : [];
-  const languageSet = new Set(active.flatMap((item) => item.usedLanguageCodes));
-  const languages = LANGUAGE_FALLBACK.filter((language) => !languageSet.has(language)).slice(0, 5);
-  return { angles, creators, languages };
+  const withData = competitors.filter((item) => item.dataCoverage !== "none");
+  if (!withData.length) return { angles: [], creators: [], languages: [] };
+  const angles = ANGLES.map((a) => a.label).filter((label) => withData.every((item) => (item.angleCoverage[label] ?? 0) === 0));
+  const used = new Set(withData.flatMap((item) => item.usedLanguageCodes));
+  // Only claim a language gap when we actually have language data for the set.
+  const languages = used.size ? GAP_LANGUAGES.filter((code) => !used.has(code)).slice(0, 3).map(languageName) : [];
+  return { angles, creators: [], languages };
 }
 
-function buildCounterBrief(
-  brandName: string,
-  analytics: BrandVaultAnalytics["competitors"],
-  gaps: BrandVaultAnalytics["gaps"],
-  breakEvenPrice: number | null,
-): string {
-  const names = analytics.map((item) => item.name).join(", ") || "your selected competitors";
-  const topHooks = analytics.flatMap((item) => item.topHooks.slice(0, 2).map((hook) => hook.label)).slice(0, 4);
-  const persistent = analytics.reduce((sum, item) => sum + item.persistent60, 0);
-  const offersBelow = analytics.flatMap((item) => item.topOffers.filter((offer) => offer.relation === "below")).slice(0, 3);
-  const lines = [
+function buildNextMove(competitors: CompetitorAnalytics[], gaps: BrandVaultAnalytics["gaps"], breakEvenPrice: number | null, heroProduct: string): string {
+  const floor = breakEvenPrice != null ? `priced above your ${formatCurrency(breakEvenPrice)} break-even` : "priced above your break-even (add your costs in Edit vault)";
+  const hero = heroProduct || "your best-selling SKU";
+  const withData = competitors.filter((item) => item.dataCoverage !== "none");
+  if (!withData.length) return "Waiting for indexed ads from your competitors. The first read appears once their ads are collected.";
+  const leadAngle = Object.entries(
+    withData.reduce<Record<string, number>>((acc, item) => {
+      for (const [label, n] of Object.entries(item.angleCoverage)) acc[label] = (acc[label] ?? 0) + (n > 0 ? 1 : 0);
+      return acc;
+    }, {}),
+  ).sort((a, b) => b[1] - a[1])[0];
+  const parts: string[] = [];
+  if (leadAngle && leadAngle[1] >= 2) parts.push(`${leadAngle[1]} of your rivals lead with ${leadAngle[0].replace("-", " ")} copy`);
+  if (gaps.languages.length) parts.push(`none of them run ${gaps.languages[0]} ads`);
+  const observed = parts.length ? `${parts.join(" and ")}. ` : "";
+  const action = gaps.languages.length
+    ? `Brief 3 ${gaps.languages[0]} UGC ads on ${hero}, ${floor}.`
+    : gaps.angles.length
+      ? `Brief 3 ${gaps.angles[0].replace("-", " ")} ads on ${hero} (nobody in your set uses that angle), ${floor}.`
+      : `Test one new hook on ${hero} against their longest-running ads, ${floor}.`;
+  return observed.charAt(0).toUpperCase() + observed.slice(1) + action;
+}
+
+function buildCounterBrief(brandName: string, competitors: CompetitorAnalytics[], gaps: BrandVaultAnalytics["gaps"], breakEvenPrice: number | null, nextMove: string): string {
+  const names = competitors.map((item) => item.name).join(", ") || "your selected competitors";
+  const topHooks = competitors.flatMap((item) => item.topHooks.slice(0, 2).map((hook) => `“${hook.label}”`)).slice(0, 4);
+  const persistent = competitors.reduce((sum, item) => sum + item.persistent60, 0);
+  const below = competitors.flatMap((item) => item.topOffers.filter((offer) => offer.relation === "below").map((offer) => `${item.name}: ${offer.label}`)).slice(0, 3);
+  return [
     `Counter-brief for ${brandName || "your brand"}`,
     `Observed set: ${names}.`,
-    topHooks.length ? `Hooks worth pressure-testing against the market: ${topHooks.join(" · ")}.` : "No dominant hook cluster was strong enough to summarize.",
-    `Persistent creative signal: ${persistent} ads have a 60+ day observation window across the selected set. This is a heuristic persistence signal, not proof of performance.`,
-    gaps.angles.length ? `Observed whitespace: ${gaps.angles.join(", ")} were not observed in the selected competitor copy during the indexed period.` : "No empty angle bucket was observed across the selected taxonomy.",
-    offersBelow.length && breakEvenPrice != null
-      ? `Economics watch: ${offersBelow.length} recurring visible offers were below the stored break-even price; treat those as market pressure, not evidence they are profitable.`
+    topHooks.length ? `Hooks they keep live: ${topHooks.join(" · ")}.` : "No hook is reused enough to call a pattern yet.",
+    `${persistent} of their ads have stayed live 60+ days. That signals continued use, not proven performance.`,
+    gaps.angles.length ? `Angles nobody in the set uses: ${gaps.angles.join(", ")}.` : "Every tracked angle is already used by at least one rival.",
+    below.length && breakEvenPrice != null
+      ? `Offers below your ${formatCurrency(breakEvenPrice)} break-even: ${below.join("; ")}. Do not match these.`
       : breakEvenPrice != null
-        ? `Economics anchor: your stored break-even price is ${formatCurrency(breakEvenPrice)}; visible competitor offers should be checked against that floor before matching.`
-        : "Economics anchor is not set yet. Complete your cost inputs before matching competitor offers.",
-    "Next test: choose one market hook, one creator/format, and one offer you can support at your own contribution floor; then measure first-party performance in Zooptrack.",
-  ];
-  return lines.join("\n\n").replace(/"\.$/, ".");
+        ? `Keep any offer above your ${formatCurrency(breakEvenPrice)} break-even.`
+        : "Add your costs in Edit vault to check offers against your break-even.",
+    `Next move: ${nextMove}`,
+  ].join("\n\n");
 }
 
 export async function getBrandVaultAnalytics(input: {
@@ -632,34 +599,54 @@ export async function getBrandVaultAnalytics(input: {
   period: BrandVaultPeriod;
   economics: BrandEconomics;
   brandName: string;
+  heroProduct?: string;
 }): Promise<BrandVaultAnalytics> {
   const { breakEvenPrice, targetMarginPrice, contributionBeforeAds } = calculateBreakEven(input.economics);
-  const competitors = (await Promise.all(input.competitors.map((competitor) => analyzeCompetitor({ competitor, period: input.period, breakEvenPrice, userId: input.userId })))).filter(Boolean);
+  const settled = await Promise.allSettled(
+    input.competitors.map((competitor) => analyzeCompetitor({ competitor, period: input.period, breakEvenPrice, userId: input.userId })),
+  );
+  const competitors = settled
+    .map((result, i) => {
+      if (result.status === "fulfilled") return result.value;
+      console.error("[BrandVault] competitor analysis failed", input.competitors[i]?.name, result.reason);
+      return null;
+    })
+    .filter((item): item is CompetitorAnalytics => item !== null)
+    .sort((a, b) => a.slot - b.slot);
+
   const gaps = buildGaps(competitors);
+  const nextMove = buildNextMove(competitors, gaps, breakEvenPrice, input.heroProduct ?? "");
+
   const compareRows = competitors.map((item) => ({
     slot: item.slot,
     name: item.name,
     totalAds: item.totalAds,
     activeAds: item.activeAds,
     newTests: item.newTests,
+    retiredAds: item.retiredAds,
     persistent60: item.persistent60,
+    creatorsCount: item.creatorsCount,
     topProduct: item.topProducts[0]?.product ?? null,
     topHook: item.topHooks[0]?.label ?? null,
     topCreator: item.topCreators[0]?.label ?? null,
-    topLanguage: item.topLanguages[0]?.label ?? null,
+    topLanguage: item.topLanguages[0] ? `${item.topLanguages[0].label} ${item.topLanguages[0].share}%` : null,
+    topOffer: item.topOffers[0] ? `${item.topOffers[0].label}${item.topOffers[0].depthPercent ? ` (${item.topOffers[0].depthPercent}%)` : ""}` : null,
   }));
 
-  const mondayChanges = competitors.flatMap((item) => item.changes.map((change) => ({ ...change, label: `${item.name}: ${change.label}` })));
-  const lines = competitors.length
-    ? competitors.slice(0, 3).map((item) => `${item.name}: ${item.newTests} new tests, ${item.newOffers} new offer signals, ${item.newMessages} new message signals, ${item.persistent60} 60+ day creatives.`)
-    : ["Add at least one exact competitor match to generate the digest."];
+  const periodWord = input.period === "week" ? "this week" : input.period === "month" ? "this month" : "in the last 3 months";
+  const digestChanges = competitors.flatMap((item) => item.changes.slice(0, 1).map((change) => ({ ...change, label: `${item.name}: ${change.label}` })));
   const mondayDigest = {
-    headline: competitors.length ? "What changed in the latest indexed period" : "Set up your competitors to start the digest",
-    lines,
-    changes: mondayChanges.slice(0, 10),
+    headline: competitors.length ? `What your rivals changed ${periodWord}` : "Add competitors to start your Monday digest",
+    lines: competitors.map((item) =>
+      item.dataCoverage === "none"
+        ? `${item.name}: no indexed ads yet${item.collectionState === "collecting" ? " (collecting now)" : ""}.`
+        : `${item.name}: +${item.newTests} new, −${item.retiredAds} stopped, ${item.activeAds} active ads; ${item.persistent60} live 60+ days.`,
+    ),
+    changes: digestChanges,
+    nextMove,
   };
 
-  const analytics: BrandVaultAnalytics = {
+  return {
     period: input.period,
     generatedAt: new Date().toISOString(),
     breakEvenPrice,
@@ -669,9 +656,8 @@ export async function getBrandVaultAnalytics(input: {
     compareRows,
     gaps,
     mondayDigest,
-    counterBrief: buildCounterBrief(input.brandName, competitors, gaps, breakEvenPrice),
+    counterBrief: buildCounterBrief(input.brandName, competitors, gaps, breakEvenPrice, nextMove),
   };
-  return analytics;
 }
 
-export { normalizeEconomics };
+export { calculateBreakEven, normalizeEconomics };
