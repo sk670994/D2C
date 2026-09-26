@@ -212,6 +212,10 @@ html[data-theme="dark"] .azs .azs-btn-primary { color: #06101f; }
 .azs .azs-results-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .azs .azs-results-bar > div { display: inline-flex; align-items: center; gap: 8px; }
 .azs .azs-results-bar strong { font-size: 15px; }
+.azs .azs-sort { margin-left: auto; }
+.azs .azs-sort select { height: 32px; padding: 0 28px 0 10px; border: 1px solid var(--azs-line-strong); border-radius: 8px; background: var(--azs-surface); color: var(--azs-ink); font: inherit; font-size: 13px; cursor: pointer; }
+.azs .azs-sort select:focus-visible { outline: 2px solid var(--azs-accent); outline-offset: 1px; }
+.azs .azs-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .azs .azs-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
 .azs .azs-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px 4px 10px; border-radius: 999px; background: var(--azs-accent-soft); color: var(--azs-accent); font-size: 12.5px; font-weight: 600; }
 .azs .azs-chip button { display: grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; }
