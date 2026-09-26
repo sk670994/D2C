@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
-import { searchGlobalAdsAccurate } from "@/lib/ad-intelligence/global/accurate-search";
+import { parseAdSort, searchGlobalAdsAccurate } from "@/lib/ad-intelligence/global/accurate-search";
 import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
 import type { AdPlatform } from "@/lib/ad-intelligence/types";
 
@@ -59,6 +59,8 @@ export async function GET(request: NextRequest) {
   const region = textFilter(params.get("region"), 100);
   const creativeTypeValue = creativeType(params.get("creativeType"));
   const activeStatusValue = activeStatus(params.get("activeStatus"));
+  // Whitelisted: relevant | newest | longest | stopped (anything else = relevant).
+  const sort = parseAdSort(params.get("sort"));
 
   if (q.length < 2) {
     return NextResponse.json({
@@ -72,6 +74,7 @@ export async function GET(request: NextRequest) {
       region: region ?? null,
       creativeType: creativeTypeValue ?? null,
       activeStatus: activeStatusValue ?? null,
+      sort,
       ads: [],
       total: 0,
       page: 1,
@@ -94,6 +97,7 @@ export async function GET(request: NextRequest) {
       region,
       creativeType: creativeTypeValue,
       activeStatus: activeStatusValue,
+      sort,
     });
 
     return NextResponse.json(
@@ -108,6 +112,7 @@ export async function GET(request: NextRequest) {
         region: region ?? null,
         creativeType: creativeTypeValue ?? null,
         activeStatus: activeStatusValue ?? null,
+        sort,
         ...result,
         limit: PAGE_SIZE,
         dataSource: "indexed",
