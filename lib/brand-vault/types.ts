@@ -46,10 +46,24 @@ export type RankedItem = {
   count: number;
   share: number;
   provenance: Provenance;
+  /** Ads using it that are currently active. */
+  activeCount?: number;
+  /** Longest observed run among those ads, in days. */
+  longestDays?: number;
+  /** First seen inside the selected period (creators). */
+  isNew?: boolean;
+  /** Up to 6 evidence ads. */
+  supportingAds?: SupportingAd[];
 };
 
 export type OfferItem = {
   label: string;
+  /** Offer type, e.g. "Buy X Get Y", "% off". */
+  type: string;
+  /** Deepest % discount seen for this offer type, if any. */
+  depthPercent: number | null;
+  /** One real offer line from the ads, as evidence. */
+  example: string | null;
   count: number;
   share: number;
   visiblePrice: number | null;
@@ -90,6 +104,11 @@ export type ProductPressure = {
   ads: number;
   activeAds: number;
   persistent60: number;
+  /** Distinct creatives (hook variants) pushing it. */
+  variants: number;
+  longestDays: number;
+  /** Heuristic: "Likely proven" (60+ days live), "New push" (mostly new this period), else "Steady". */
+  status: "Likely proven" | "New push" | "Steady";
   share: number;
   provenance: Provenance;
   supportingAds: SupportingAd[];
@@ -108,6 +127,10 @@ export type CompetitorAnalytics = {
   newOffers: number;
   newMessages: number;
   retiredAds: number;
+  creatorsCount: number;
+  newCreators: number;
+  /** How the competitor's ads were matched: by Meta Page ID, or by exact name only. */
+  identity: "page_id" | "name" | "none";
   persistent30: number;
   persistent60: number;
   persistent90: number;
@@ -144,6 +167,9 @@ export type BrandVaultAnalytics = {
     topHook: string | null;
     topCreator: string | null;
     topLanguage: string | null;
+    creatorsCount: number;
+    retiredAds: number;
+    topOffer: string | null;
   }>;
   gaps: {
     angles: string[];
@@ -154,6 +180,7 @@ export type BrandVaultAnalytics = {
     headline: string;
     lines: string[];
     changes: ChangeItem[];
+    nextMove: string;
   };
   counterBrief: string;
 };
