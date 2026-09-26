@@ -283,8 +283,12 @@ export function AdSpyWorkspace() {
         const url = new URL("/api/ad-intelligence/autocomplete", window.location.origin);
         url.searchParams.set("q", q);
         url.searchParams.set("country", country);
-        const response = await fetch(url, { cache: "no-store", signal: controller.signal });
-        const data = (await response.json()) as { success: boolean; advertisers?: AutocompleteAdvertiser[] };
+        let response = await fetch(url, { cache: "no-store", signal: controller.signal });
+        if (response.status >= 500 && !controller.signal.aborted) {
+          // Cold function on the first keystroke: retry once instead of showing nothing.
+          response = await fetch(url, { cache: "no-store", signal: controller.signal });
+        }
+        const data = (await response.json().catch(() => ({ success: false }))) as { success: boolean; advertisers?: AutocompleteAdvertiser[] };
         if (controller.signal.aborted) return;
         const items = response.ok && data.success ? data.advertisers ?? [] : [];
         suggestCache.set(keyFor(lower), { at: Date.now(), items });
@@ -564,9 +568,17 @@ export function AdSpyWorkspace() {
     const url = new URL("/api/ad-intelligence/autocomplete", window.location.origin);
     url.searchParams.set("q", q);
     url.searchParams.set("country", target.country);
-    fetch(url, { cache: "no-store", signal: controller.signal })
-      .then((response) => response.json())
-      .then((data: { success?: boolean; advertisers?: AutocompleteAdvertiser[] }) => {
+    // One retry: the first call of a session can hit a cold function (504).
+    const lookup = (attempt: number): Promise<{ success?: boolean; advertisers?: AutocompleteAdvertiser[] }> =>
+      fetch(url, { cache: "no-store", signal: controller.signal }).then((response) => {
+        if (response.ok) return response.json();
+        if (attempt === 0 && !controller.signal.aborted) {
+          return new Promise((resolve) => window.setTimeout(resolve, 1200)).then(() => lookup(1));
+        }
+        return { success: false };
+      });
+    lookup(0)
+      .then((data) => {
         if (controller.signal.aborted || !data.success) return;
         const items = (data.advertisers ?? []).filter((item) => /^\d+$/.test(String(item.pageId ?? "")));
         const exact = nameOnly.current.has(lockKey) ? null : pickExactPage(q, items);
