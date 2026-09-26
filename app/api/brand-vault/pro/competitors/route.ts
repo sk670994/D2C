@@ -2,30 +2,20 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { startAdSpyCollection } from "@/lib/ad-intelligence/jobs/start-collection";
+import { pickPageForName } from "@/lib/brand-vault/signals";
 
 export const runtime = "nodejs";
 
-function compact(value: unknown) {
-  return String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
 async function resolvePageId(name: string, country: string) {
-  const service = createGlobalServiceClient();
-  const result = await service.rpc("adspy_autocomplete_advertisers", {
+  const { data, error } = await createGlobalServiceClient().rpc("adspy_autocomplete_advertisers", {
     p_query: name,
     p_platform: "meta",
     p_country: country,
     p_limit: 12,
   });
-  if (result.error || !result.data?.length) return null;
-  const query = compact(name);
-  for (const row of result.data as Array<{ page_id?: string | null; label?: string | null }>) {
-    const pageId = String(row.page_id ?? "").trim();
-    const label = compact(row.label);
-    if (!/^\d+$/.test(pageId) || !query || !label) continue;
-    if (label === query || label.startsWith(query) || query.startsWith(label)) return pageId;
-  }
-  return null;
+  if (error || !Array.isArray(data)) return null;
+  // Exact match, or one unambiguous prefix match. Otherwise the user must pick the Page ID.
+  return pickPageForName(name, data as Array<{ page_id?: string | null; label?: string | null }>);
 }
 
 export async function POST(request: Request) {
@@ -37,7 +27,8 @@ export async function POST(request: Request) {
   const name = String(body?.name ?? "").trim().slice(0, 160);
   if (![1, 2, 3].includes(slot) || !name) return NextResponse.json({ success: false, error: "Competitor slot and name are required." }, { status: 400 });
 
-  const country = String(body?.country ?? "IN").trim().toUpperCase().slice(0, 2);
+  const countryRaw = String(body?.country ?? "IN").trim().toUpperCase();
+  const country = /^[A-Z]{2}$/.test(countryRaw) ? countryRaw : "IN";
   const suppliedPageId = body?.advertiserPageId ? String(body.advertiserPageId).trim().replace(/\D/g, "").slice(0, 30) : null;
   const resolvedPageId = suppliedPageId || await resolvePageId(name, country);
   const payload = {
@@ -48,7 +39,12 @@ export async function POST(request: Request) {
   };
 
   const { data, error } = await auth.from("brand_vault_competitors").upsert(payload, { onConflict: "user_id,slot" }).select("id,slot,name,domain,advertiser_page_id,country,platform,created_at,updated_at").single();
-  if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  if (error) {
+    if (error.code === "23505") {
+      return NextResponse.json({ success: false, error: "This Meta page is already one of your competitors." }, { status: 409 });
+    }
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  }
 
   let collection = null;
   try {
