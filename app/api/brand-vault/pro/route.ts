@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
   ]);
   if (vaultError || competitorError || actionsError) return NextResponse.json({ success: false, error: vaultError?.message || competitorError?.message || actionsError?.message }, { status: 500 });
 
-  const mappedCompetitors = (competitors ?? []).map((row) => ({
+  const mappedCompetitors = (competitors ?? []).filter((row) => [1, 2, 3].includes(Number(row.slot))).map((row) => ({
     id: row.id, slot: Number(row.slot) as 1 | 2 | 3, name: row.name, domain: row.domain,
     advertiserPageId: row.advertiser_page_id, country: row.country, platform: "meta" as const,
     createdAt: row.created_at, updatedAt: row.updated_at,
@@ -33,6 +33,7 @@ export async function GET(request: NextRequest) {
     period,
     economics: normalizeEconomics(vault?.economics),
     brandName: vault?.brand_name ?? "",
+    heroProduct: vault?.hero_product ?? "",
   });
   return NextResponse.json({ success: true, brandVault: vault ? {
     brandName: vault.brand_name ?? "", websiteUrl: vault.website_url ?? "", tone: vault.tone ?? "", audience: vault.audience ?? "",
