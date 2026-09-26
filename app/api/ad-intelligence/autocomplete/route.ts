@@ -10,7 +10,8 @@ export const runtime = "nodejs";
 // Run next to the Supabase database (ap-southeast-2 / Sydney).
 export const preferredRegion = "syd1";
 export const dynamic = "force-dynamic";
-export const maxDuration = 5;
+// A cold start alone can take ~5s; 5s made the first lookup of a session 504.
+export const maxDuration = 15;
 
 // The advertiser index changes slowly; keep hot prefixes warm per instance.
 const CACHE_TTL_MS = 60_000;
