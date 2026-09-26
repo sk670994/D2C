@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import type {
   BrandEconomics,
@@ -11,8 +11,6 @@ import type {
   ChangeItem,
   CompetitorAnalytics,
   OfferItem,
-  ProductPressure,
-  RankedItem,
 } from "@/lib/brand-vault/types";
 
 const PERIODS: Array<{ key: BrandVaultPeriod; label: string }> = [
@@ -107,6 +105,7 @@ function emptyAnalytics(period: BrandVaultPeriod): BrandVaultAnalytics {
       headline: "Set up your competitor set to start the Monday read",
       lines: [],
       changes: [],
+      nextMove: "Add your competitors in Edit vault.",
     },
     counterBrief: "Complete your Brand Vault and add at least one exact competitor before generating a counter-brief.",
   };
@@ -175,7 +174,7 @@ export default function BrandVaultPage() {
   }
 
   function openWhatsApp() {
-    const text = [analytics.mondayDigest.headline, ...analytics.mondayDigest.lines].join("\n\n");
+    const text = [analytics.mondayDigest.headline, ...analytics.mondayDigest.lines, `Your move: ${analytics.mondayDigest.nextMove}`].join("\n\n");
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
   }
 
@@ -265,12 +264,24 @@ function SetupState({ onEdit }: { onEdit: () => void }) {
   );
 }
 
+type SaveAction = (actionType: "save" | "brief" | "alert", referenceKey: string, title: string, payload: Record<string, unknown>) => Promise<void>;
+
+function periodWord(period: BrandVaultPeriod) {
+  return period === "week" ? "this week" : period === "month" ? "this month" : "in 3 months";
+}
+
+function adspyHref(c: CompetitorAnalytics) {
+  const params = new URLSearchParams({ q: c.name, country: c.country || "IN" });
+  if (c.pageId) params.set("pid", c.pageId);
+  return `/adspy?${params.toString()}`;
+}
+
 function WorkspaceSection({ section, analytics, visibleCompetitors, focus, saveAction, openWhatsApp, activeBrandName, openSection }: {
   section: NavKey;
   analytics: BrandVaultAnalytics;
   visibleCompetitors: CompetitorAnalytics[];
   focus: Focus;
-  saveAction: (actionType: "save" | "brief" | "alert", referenceKey: string, title: string, payload: Record<string, unknown>) => Promise<void>;
+  saveAction: SaveAction;
   openWhatsApp: () => void;
   activeBrandName: string;
   openSection: (section: NavKey) => void;
@@ -279,15 +290,15 @@ function WorkspaceSection({ section, analytics, visibleCompetitors, focus, saveA
     case "overview":
       return <OverviewSection analytics={analytics} competitors={visibleCompetitors} focus={focus} saveAction={saveAction} openWhatsApp={openWhatsApp} activeBrandName={activeBrandName} openSection={openSection} />;
     case "hooks":
-      return <RankedSection title="Top hooks" eyebrow="TOP HOOKS" description="Which opening lines keep getting reused and live?" items={visibleCompetitors.flatMap((c) => c.topHooks.slice(0, 8).map((x) => ({ ...x, label: `${c.name}: ${x.label}` })))} saveAction={saveAction} />;
+      return <HooksSection competitors={visibleCompetitors} saveAction={saveAction} />;
     case "creators":
-      return <RankedSection title="Top creators" eyebrow="TOP CREATORS" description="Which creators do they rely on, and who is new?" items={visibleCompetitors.flatMap((c) => c.topCreators.slice(0, 8).map((x) => ({ ...x, label: `${c.name}: ${x.label}` })))} saveAction={saveAction} />;
+      return <CreatorsSection competitors={visibleCompetitors} period={analytics.period} saveAction={saveAction} />;
     case "changes":
-      return <ChangesSection competitors={visibleCompetitors} saveAction={saveAction} />;
+      return <ChangesSection competitors={visibleCompetitors} period={analytics.period} saveAction={saveAction} />;
     case "products":
       return <ProductsSection competitors={visibleCompetitors} saveAction={saveAction} />;
     case "languages":
-      return <LanguagesSection competitors={visibleCompetitors} saveAction={saveAction} />;
+      return <LanguagesSection competitors={visibleCompetitors} />;
     case "offers":
       return <OffersSection competitors={visibleCompetitors} analytics={analytics} saveAction={saveAction} />;
     case "compare":
@@ -299,97 +310,334 @@ function WorkspaceSection({ section, analytics, visibleCompetitors, focus, saveA
   }
 }
 
-function OverviewSection({ analytics, competitors, focus, saveAction, openWhatsApp, activeBrandName, openSection }: { analytics: BrandVaultAnalytics; competitors: CompetitorAnalytics[]; focus: Focus; saveAction: WorkspaceSectionProps["saveAction"]; openWhatsApp: () => void; activeBrandName: string; openSection: (section: NavKey) => void }) {
-  const changes = competitors.flatMap((c) => c.changes.map((change) => ({ competitor: c.name, slot: c.slot, ...change }))).slice(0, 8);
-  const testingLeader = competitors.reduce<CompetitorAnalytics | null>((leader, item) => !leader || item.newTests > leader.newTests ? item : leader, null);
-  const offerLeader = competitors.reduce<CompetitorAnalytics | null>((leader, item) => !leader || item.newOffers > leader.newOffers ? item : leader, null);
-  const headline = competitors.length && focus === "all"
-    ? `This ${analytics.period === "week" ? "week" : analytics.period === "month" ? "month" : "3-month period"} in one line: ${testingLeader?.name ?? "The set"} has the most new-test signals; ${offerLeader?.name ?? "one rival"} has the most new-offer signals.`
-    : competitors.length
-      ? `${competitors[0].name} is the current focus. ${competitors[0].newTests} new test signals surfaced in this period.`
-      : "Add a competitor to begin your market read.";
+/* One card shape everywhere: insight first, label, evidence, then actions. */
+function Card({ title, label, children, actions }: { title: string; label?: "Source" | "Derived" | "Heuristic"; children?: ReactNode; actions?: ReactNode }) {
   return (
-    <div className="bvp-stack">
-      <div className="bvp-kpi-grid">
-        {competitors.map((item) => <article key={item.slot} className="bvp-kpi-card"><div className="bvp-kpi-brand"><span className={`bvp-dot dot-${item.slot}`} />{item.name} · active ads</div><strong>{item.activeAds}</strong><span className="bvp-kpi-delta">+{item.newTests} new this {analytics.period === "week" ? "week" : analytics.period === "month" ? "month" : "3-month period"}</span><small>{item.collectionState === "collecting" ? "Collection in progress" : item.dataCoverage === "none" ? "Waiting for indexed ads" : `${item.totalAds} indexed creatives`}</small></article>)}
-      </div>
-      {!competitors.length ? <div className="bvp-empty-card"><h2>Set your 3 competitors</h2><p>Your workspace is ready. Add the exact Meta Page IDs from Edit vault and the indexed history will appear here.</p></div> : null}
-      {competitors.length ? <section className="bvp-card bvp-change-feed">
-        <div className="bvp-section-line"><h2>{headline}</h2><Provenance label="Derived" /></div>
-        {changes.map((change, index) => <ChangeFeedRow key={`${change.slot}-${change.type}-${change.label}-${index}`} change={change} saveAction={saveAction} />)}
-        <div className="bvp-feed-actions"><button className="bvp-primary" onClick={openWhatsApp}>Send to WhatsApp</button><button className="bvp-secondary" onClick={() => openSection("changes")}>Open full changes</button></div>
-      </section> : null}
-      {competitors.length ? <section className="bvp-card bvp-next-move"><div className="bvp-next-head"><h2>Your next move</h2><Provenance label="Heuristic" /></div><p>{buildNextMove(analytics, competitors)}</p><button className="bvp-primary" onClick={() => void saveAction("brief", "counter-brief", "Counter-brief", { text: analytics.counterBrief, brand: activeBrandName })}>Write brief with ZWIRK</button></section> : null}
+    <section className="bvp-card">
+      <div className="bvp-section-line"><h2>{title}</h2>{label ? <Provenance label={label} /> : null}</div>
+      {children}
+      {actions ? <div className="bvp-feed-actions">{actions}</div> : null}
+    </section>
+  );
+}
+
+function CompetitorEyebrow({ c }: { c: CompetitorAnalytics }) {
+  return (
+    <div className={`bvp-comp-eyebrow slot-${c.slot}`}>
+      <span className={`bvp-dot dot-${c.slot}`} />{c.name}
+      {c.identity === "name" ? <span className="bvp-identity-warn" title="Matched by exact name, not by Meta Page ID. Add the Page ID in Edit vault.">name match</span> : null}
     </div>
   );
 }
 
-type WorkspaceSectionProps = { saveAction: (actionType: "save" | "brief" | "alert", referenceKey: string, title: string, payload: Record<string, unknown>) => Promise<void> };
-
-function buildNextMove(analytics: BrandVaultAnalytics, competitors: CompetitorAnalytics[]) {
-  if (analytics.gaps.creators.length || analytics.gaps.languages.length) {
-    const creator = analytics.gaps.creators[0] ?? "regional UGC";
-    const language = analytics.gaps.languages[0] ?? "a regional language";
-    const floor = analytics.breakEvenPrice == null ? "your cost floor" : `${money(analytics.breakEvenPrice)} break-even`;
-    return `Two rivals now lead with repeated creative signals. Nobody in this set is visibly using ${language} creators yet. Brief 3 ${creator.toLowerCase()} ads on your best-selling SKU, priced above ${floor}.`;
-  }
-  const top = competitors[0]?.topProducts[0]?.product ?? "your best-selling SKU";
-  const floor = analytics.breakEvenPrice == null ? "your cost floor" : `${money(analytics.breakEvenPrice)} break-even`;
-  return `Pressure-test ${top} with a new angle while keeping the offer above ${floor}.`;
+function Bar({ pct, slot }: { pct: number; slot: 1 | 2 | 3 }) {
+  return <div className="bvp-bar"><i className={`fill-${slot}`} style={{ width: `${Math.max(3, Math.min(100, pct))}%` }} /></div>;
 }
 
-function ChangeFeedRow({ change, saveAction }: { change: ChangeItem & { competitor: string; slot: 1 | 2 | 3 }; saveAction: WorkspaceSectionProps["saveAction"] }) {
-  const badge = change.type === "new_test" ? "New test" : change.type === "new_offer" ? "New offer" : change.type === "new_message" ? "New message" : "Stopped";
-  return <div className="bvp-feed-row"><div className="bvp-feed-main"><span className={`bvp-dot dot-${change.slot}`} /><div><strong>{change.competitor}: </strong><span>{change.label}</span><small>{daysLabel(change.supportingAds[0]?.firstSeenAt ?? null)}</small></div></div><div className={`bvp-signal-badge ${change.type}`}>{badge}</div><button className="bvp-row-save" onClick={() => void saveAction("save", `change:${change.slot}:${change.type}:${change.label}`, `${change.competitor}: ${change.label}`, change as unknown as Record<string, unknown>)}>Save</button></div>;
+function NoData({ c }: { c: CompetitorAnalytics }) {
+  return (
+    <div className="bvp-empty-text">
+      {c.collectionState === "collecting"
+        ? "Collecting their ads now. This fills in once the first batch is indexed."
+        : c.dataCoverage === "none"
+          ? "No indexed ads yet for this competitor."
+          : "Nothing in this period."}
+    </div>
+  );
 }
 
-function RankedSection({ title, eyebrow, description, items, saveAction }: { title: string; eyebrow: string; description: string; items: RankedItem[]; saveAction: WorkspaceSectionProps["saveAction"] }) {
-  return <section className="bvp-card bvp-module"><div className="bvp-module-head"><div><div className="bvp-eyebrow">{eyebrow}</div><h1>{title}</h1><p>{description}</p></div></div>{items.length ? items.map((item, index) => <div className="bvp-rank-row" key={`${item.label}-${index}`}><span className="bvp-rank-number">{index + 1}</span><div><strong>{item.label}</strong><small>{item.count} ads · {item.share}% · {item.provenance}</small></div><button className="bvp-row-save" onClick={() => void saveAction("save", `${eyebrow}:${item.label}`, item.label, item as unknown as Record<string, unknown>)}>Save</button></div>) : <EmptyText />}</section>;
+function OverviewSection({ analytics, competitors, focus, saveAction, openWhatsApp, activeBrandName, openSection }: { analytics: BrandVaultAnalytics; competitors: CompetitorAnalytics[]; focus: Focus; saveAction: SaveAction; openWhatsApp: () => void; activeBrandName: string; openSection: (section: NavKey) => void }) {
+  const feed = competitors.flatMap((c) => c.changes.slice(0, 2).map((change) => ({ competitor: c.name, slot: c.slot, ...change })));
+  const withData = competitors.filter((c) => c.dataCoverage !== "none");
+  const testing = withData.slice().sort((a, b) => b.newTests - a.newTests)[0];
+  const cutting = withData.slice().sort((a, b) => b.retiredAds - a.retiredAds)[0];
+  const scope = analytics.period === "quarter" ? "These 3 months" : analytics.period === "month" ? "This month" : "This week";
+  const headline = !withData.length
+    ? `${scope} in one line: waiting for indexed ads.`
+    : focus === "all" && withData.length > 1
+      ? `${scope} in one line: ${testing.name} is testing hardest (+${testing.newTests} new)${cutting && cutting.retiredAds > 0 && cutting.slot !== testing.slot ? `; ${cutting.name} is cutting the most ads (−${cutting.retiredAds})` : ""}.`
+      : `${scope} in one line: ${feed[0] ? feed[0].label : `${withData[0].name} has ${withData[0].activeAds} active ads and no change signal yet`}.`;
+  return (
+    <div className="bvp-stack">
+      <div className="bvp-kpi-grid">
+        {competitors.map((c) => (
+          <article key={c.slot} className="bvp-kpi-card">
+            <div className="bvp-kpi-brand"><span className={`bvp-dot dot-${c.slot}`} />{c.name} · active ads</div>
+            <strong>{c.dataCoverage === "none" ? "—" : c.activeAds}</strong>
+            <span className="bvp-kpi-delta">{c.dataCoverage === "none" ? (c.collectionState === "collecting" ? "Collecting…" : "No indexed ads yet") : `+${c.newTests} new ${periodWord(analytics.period)}`}</span>
+          </article>
+        ))}
+      </div>
+      <Card
+        title={headline}
+        label="Derived"
+        actions={<><button className="bvp-primary" onClick={openWhatsApp}>Send to WhatsApp</button><button className="bvp-secondary" onClick={() => openSection("changes")}>Open full changes</button></>}
+      >
+        {feed.length ? feed.map((change, index) => <ChangeFeedRow key={`${change.slot}-${change.type}-${index}`} change={change} saveAction={saveAction} />) : <div className="bvp-empty-text">No new, stopped or changed ads in this period.</div>}
+      </Card>
+      <Card
+        title="Your next move"
+        label="Heuristic"
+        actions={<button className="bvp-primary" onClick={() => void saveAction("brief", "counter-brief", "Counter-brief", { text: analytics.counterBrief, brand: activeBrandName })}>Write brief with ZWIRK</button>}
+      >
+        <p className="bvp-card-text">{analytics.mondayDigest.nextMove}</p>
+      </Card>
+    </div>
+  );
 }
 
-function ChangesSection({ competitors, saveAction }: { competitors: CompetitorAnalytics[]; saveAction: WorkspaceSectionProps["saveAction"] }) {
-  return <section className="bvp-card bvp-module"><div className="bvp-module-head"><div><div className="bvp-eyebrow">CHANGES · WoW / MoM</div><h1>What they started and stopped testing</h1><p>New test, new offer, new message and stopped creative families. The labels stay derived from indexed observations.</p></div></div><div className="bvp-change-grid">{competitors.map((competitor) => <div className="bvp-change-column" key={competitor.slot}><div className="bvp-column-title"><span className={`bvp-dot dot-${competitor.slot}`} />{competitor.name}</div>{competitor.changes.length ? competitor.changes.map((change, index) => <div className="bvp-change-item" key={`${change.type}-${change.label}-${index}`}><div><span className={`bvp-signal-badge ${change.type}`}>{change.type === "retired" ? "Stopped" : change.type.replace("_", " ")}</span><strong>{change.label}</strong><small>{change.detail}</small></div><button className="bvp-row-save" onClick={() => void saveAction("save", `change:${competitor.slot}:${change.type}:${change.label}`, `${competitor.name}: ${change.label}`, change as unknown as Record<string, unknown>)}>Save</button></div>) : <div className="bvp-empty-text">{competitor.collectionState === "collecting" ? "Collection is running. Refresh after the first indexed batch arrives." : "No change signal in this comparison window."}</div>}</div>)}</div></section>;
+const CHANGE_BADGE: Record<ChangeItem["type"], string> = { new_test: "New test", new_offer: "New offer", new_message: "New message", retired: "Stopped" };
+
+function ChangeFeedRow({ change, saveAction }: { change: ChangeItem & { competitor: string; slot: 1 | 2 | 3 }; saveAction: SaveAction }) {
+  const when = change.type === "retired" ? change.supportingAds[0]?.lastSeenAt : change.supportingAds[0]?.firstSeenAt;
+  return (
+    <div className="bvp-feed-row">
+      <div className="bvp-feed-main">
+        <span className={`bvp-dot dot-${change.slot}`} />
+        <div><strong>{change.competitor}: </strong><span>{change.label}</span><small>{daysLabel(when ?? null)}</small></div>
+      </div>
+      <div className={`bvp-signal-badge ${change.type}`}>{CHANGE_BADGE[change.type]}</div>
+      <button className="bvp-row-save" onClick={() => void saveAction("save", `change:${change.slot}:${change.type}:${change.label}`, `${change.competitor}: ${change.label}`, { ...change })}>Save</button>
+    </div>
+  );
 }
 
-function ProductsSection({ competitors, saveAction }: { competitors: CompetitorAnalytics[]; saveAction: WorkspaceSectionProps["saveAction"] }) {
-  return <section className="bvp-card bvp-module"><div className="bvp-module-head"><div><div className="bvp-eyebrow">MOST PUSHED PRODUCTS</div><h1>Which products get the most ad pressure?</h1><p>Ads are attention, not sales. Long-running creatives are shown as a persistence heuristic.</p></div></div><div className="bvp-product-grid">{competitors.map((competitor) => <div key={competitor.slot}><div className="bvp-column-title"><span className={`bvp-dot dot-${competitor.slot}`} />{competitor.name}</div>{competitor.topProducts.slice(0, 6).map((item) => <ProductRow key={item.product} item={item} saveAction={saveAction} slot={competitor.slot} />)}</div>)}</div></section>;
+function HooksSection({ competitors, saveAction }: { competitors: CompetitorAnalytics[]; saveAction: SaveAction }) {
+  return (
+    <div className="bvp-stack">
+      {competitors.map((c) => {
+        const max = Math.max(1, ...c.topHooks.map((h) => h.activeCount ?? h.count));
+        return (
+          <Card
+            key={c.slot}
+            title={c.topHooks[0] ? `${c.name}'s most reused opening line: “${c.topHooks[0].label}”` : `${c.name}: no reused opening line yet`}
+            label="Derived"
+            actions={c.topHooks.length ? <><a className="bvp-secondary" href={adspyHref(c)}>See the ads</a><button className="bvp-secondary" onClick={() => void saveAction("save", `hooks:${c.slot}`, `${c.name}: top hooks`, { hooks: c.topHooks.map((h) => h.label) })}>Save to board</button></> : null}
+          >
+            <CompetitorEyebrow c={c} />
+            {c.topHooks.length ? c.topHooks.map((h, i) => (
+              <div className="bvp-rank-row" key={`${h.label}-${i}`}>
+                <span className="bvp-rank-number">{i + 1}</span>
+                <div><strong>“{h.label}”</strong><small>{h.activeCount ?? 0} active ads · longest {h.longestDays ?? 0} days</small><Bar pct={((h.activeCount ?? h.count) / max) * 100} slot={c.slot} /></div>
+                <span className="bvp-metric">{h.count} ads</span>
+              </div>
+            )) : <NoData c={c} />}
+          </Card>
+        );
+      })}
+    </div>
+  );
 }
 
-function ProductRow({ item, saveAction, slot }: { item: ProductPressure; saveAction: WorkspaceSectionProps["saveAction"]; slot: 1 | 2 | 3 }) {
-  return <div className="bvp-product-row"><div><strong>{item.product}</strong><small>{item.ads} ads · {item.activeAds} active · {item.persistent60} persistent 60d</small></div><b>{item.share}%</b><button className="bvp-row-save" onClick={() => void saveAction("save", `product:${slot}:${item.product}`, item.product, item as unknown as Record<string, unknown>)}>Save</button></div>;
+function CreatorsSection({ competitors, period, saveAction }: { competitors: CompetitorAnalytics[]; period: BrandVaultPeriod; saveAction: SaveAction }) {
+  return (
+    <div className="bvp-stack">
+      {competitors.map((c) => (
+        <Card
+          key={c.slot}
+          title={`${c.name} works with ${c.creatorsCount} creator${c.creatorsCount === 1 ? "" : "s"}; ${c.newCreators} new ${periodWord(period)}`}
+          label="Source"
+          actions={<button className="bvp-secondary" onClick={() => void saveAction("alert", `alert:new-creators:${c.slot}`, `Alert: new creators for ${c.name}`, { competitor: c.name, pageId: c.pageId })}>Alert me on new creators</button>}
+        >
+          <CompetitorEyebrow c={c} />
+          {c.topCreators.length ? c.topCreators.map((x, i) => (
+            <div className="bvp-rank-row" key={`${x.label}-${i}`}>
+              <span className="bvp-rank-number">{i + 1}</span>
+              <div><strong>{x.label} {x.isNew ? <span className="bvp-provenance derived">New</span> : null}</strong><small>{x.activeCount ?? 0} active ads · longest {x.longestDays ?? 0} days</small></div>
+              <span className="bvp-metric">{x.count} ads</span>
+            </div>
+          )) : <NoData c={c} />}
+        </Card>
+      ))}
+    </div>
+  );
 }
 
-function LanguagesSection({ competitors, saveAction }: { competitors: CompetitorAnalytics[]; saveAction: WorkspaceSectionProps["saveAction"] }) {
-  return <section className="bvp-card bvp-module"><div className="bvp-module-head"><div><div className="bvp-eyebrow">TOP 5 LANGUAGES</div><h1>Who are they talking to?</h1><p>Language is inferred from the ad copy and remains a heuristic signal, especially for Hinglish.</p></div></div><div className="bvp-language-grid">{competitors.map((competitor) => <div key={competitor.slot}><div className="bvp-column-title"><span className={`bvp-dot dot-${competitor.slot}`} />{competitor.name}</div>{competitor.topLanguages.slice(0, 5).map((item, index) => <div className="bvp-rank-row compact" key={`${item.label}-${index}`}><span className="bvp-rank-number">{index + 1}</span><div><strong>{item.label}</strong><small>{item.share}% of recent ads · {item.provenance}</small></div><button className="bvp-row-save" onClick={() => void saveAction("save", `language:${competitor.slot}:${item.label}`, `${competitor.name}: ${item.label}`, item as unknown as Record<string, unknown>)}>Save</button></div>)}</div>)}</div></section>;
+function ChangesSection({ competitors, period, saveAction }: { competitors: CompetitorAnalytics[]; period: BrandVaultPeriod; saveAction: SaveAction }) {
+  const feed = competitors.flatMap((c) => c.changes.map((change) => ({ competitor: c.name, slot: c.slot, ...change })));
+  return (
+    <div className="bvp-stack">
+      <div className="bvp-kpi-grid">
+        {competitors.map((c) => (
+          <article key={c.slot} className="bvp-kpi-card">
+            <div className="bvp-kpi-brand"><span className={`bvp-dot dot-${c.slot}`} />{c.name}</div>
+            <strong>+{c.newTests} / −{c.retiredAds}</strong>
+            <span className="bvp-kpi-sub">{c.newOffers} new offer{c.newOffers === 1 ? "" : "s"} {periodWord(period)}</span>
+          </article>
+        ))}
+      </div>
+      <Card
+        title={`What changed ${periodWord(period)}`}
+        label="Derived"
+        actions={<span className="bvp-muted-note">Compared with the {period === "week" ? "previous week" : period === "month" ? "previous month" : "previous 3 months"}.</span>}
+      >
+        {feed.length ? feed.map((change, index) => <ChangeFeedRow key={`${change.slot}-${change.type}-${index}`} change={change} saveAction={saveAction} />) : <div className="bvp-empty-text">No new, stopped or changed ads in this period.</div>}
+      </Card>
+    </div>
+  );
 }
 
-function OffersSection({ competitors, analytics, saveAction }: { competitors: CompetitorAnalytics[]; analytics: BrandVaultAnalytics; saveAction: WorkspaceSectionProps["saveAction"] }) {
-  return <section className="bvp-card bvp-module"><div className="bvp-module-head"><div><div className="bvp-eyebrow">OFFERS</div><h1>How hard are they discounting, and can you match it?</h1><p>Effective public prices are compared with your Vault break-even. This does not imply competitor profitability.</p></div><div className="bvp-floor-pill">Your break-even {money(analytics.breakEvenPrice)}</div></div><div className="bvp-offer-grid">{competitors.map((competitor) => <div key={competitor.slot}><div className="bvp-column-title"><span className={`bvp-dot dot-${competitor.slot}`} />{competitor.name}</div>{competitor.topOffers.slice(0, 6).map((offer, index) => <OfferRow offer={offer} key={`${offer.label}-${index}`} saveAction={saveAction} slot={competitor.slot} />)}</div>)}</div></section>;
+function ProductsSection({ competitors, saveAction }: { competitors: CompetitorAnalytics[]; saveAction: SaveAction }) {
+  return (
+    <div className="bvp-stack">
+      {competitors.map((c) => {
+        const top = c.topProducts[0];
+        const max = Math.max(1, ...c.topProducts.map((p) => p.activeAds || p.ads));
+        return (
+          <Card
+            key={c.slot}
+            title={top ? `${c.name} puts the most ad pressure on ${top.product.split("/").pop()}` : `${c.name}: no product pages found in their ads`}
+            label="Derived"
+            actions={top ? <><a className="bvp-secondary" href={adspyHref(c)}>Explore this product</a><button className="bvp-secondary" onClick={() => void saveAction("save", `product:${c.slot}:${top.product}`, `${c.name}: ${top.product}`, { ...top })}>Save</button></> : null}
+          >
+            <CompetitorEyebrow c={c} />
+            {c.topProducts.length ? c.topProducts.map((p, i) => (
+              <div className="bvp-rank-row" key={p.product}>
+                <span className="bvp-rank-number">{i + 1}</span>
+                <div><strong>{p.product}</strong><small>{p.activeAds} active ads · {p.variants} variants · longest {p.longestDays} days</small><Bar pct={((p.activeAds || p.ads) / max) * 100} slot={c.slot} /></div>
+                <span className={`bvp-provenance ${p.status === "Likely proven" ? "source" : p.status === "New push" ? "derived" : "neutral"}`}>{p.status}</span>
+              </div>
+            )) : <NoData c={c} />}
+            <p className="bvp-card-note">Most ad pressure is not the same as most sales. “Likely proven” = pushed with ads that stayed live for 60+ days.</p>
+          </Card>
+        );
+      })}
+    </div>
+  );
 }
 
-function OfferRow({ offer, saveAction, slot }: { offer: OfferItem; saveAction: WorkspaceSectionProps["saveAction"]; slot: 1 | 2 | 3 }) {
-  const label = offer.relation === "below" ? "Below floor" : offer.relation === "near" ? "Near floor" : offer.relation === "above" ? "Above floor" : "Unknown";
-  return <div className="bvp-offer-row"><div><strong>{offer.label}</strong><small>{offer.count} ads · {offer.visiblePrice == null ? "price not visible" : money(offer.visiblePrice)}</small></div><em className={`relation-${offer.relation}`}>{label}</em><button className="bvp-row-save" onClick={() => void saveAction("save", `offer:${slot}:${offer.label}`, offer.label, offer as unknown as Record<string, unknown>)}>Save</button></div>;
+function LanguagesSection({ competitors }: { competitors: CompetitorAnalytics[] }) {
+  return (
+    <div className="bvp-stack">
+      {competitors.map((c) => (
+        <Card key={c.slot} title={c.topLanguages[0] ? `${c.name} talks mostly in ${c.topLanguages[0].label} (${c.topLanguages[0].share}%)` : `${c.name}: language not detected yet`} label="Heuristic">
+          <CompetitorEyebrow c={c} />
+          {c.topLanguages.length ? c.topLanguages.map((l) => (
+            <div className="bvp-lang-row" key={l.label}><span>{l.label}</span><Bar pct={l.share} slot={c.slot} /><span className="bvp-metric">{l.share}%</span></div>
+          )) : <NoData c={c} />}
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function OffersSection({ competitors, analytics, saveAction }: { competitors: CompetitorAnalytics[]; analytics: BrandVaultAnalytics; saveAction: SaveAction }) {
+  const floor = analytics.breakEvenPrice;
+  return (
+    <div className="bvp-stack">
+      <div className="bvp-floor-line">Your break-even: <strong>{money(floor)}</strong>{floor == null ? <span> · add your costs in Edit vault</span> : null}</div>
+      {competitors.map((c) => {
+        const top = c.topOffers[0];
+        const title = top
+          ? `${c.name}: ${top.label}${top.depthPercent ? ` (up to ${top.depthPercent}%)` : ""}${top.visiblePrice != null ? ` → ${money(top.visiblePrice)} visible price` : ""}`
+          : `${c.name}: no offer found in their ads`;
+        return (
+          <Card key={c.slot} title={title} label="Derived" actions={top ? <button className="bvp-secondary" onClick={() => void saveAction("brief", `counter-offer:${c.slot}:${top.type}`, `Counter-offer vs ${c.name}`, { competitor: c.name, offer: top })}>Try a counter-offer</button> : null}>
+            <CompetitorEyebrow c={c} />
+            {c.topOffers.length ? c.topOffers.map((o, i) => <OfferRow key={`${o.type}-${i}`} offer={o} floor={floor} />) : <NoData c={c} />}
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+function OfferRow({ offer, floor }: { offer: OfferItem; floor: number | null }) {
+  const verdict =
+    offer.vsBreakEven == null || floor == null
+      ? offer.visiblePrice == null ? "Price not visible in the ads." : "Add your costs to compare with your break-even."
+      : offer.vsBreakEven < 0
+        ? `Matching this puts you ${money(-offer.vsBreakEven)} per unit below break-even.`
+        : `You can match this and stay ${money(offer.vsBreakEven)} per unit above break-even.`;
+  return (
+    <div className="bvp-offer-row">
+      <div>
+        <strong>{offer.label}{offer.depthPercent ? ` · up to ${offer.depthPercent}%` : ""}</strong>
+        <small>{offer.count} ads{offer.example ? ` · e.g. “${offer.example}”` : ""}</small>
+        <small className={`relation-${offer.relation}`}>{verdict}</small>
+      </div>
+    </div>
+  );
 }
 
 function CompareSection({ analytics }: { analytics: BrandVaultAnalytics }) {
-  return <section className="bvp-card bvp-module"><div className="bvp-module-head"><div><div className="bvp-eyebrow">COMPARE ALL 3</div><h1>One market set, side by side.</h1><p>Every row is a derived view over the same indexed advertiser history.</p></div></div><div className="bvp-table-wrap"><table className="bvp-table"><thead><tr><th>Competitor</th><th>Ads</th><th>Active</th><th>New tests</th><th>60d</th><th>Top product</th><th>Top hook</th><th>Top creator</th><th>Top language</th></tr></thead><tbody>{analytics.compareRows.map((row) => <tr key={row.slot}><td><span className={`bvp-dot dot-${row.slot}`} /> <strong>{row.name}</strong></td><td>{row.totalAds}</td><td>{row.activeAds}</td><td>{row.newTests}</td><td>{row.persistent60}</td><td>{row.topProduct ?? "—"}</td><td>{row.topHook ?? "—"}</td><td>{row.topCreator ?? "—"}</td><td>{row.topLanguage ?? "—"}</td></tr>)}</tbody></table></div></section>;
+  const rows = analytics.compareRows;
+  const p = periodWord(analytics.period);
+  const lines: Array<[string, (r: BrandVaultAnalytics["compareRows"][number]) => string | number]> = [
+    ["Active ads", (r) => r.activeAds],
+    [`New ${p}`, (r) => `+${r.newTests}`],
+    [`Stopped ${p}`, (r) => `−${r.retiredAds}`],
+    ["Creators", (r) => r.creatorsCount],
+    ["Top hook", (r) => r.topHook ?? "—"],
+    ["Most pushed product", (r) => r.topProduct?.split("/").pop() ?? "—"],
+    ["Main language", (r) => r.topLanguage ?? "—"],
+    ["Current offer", (r) => r.topOffer ?? "—"],
+  ];
+  return (
+    <Card title={`All ${rows.length} side by side`} label="Derived" actions={<button className="bvp-secondary" onClick={() => window.print()}>Export PDF</button>}>
+      <div className="bvp-table-wrap">
+        <table className="bvp-table">
+          <thead><tr><th />{rows.map((r) => <th key={r.slot} className={`slot-text-${r.slot}`}>{r.name}</th>)}</tr></thead>
+          <tbody>{lines.map(([label, get]) => <tr key={label}><td><strong>{label}</strong></td>{rows.map((r) => <td key={r.slot}>{get(r)}</td>)}</tr>)}</tbody>
+        </table>
+      </div>
+    </Card>
+  );
 }
 
-function DigestSection({ analytics, openWhatsApp, saveAction }: { analytics: BrandVaultAnalytics; openWhatsApp: () => void; saveAction: WorkspaceSectionProps["saveAction"] }) {
-  return <div className="bvp-stack"><section className="bvp-card bvp-digest-card"><div className="bvp-module-head"><div><div className="bvp-eyebrow">MONDAY DIGEST</div><h1>{analytics.mondayDigest.headline}</h1><p>Readable in under 2 minutes. Evidence is drawn from the selected comparison window.</p></div></div>{analytics.mondayDigest.lines.map((line) => <p className="bvp-digest-line" key={line}>{line}</p>)}<div className="bvp-feed-actions"><button className="bvp-primary" onClick={openWhatsApp}>Send to WhatsApp</button><button className="bvp-secondary" onClick={() => void saveAction("save", "monday-digest", "Monday digest", analytics.mondayDigest as unknown as Record<string, unknown>)}>Save digest</button></div></section><section className="bvp-card bvp-next-move"><div className="bvp-next-head"><h2>Counter-brief</h2><Provenance label="Heuristic" /></div><p>{analytics.counterBrief}</p><button className="bvp-primary" onClick={() => void saveAction("brief", "counter-brief", "Counter-brief", { text: analytics.counterBrief })}>Write brief with ZWIRK</button></section></div>;
+function DigestSection({ analytics, openWhatsApp, saveAction }: { analytics: BrandVaultAnalytics; openWhatsApp: () => void; saveAction: SaveAction }) {
+  const digest = analytics.mondayDigest;
+  const mail = `mailto:?subject=${encodeURIComponent(digest.headline)}&body=${encodeURIComponent([digest.headline, ...digest.lines, `Your move: ${digest.nextMove}`].join("\n\n"))}`;
+  return (
+    <div className="bvp-stack">
+      <Card
+        title="Monday 9:00 AM digest preview"
+        label="Derived"
+        actions={<><button className="bvp-primary" onClick={openWhatsApp}>Deliver to WhatsApp</button><a className="bvp-secondary" href={mail}>Email</a><button className="bvp-secondary" onClick={() => void saveAction("save", "monday-digest", "Monday digest", { ...digest })}>Save digest</button></>}
+      >
+        {analytics.competitors.map((c) => {
+          const top = c.changes[0];
+          return (
+            <div className="bvp-feed-row" key={c.slot}>
+              <div className="bvp-feed-main"><span className={`bvp-dot dot-${c.slot}`} /><div><strong>{c.name}: </strong><span>{top ? top.label : c.dataCoverage === "none" ? "no indexed ads yet" : "no change this period"}</span></div></div>
+              <div className="bvp-signal-badge neutral">Top change</div>
+            </div>
+          );
+        })}
+        <div className="bvp-feed-row">
+          <div className="bvp-feed-main"><span className="bvp-dot dot-good" /><div><strong>Your move: </strong><span>{digest.nextMove}</span></div></div>
+          <div className="bvp-provenance source">Action</div>
+        </div>
+      </Card>
+      <Card title="Counter-brief" label="Heuristic" actions={<button className="bvp-primary" onClick={() => void saveAction("brief", "counter-brief", "Counter-brief", { text: analytics.counterBrief })}>Write brief with ZWIRK</button>}>
+        <p className="bvp-brief">{analytics.counterBrief}</p>
+      </Card>
+    </div>
+  );
 }
 
 function BudgetSection({ analytics }: { analytics: BrandVaultAnalytics }) {
-  return <section className="bvp-card bvp-module"><div className="bvp-paywall"><div><div className="bvp-eyebrow">BUDGET PLANNER</div><h1>Build a budget from your own economics.</h1><p>Pro+ turns your Vault economics and market pressure signals into an RTO-adjusted budget and ad-set plan.</p></div><span className="bvp-pro-badge large">Pro+</span></div><div className="bvp-budget-preview"><div><span>Break-even</span><strong>{money(analytics.breakEvenPrice)}</strong></div><div><span>Target margin</span><strong>{money(analytics.targetMarginPrice)}</strong></div><div><span>Contribution before ads</span><strong>{money(analytics.contributionBeforeAds)}</strong></div></div><button className="bvp-secondary">Unlock Budget Planner</button></section>;
+  return (
+    <div className="bvp-stack">
+      <div className="bvp-gate">
+        <div><strong>Budget planner is part of Pro+</strong><small>Plan daily budget and ad sets from your own margin and RTO.</small></div>
+        <button className="bvp-primary" type="button">Upgrade to Pro+</button>
+      </div>
+      <div className="bvp-blur" aria-hidden="true">
+        <Card title="Daily budget from your economics">
+          <div className="bvp-budget-preview">
+            <div><span>Break-even</span><strong>{money(analytics.breakEvenPrice)}</strong></div>
+            <div><span>Target margin price</span><strong>{money(analytics.targetMarginPrice)}</strong></div>
+            <div><span>Contribution before ads</span><strong>{money(analytics.contributionBeforeAds)}</strong></div>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
 }
 
 function Provenance({ label }: { label: "Source" | "Derived" | "Heuristic" }) {
   return <span className={`bvp-provenance ${label.toLowerCase()}`}>{label}</span>;
-}
-
-function EmptyText() {
-  return <div className="bvp-empty-text">Not enough indexed data yet.</div>;
 }
 
 function VaultSettings({ data, onClose, onSaved }: { data: BrandVaultProData | null; onClose: () => void; onSaved: () => Promise<void> }) {
@@ -413,9 +661,17 @@ function VaultSettings({ data, onClose, onSaved }: { data: BrandVaultProData | n
       const brandResponse = await fetch("/api/brand-vault", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ brandName, websiteUrl, tone, audience, doNotSay, heroProduct, mainObjection, competitorFocus, economics }) });
       if (!brandResponse.ok) throw new Error("Unable to save brand context.");
       for (const item of competitors) {
-        if (!item.name?.trim()) continue;
-        const response = await fetch("/api/brand-vault/pro/competitors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...item, name: item.name.trim(), domain: item.domain?.trim() || null, advertiserPageId: item.advertiserPageId?.trim() || null, country: item.country ?? "IN" }) });
-        if (!response.ok) throw new Error(`Unable to save competitor ${item.slot}.`);
+        if (!item.name?.trim()) {
+          // Slot cleared: remove the saved competitor instead of silently keeping it.
+          if (item.id) {
+            const removed = await fetch("/api/brand-vault/pro/competitors", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: item.id }) });
+            if (!removed.ok) throw new Error(`Unable to remove competitor ${item.slot}.`);
+          }
+          continue;
+        }
+        const response = await fetch("/api/brand-vault/pro/competitors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot: item.slot, name: item.name.trim(), domain: item.domain?.trim() || null, advertiserPageId: item.advertiserPageId?.trim() || null, country: item.country ?? "IN" }) });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result?.error || `Unable to save competitor ${item.slot}.`);
       }
       await onSaved();
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to save vault."); }
