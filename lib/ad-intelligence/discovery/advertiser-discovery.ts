@@ -1,5 +1,7 @@
 import "server-only";
 
+import { pickExactPage } from "./pick-page";
+
 import {
   inferDomain,
   normalizeAdvertiserName,
@@ -988,4 +990,31 @@ export async function discoverAdvertisers({
   );
 
   return results;
+}
+/**
+ * Resolve a typed brand name to ONE Meta page, or null (never a guess).
+ * Local index first; then Meta's own Ad Library page search (headless browser,
+ * so only call this from the background worker, not from a Vercel request).
+ * Pages found live are saved to the advertiser index so autocomplete can offer
+ * them next time.
+ */
+export async function resolveExactMetaPage(
+  query: string,
+  country: string,
+): Promise<{ pageId: string; name: string; source: "index" | "meta_page_search" } | null> {
+  const normalizedQuery = normalizeQuery(query);
+  const normalizedCountry = normalizeCountry(country);
+  if (normalizedQuery.length < 2) return null;
+
+  const local = await localAdvertisers(normalizedQuery, "meta", normalizedCountry, 12);
+  const fromIndex = pickExactPage(query, local.map((item) => ({ pageId: item.pageId, label: item.label, verification: item.verification })));
+  if (fromIndex) return { pageId: String(fromIndex.pageId), name: String(fromIndex.label), source: "index" };
+
+  const live = await searchMetaPages(normalizedQuery, normalizedCountry).catch(() => [] as MetaPageSearchResult[]);
+  if (!live.length) return null;
+  await persistPages(live, normalizedCountry).catch((error) => {
+    console.warn("[AdvertiserDiscovery] persist failed", error instanceof Error ? error.message : error);
+  });
+  const fromMeta = pickExactPage(query, live.map((page) => ({ pageId: page.pageId, label: page.name, verification: page.verification ?? null })));
+  return fromMeta ? { pageId: String(fromMeta.pageId), name: String(fromMeta.label), source: "meta_page_search" } : null;
 }

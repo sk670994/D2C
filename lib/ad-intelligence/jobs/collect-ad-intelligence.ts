@@ -13,6 +13,9 @@ import {
   updateCollectionJob,
 } from "@/lib/ad-intelligence/global/store";
 
+import { recordSourceCount } from "@/lib/ad-intelligence/global/source-counts";
+import { sourceScopeFor, statusScopeForDepth } from "@/lib/ad-intelligence/global/source-scope";
+
 import { processAdChunk } from "./process-ad-chunk";
 import { dispatchAdSpyCollection } from "./dispatch-adspy-collection";
 
@@ -156,6 +159,9 @@ export async function collectAdIntelligence(
   const touchedAdvertisers = new Set<string>();
   // Meta's own total for this query/page (source-backed), when observed.
   let metaTotalCount: number | null = null;
+  // Page the scrape actually read (given, or resolved from the brand name).
+  let scrapePageId: string | null = data.advertiserPageId ?? null;
+  let resolvedPageId: string | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   const persist = async (
@@ -273,6 +279,37 @@ export async function collectAdIntelligence(
         "@/lib/ad-intelligence/providers/deep-meta"
       );
 
+      // A brand NAME search makes Meta run a keyword search ("mars" matches a
+      // resort, a cafe and YouTube). On the background worker, first resolve
+      // the name to one Meta page; when exactly one page matches, read that
+      // page's full ad list instead. Never a guess: ambiguous names stay a
+      // name search.
+      if (
+        data.mode === "advertiser" &&
+        !scrapePageId &&
+        !IS_SERVERLESS &&
+        process.env.ADSPY_RESOLVE_PAGES !== "0"
+      ) {
+        try {
+          const { resolveExactMetaPage } = await import(
+            "@/lib/ad-intelligence/discovery/advertiser-discovery"
+          );
+          const page = await resolveExactMetaPage(data.query, data.country);
+          if (page) {
+            scrapePageId = page.pageId;
+            resolvedPageId = page.pageId;
+            console.info("[AdSpy collect] brand name resolved to Meta page", {
+              query: data.query,
+              pageId: page.pageId,
+              name: page.name,
+              source: page.source,
+            });
+          }
+        } catch (error) {
+          console.warn("[AdSpy collect] page resolution skipped", error instanceof Error ? error.message : error);
+        }
+      }
+
       await collectMetaAdsInBatches(
         {
           query: data.query,
@@ -280,8 +317,7 @@ export async function collectAdIntelligence(
           platform: data.platform,
           mode: data.mode,
           collectionDepth: phase,
-          advertiserPageId:
-            data.advertiserPageId ?? null,
+          advertiserPageId: scrapePageId,
           deadlineAt:
             Date.now() + (IS_SERVERLESS ? SERVERLESS_BUDGET_MS : WORKER_BUDGET_MS),
         },
@@ -289,6 +325,20 @@ export async function collectAdIntelligence(
           await persist(batch);
         },
       );
+
+      // Keep Meta's own count so the app can show "Meta shows N, we have M".
+      const observedTotal = metaTotalCount as number | null;
+      const scope = sourceScopeFor({ mode: data.mode, query: data.query, pageId: scrapePageId });
+      if (scope && observedTotal != null) {
+        await recordSourceCount({
+          platform: data.platform,
+          country: data.country,
+          scope,
+          statusScope: statusScopeForDepth(phase),
+          metaTotal: observedTotal,
+          collectedAds: state.discoveredAds,
+        });
+      }
     } else {
       // Google/LinkedIn providers only return a link to the public library,
       // not real creatives. Never write those placeholders into the shared
@@ -308,6 +358,7 @@ export async function collectAdIntelligence(
         result: {
           phase: "quick",
           metaTotalCount,
+          resolvedPageId,
           discoveredAds:
             state.discoveredAds,
           normalizedAds:
@@ -360,6 +411,7 @@ export async function collectAdIntelligence(
       result: {
         phase,
         metaTotalCount,
+        resolvedPageId,
         discoveredAds:
           state.discoveredAds,
         normalizedAds:

@@ -34,7 +34,9 @@ import {
   X,
 } from "lucide-react";
 
-import type { Ad, AutocompleteAdvertiser, Job, SearchResponse, Summary } from "./adspy-types";
+import type { Ad, AutocompleteAdvertiser, Job, MetaSourceCounts, SearchResponse, Summary } from "./adspy-types";
+import { pageChoices, pickExactPage } from "@/lib/ad-intelligence/discovery/pick-page";
+import { coveragePercent } from "@/lib/ad-intelligence/global/source-scope";
 import {
   NO_FILTERS,
   activeFilterCount,
@@ -72,6 +74,8 @@ const PAGE_SIZE = 25;
 const SUGGEST_DEBOUNCE_MS = 90;
 const SUGGEST_CACHE_TTL_MS = 5 * 60_000;
 const RESULT_CACHE_TTL_MS = 30_000;
+/** An exact advertiser whose newest observation is older than this is re-collected on visit. */
+const STALE_AFTER_MS = 24 * 60 * 60_000;
 const ACTIVE_JOB = new Set(["queued", "scraping", "normalizing", "enriching", "finalizing", "deep_queued", "deep"]);
 
 const COUNTRIES: Array<[string, string]> = [
@@ -158,6 +162,11 @@ export function AdSpyWorkspace() {
   const [compareOpen, setCompareOpen] = useState(false);
   const [view, setView] = useState<"ads" | "insights">("ads");
   const [watched, setWatched] = useState<Array<{ pageId: string; name: string; country: string }> | null>(null);
+  // Brand-name searches: Meta pages the name could mean, and whether we
+  // locked to one automatically (so the user can undo it).
+  const [pageOptions, setPageOptions] = useState<AutocompleteAdvertiser[]>([]);
+  const [autoLockedFrom, setAutoLockedFrom] = useState<string | null>(null);
+  const nameOnly = useRef<Set<string>>(new Set());
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const comboRef = useRef<HTMLDivElement | null>(null);
@@ -314,6 +323,8 @@ export function AdSpyWorkspace() {
     setNotice("");
     setError("");
     setSuggestOpen(false);
+    setPageOptions([]);
+    setAutoLockedFrom(null);
     inputRef.current?.blur();
     pushRecent({ label: next.query, pageId: next.pageId, country: next.country, avatar: next.avatar ?? null });
     setRecent(readRecent());
@@ -470,12 +481,16 @@ export function AdSpyWorkspace() {
     [target],
   );
 
-  // First visit to an advertiser/keyword with nothing indexed → collect once.
+  // Collect once per visit when nothing is indexed yet, or when an exact
+  // advertiser was last observed more than a day ago (the refresh route
+  // enforces its own minimum interval, so this cannot hammer Meta).
   useEffect(() => {
     if (!target || !result || loading) return;
     const baseKey = stateKey(target, NO_FILTERS, 1);
     if (key !== baseKey) return;
-    if (Number(result.total ?? 0) > 0 || isJobActive(job)) return;
+    const lastSeen = result.lastUpdatedAt ? Date.parse(result.lastUpdatedAt) : NaN;
+    const stale = Boolean(target.pageId) && Number.isFinite(lastSeen) && Date.now() - lastSeen > STALE_AFTER_MS;
+    if ((Number(result.total ?? 0) > 0 && !stale) || isJobActive(job)) return;
     if (autoCollected.current.has(baseKey)) return;
     autoCollected.current.add(baseKey);
     void startCollection("auto");
@@ -533,6 +548,59 @@ export function AdSpyWorkspace() {
     // Re-run only when a different job starts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.id, isJobActive(job)]);
+
+  // Brand NAME search → try to lock to exactly one Meta page. Meta runs a
+  // name as a keyword search ("mars" = a resort, a cafe, YouTube…), so a
+  // page lock is what makes the numbers comparable with Meta. Re-checked
+  // after each collection, because the worker adds newly found pages.
+  const collectingNow = isJobActive(job);
+  useEffect(() => {
+    setPageOptions([]);
+    if (!target || target.pageId || target.mode !== "advertiser" || collectingNow) return;
+    const q = target.query.trim();
+    if (q.length < 2) return;
+    const lockKey = `${target.country}|${q.toLocaleLowerCase()}`;
+    const controller = new AbortController();
+    const url = new URL("/api/ad-intelligence/autocomplete", window.location.origin);
+    url.searchParams.set("q", q);
+    url.searchParams.set("country", target.country);
+    fetch(url, { cache: "no-store", signal: controller.signal })
+      .then((response) => response.json())
+      .then((data: { success?: boolean; advertisers?: AutocompleteAdvertiser[] }) => {
+        if (controller.signal.aborted || !data.success) return;
+        const items = (data.advertisers ?? []).filter((item) => /^\d+$/.test(String(item.pageId ?? "")));
+        const exact = nameOnly.current.has(lockKey) ? null : pickExactPage(q, items);
+        if (exact) {
+          setAutoLockedFrom(q);
+          setInput(exact.label);
+          setTarget((current) =>
+            current && !current.pageId && current.query === target.query && current.country === target.country
+              ? { ...current, query: exact.label, pageId: exact.pageId, avatar: exact.profileImageUrl ?? current.avatar ?? null }
+              : current,
+          );
+          return;
+        }
+        setPageOptions(pageChoices(q, items));
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [target, collectingNow]);
+
+  const lockToPage = useCallback(
+    (option: AutocompleteAdvertiser) => {
+      if (!target) return;
+      setInput(option.label);
+      go({ query: option.label, pageId: option.pageId, mode: "advertiser", country: target.country, avatar: option.profileImageUrl ?? null });
+    },
+    [go, target],
+  );
+
+  const searchNameInstead = useCallback(() => {
+    if (!target || !autoLockedFrom) return;
+    nameOnly.current.add(`${target.country}|${autoLockedFrom.toLocaleLowerCase()}`);
+    setInput(autoLockedFrom);
+    go({ query: autoLockedFrom, pageId: null, mode: "advertiser", country: target.country });
+  }, [autoLockedFrom, go, target]);
 
   /* ------------------------------ filters ------------------------------- */
   const setFilter = useCallback(<K extends keyof Filters>(field: K, value: Filters[K]) => {
@@ -782,6 +850,13 @@ export function AdSpyWorkspace() {
             onRefresh={() => void startCollection("manual")}
             inCompare={compare.some((x) => sameTarget(x, target))}
             onCompare={() => toggleCompare(target)}
+            metaSource={result?.metaSource ?? null}
+            activeIndexed={result?.summary?.activeAds ?? null}
+            filtered={filterCount > 0}
+            pageOptions={pageOptions}
+            onPickPage={lockToPage}
+            autoLockedFrom={autoLockedFrom}
+            onSearchName={searchNameInstead}
           />
 
           {collecting && (
@@ -1046,6 +1121,62 @@ function Avatar({ src, label, size = 34 }: { src?: string | null; label: string;
   );
 }
 
+function SourceCoverage({
+  target,
+  metaSource,
+  total,
+  activeIndexed,
+  filtered,
+  collecting,
+}: {
+  target: SearchTarget;
+  metaSource: MetaSourceCounts | null;
+  total: number | null;
+  activeIndexed: number | null;
+  filtered: boolean;
+  collecting: boolean;
+}) {
+  if (!metaSource || filtered || total === null) return null;
+  const active = metaSource.active;
+  const all = metaSource.all;
+  const observed = [active?.observedAt, all?.observedAt].filter(Boolean).sort().pop() ?? null;
+  const when = observed ? ` (checked ${formatDate(observed)})` : "";
+
+  if (metaSource.scopeType === "keyword") {
+    const meta = all ?? active;
+    if (!meta) return null;
+    return (
+      <p className="azs-coverage">
+        Meta Ad Library reports <strong>{formatInt(meta.total)}</strong> {all ? "" : "active "}ads matching this phrase{when}. Zooptrack has indexed{" "}
+        <strong>{formatInt(total)}</strong> of them. Keyword counts on Meta span every advertiser, so use an exact brand for complete coverage.
+      </p>
+    );
+  }
+
+  // Exact page: compare like with like (active vs active, all vs all).
+  const liveCoverage = active ? coveragePercent(Number(activeIndexed ?? 0), active.total) : null;
+  const allCoverage = all ? coveragePercent(total, all.total) : null;
+  const coverage = liveCoverage ?? allCoverage;
+  if (coverage === null) return null;
+  const low = coverage < 90;
+  return (
+    <p className={`azs-coverage ${low ? "is-low" : ""}`}>
+      {active && (
+        <>
+          Meta shows <strong>{formatInt(active.total)}</strong> active ads; Zooptrack has <strong>{formatInt(Number(activeIndexed ?? 0))}</strong> of them ({liveCoverage}%).{" "}
+        </>
+      )}
+      {all && (
+        <>
+          All-time on Meta: <strong>{formatInt(all.total)}</strong>, indexed <strong>{formatInt(total)}</strong>.{" "}
+        </>
+      )}
+      <span className="azs-muted">{when.trim()}</span>
+      {low && !collecting && " Use Refresh data to collect the rest."}
+    </p>
+  );
+}
+
 function Landing({
   recent,
   watched,
@@ -1137,6 +1268,13 @@ function AdvertiserHeader({
   onRefresh,
   inCompare,
   onCompare,
+  metaSource,
+  activeIndexed,
+  filtered,
+  pageOptions,
+  onPickPage,
+  autoLockedFrom,
+  onSearchName,
 }: {
   target: SearchTarget;
   total: number | null;
@@ -1146,6 +1284,13 @@ function AdvertiserHeader({
   onRefresh: () => void;
   inCompare: boolean;
   onCompare: () => void;
+  metaSource: MetaSourceCounts | null;
+  activeIndexed: number | null;
+  filtered: boolean;
+  pageOptions: AutocompleteAdvertiser[];
+  onPickPage: (option: AutocompleteAdvertiser) => void;
+  autoLockedFrom: string | null;
+  onSearchName: () => void;
 }) {
   const [watching, setWatching] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1221,8 +1366,37 @@ function AdvertiserHeader({
           <span>{total === null ? "Counting ads…" : `${formatInt(total)} ads indexed`}</span>
           {lastUpdatedAt && <span>Updated {formatDate(lastUpdatedAt)}</span>}
         </div>
-        {!target.pageId && target.mode === "advertiser" && (
-          <p className="azs-fine">Matching by name. Pick a suggestion to lock results to one brand’s Meta page.</p>
+        <SourceCoverage
+          target={target}
+          metaSource={metaSource}
+          total={total}
+          activeIndexed={activeIndexed}
+          filtered={filtered}
+          collecting={collecting}
+        />
+        {!target.pageId && target.mode === "advertiser" &&
+          (pageOptions.length > 0 ? (
+            <div className="azs-lock" role="group" aria-label="Lock to one Meta page">
+              <span>Matching by name. Which “{target.query}” do you mean?</span>
+              {pageOptions.map((option) => (
+                <button key={option.pageId} type="button" className="azs-lock-choice" onClick={() => onPickPage(option)} title={`Meta Page ID ${option.pageId}`}>
+                  <Avatar src={option.profileImageUrl} label={option.label} size={20} />
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="azs-fine">
+              Matching by name, so other advertisers with a similar name can appear. Meta counts a name as a keyword, so its totals are not comparable here. Pick a suggestion to lock results to one brand’s Meta page.
+            </p>
+          ))}
+        {target.pageId && autoLockedFrom && (
+          <p className="azs-fine">
+            Locked to the one Meta page that matches “{autoLockedFrom}”.{" "}
+            <button type="button" className="azs-link" onClick={onSearchName}>
+              Search the name instead
+            </button>
+          </p>
         )}
       </div>
       <div className="azs-adv-actions">

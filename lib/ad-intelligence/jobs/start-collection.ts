@@ -17,7 +17,7 @@ import {
   getOrCreateDurableRun,
   type DurableRun,
 } from "@/lib/ad-intelligence/durable-run";
-import { dispatchAdSpyCollection } from "./dispatch-adspy-collection";
+import { dispatchAdSpyCollection, getAdSpyDispatchMode } from "./dispatch-adspy-collection";
 
 /**
  * The ONE entry point that starts an AdSpy collection.
@@ -49,6 +49,19 @@ const ACTIVE_JOB_STATUSES = new Set([
 ]);
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "running", "retrying"]);
+
+/**
+ * How much of Meta's library a collection reads when the caller does not say.
+ * "quick" = Meta's first page of ACTIVE ads (~30), the most a 60s Vercel
+ * function can do. With the persistent worker there is no such limit, so
+ * every collection reads the advertiser's full library ("deep", active and
+ * inactive, up to DEEP_TARGET ads). This is what closes the gap with Meta.
+ */
+export function defaultCollectionDepth(): "quick" | "deep" {
+  const forced = process.env.ADSPY_DEFAULT_DEPTH;
+  if (forced === "quick" || forced === "deep") return forced;
+  return getAdSpyDispatchMode() === "worker" ? "deep" : "quick";
+}
 
 export type StartCollectionReason = "user" | "track" | "scheduled";
 
@@ -247,7 +260,7 @@ export async function startAdSpyCollection(input: {
     platform: job.platform,
     mode: job.mode,
     collectionKey,
-    collectionDepth: input.depth ?? "quick",
+    collectionDepth: input.depth ?? defaultCollectionDepth(),
     advertiserPageId: pageId,
     runId: run.id,
   };

@@ -463,7 +463,6 @@ async function analyzeCompetitor(input: {
         pageId,
         minIntervalMs: 30 * 60_000,
         reason: "user",
-        depth: "quick",
       });
       collectionState = collection.dispatched || collection.outcome === "already_running" || collection.outcome === "running_for_another_request" ? "collecting" : "empty";
     } catch (error) {
