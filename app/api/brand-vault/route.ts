@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import type { BrandEconomics } from "@/lib/brand-vault/types";
+import { normalizeEconomics } from "@/lib/brand-vault/signals";
 
 type BrandVaultPayload = {
   brandName?: string;
@@ -95,7 +96,8 @@ export async function POST(request: Request) {
       hero_product: body.heroProduct?.trim() || null,
       main_objection: body.mainObjection?.trim() || null,
       competitor_focus: body.competitorFocus?.trim() || null,
-      economics: body.economics ?? {},
+      // Only replace saved economics when the client sent them (older forms don't).
+      ...(body.economics !== undefined ? { economics: normalizeEconomics(body.economics) } : {}),
       updated_at: new Date().toISOString()
     };
 
