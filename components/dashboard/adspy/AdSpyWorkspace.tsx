@@ -58,6 +58,8 @@ import {
   type FacetBucket,
   type Facets,
   type Filters,
+  SORT_OPTIONS,
+  type SortKey,
   type RecentItem,
   type SearchTarget,
 } from "./workspace-utils";
@@ -123,6 +125,8 @@ export function AdSpyWorkspace() {
   /* ------------------------------- results ------------------------------ */
   const [target, setTarget] = useState<SearchTarget | null>(null);
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  // Server-side ordering (whitelisted by the API). Not a filter: facets ignore it.
+  const [sort, setSort] = useState<SortKey>("relevant");
   const [page, setPage] = useState(1);
   const [result, setResult] = useState<SearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -359,7 +363,7 @@ export function AdSpyWorkspace() {
   };
 
   /* ------------------------------ fetchers ------------------------------ */
-  const key = stateKey(target, filters, page);
+  const key = `${stateKey(target, filters, page)}|${sort}`;
   const facetKey = stateKey(target, filters, 0);
 
   useEffect(() => {
@@ -382,6 +386,7 @@ export function AdSpyWorkspace() {
     const url = new URL("/api/ad-intelligence/search", window.location.origin);
     applyTargetParams(url, target);
     applyFilterParams(url, filters);
+    if (sort !== "relevant") url.searchParams.set("sort", sort);
     url.searchParams.set("page", String(page));
 
     fetch(url, { cache: "no-store", signal: controller.signal })
@@ -897,6 +902,23 @@ export function AdSpyWorkspace() {
                   </strong>
                   {loading && result && <Loader2 size={13} className="azs-spin" />}
                 </div>
+                <label className="azs-sort">
+                  <span className="azs-sr-only">Sort ads</span>
+                  <select
+                    value={sort}
+                    onChange={(event) => {
+                      setSort(event.target.value as SortKey);
+                      setPage(1);
+                    }}
+                    aria-label="Sort ads"
+                  >
+                    {SORT_OPTIONS.map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button type="button" className="azs-btn azs-btn-ghost azs-mobile-only" onClick={() => setFiltersOpenMobile((v) => !v)}>
                   <FilterIcon size={14} /> Filters{filterCount ? ` (${filterCount})` : ""}
                 </button>
