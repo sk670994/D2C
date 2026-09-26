@@ -36,6 +36,7 @@ import {
   type MetaIdentityScan,
 } from "../meta/graphql-identity";
 import { extractLibraryPage, normalizeLibraryNode } from "../meta/library-json";
+import { ESBUILD_NAME_SHIM } from "@/lib/ad-intelligence/browser-shim";
 
 // Overridable only for local tests against a mock Ad Library.
 const META_LIBRARY_URL = process.env.ADSPY_META_LIBRARY_URL || "https://www.facebook.com/ads/library/";
@@ -767,6 +768,7 @@ async function scrapeWithBrowser(
       viewport: { width: 1440, height: 1000 },
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36",
     });
+    await context.addInitScript({ content: ESBUILD_NAME_SHIM });
     await context.route("**/*", async (route) => {
       const resource = route.request().resourceType();
       // The ad data arrives as JSON; pictures, videos and fonts are not needed

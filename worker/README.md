@@ -98,3 +98,16 @@ Alert when: `live_workers = 0`, `oldest_waiting_sec > 900`,
 - Existing ads are never deleted by a failed collection.
 - Public, logged-out Ad Library pages only. No login, no cookies, no CAPTCHA
   solving, and no proxies until measurements show they are needed.
+
+## Running the worker on a Windows PC (no VPS)
+
+For development and demos the same worker can run on your own PC:
+
+```powershell
+# from the repo root (F:\D2C); first run creates worker\.env for the service key
+powershell -ExecutionPolicy Bypass -File worker\start-worker.ps1
+```
+
+The script loads `worker\.env`, installs Chromium once, keeps the PC awake,
+and restarts the worker if it exits. Set `ADSPY_COLLECTOR=worker` in Vercel
+while it runs; collections wait in the queue whenever the PC is off.

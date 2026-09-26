@@ -10,6 +10,8 @@ import {
 } from "playwright-core";
 import chromiumPack from "@sparticuz/chromium-min";
 
+import { ESBUILD_NAME_SHIM } from "@/lib/ad-intelligence/browser-shim";
+
 export type MetaPageSearchResult = {
   pageId: string;
   name: string;
@@ -952,6 +954,8 @@ async function createSuggestionSession(
         height: 900,
       },
     });
+
+  await context.addInitScript({ content: ESBUILD_NAME_SHIM });
 
   // Page lookup reads text only; downloading ad images/videos just fills /tmp.
   await context.route("**/*", (route) =>
