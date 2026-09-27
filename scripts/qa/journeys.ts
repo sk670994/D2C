@@ -299,23 +299,32 @@ async function main() {
 
   const results: UserResult[] = [];
   let next = 1;
+  let failStreak = 0;
+  let stopped = "";
   const worker = async () => {
-    while (next <= USERS) {
+    while (next <= USERS && !stopped) {
       const n = next++;
       const r = await runUser(browser, n, created);
       results.push(r);
       const f = r.steps.find((s) => !s.ok);
-      console.log(`${String(n).padStart(3)} ${r.ok ? "PASS" : "FAIL"} ${f ? `- ${f.name}: ${f.detail}` : ""}`);
+      console.log(`${String(n).padStart(3)} ${r.ok ? "PASS" : "FAIL"} ${f ? `- ${f.name}: ${(f.detail ?? "").split("\n")[0]}` : ""}`);
+      // Safety brake: stop before a struggling live site is pushed over.
+      failStreak = r.ok ? 0 : failStreak + 1;
+      if (failStreak >= 6 && !stopped) {
+        stopped = `stopped early after ${failStreak} failures in a row (site under strain)`;
+        console.log(`\n!! ${stopped}. Cleaning up.\n`);
+      }
     }
   };
   try {
-    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    // Ramp up: one more parallel user every 20 s, like real traffic building up.
+    await Promise.all(Array.from({ length: CONCURRENCY }, (_, i) => new Promise((resolve) => setTimeout(resolve, i * 20_000)).then(() => (stopped || next > USERS ? undefined : worker()))));
   } finally {
     await browser.close().catch(() => undefined);
     results.sort((a, b) => a.n - b.n);
     const summary = writeReport(results, startedAt);
     if (!KEEP) console.log(`Cleaned up ${await cleanup(created)} test accounts.`);
-    console.log(`\n${summary.passed}/${summary.users} passed in ${summary.minutes} min. Report: ${join(OUT, "report.html")}`);
+    console.log(`\n${summary.passed}/${summary.users} passed in ${summary.minutes} min.${stopped ? ` (${stopped})` : ""} Report: ${join(OUT, "report.html")}`);
   }
 }
 
