@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { SiteTopBar } from "@/components/brand/SiteTopBar";
 
 const starterPrompts = [
   "Diagnose a D2C skincare brand with 2.8 ROAS and 30% margin.",
@@ -64,6 +65,7 @@ export default function DemoPage() {
 
   return (
     <main className="main zwirk-page demo-page">
+      <SiteTopBar />
       <header className="zwirk-hero">
         <div>
           <p className="eyebrow">Demo Mode</p>

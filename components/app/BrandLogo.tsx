@@ -1,17 +1,6 @@
-import Image from "next/image";
-import Link from "next/link";
+import { ZooptrackLogo } from "@/components/brand/ZooptrackLogo";
 
+/** Header logo for app pages (login, ZWIRK, Profit OS, brand pages). */
 export function BrandLogo({ href = "/" }: { href?: string }) {
-  return (
-    <Link href={href} className="zt-brand" aria-label="Zooptrack home">
-      <Image
-        src="/zooptrack-logo.png"
-        alt="Zooptrack"
-        width={176}
-        height={48}
-        className="zt-brand-logo-image"
-        priority
-      />
-    </Link>
-  );
+  return <ZooptrackLogo href={href} height={32} priority />;
 }

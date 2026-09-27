@@ -4,6 +4,7 @@ import Link from "next/link";
 import { motion, useScroll, useSpring, useTransform } from "framer-motion";
 import { useRef, type ReactNode } from "react";
 import styles from "./ZooptrackSite.module.css";
+import { ZooptrackLogo } from "@/components/brand/ZooptrackLogo";
 import { ProductStory } from "./ProductStory";
 import { formatInr, PLANS, TRIAL_DAYS } from "@/lib/billing/plans";
 
@@ -178,12 +179,7 @@ function Shell({ children, scene, eyebrow, title, copy, actions }: {
     <main className={styles.site}>
       <header className={styles.navbar}>
         <Link className={styles.logo} href="/" aria-label="Zooptrack home">
-          <span className={styles.logoChip}>
-            <span className={styles.logoCrop}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/zooptrack-logo.png" alt="Zooptrack" width={1408} height={768} className={styles.logoImage} />
-            </span>
-          </span>
+          <ZooptrackLogo height={30} tone="blue" priority />
         </Link>
         <nav>
           {nav.map(([label, href]) => <Link key={href} href={href}>{label}</Link>)}

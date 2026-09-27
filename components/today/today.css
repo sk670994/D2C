@@ -15,7 +15,7 @@
   --zd-line: #e2ded4;
   --zd-line-2: #ece8df;
   --zd-strong-line: #cfcabe;
-  --zd-accent: #1d44b8;
+  --zd-accent: #0255b1; /* logo blue */
   --zd-accent-ink: #ffffff;
   --zd-accent-soft: #e8eefb;
   --zd-warm: #8a3a0b;
@@ -78,7 +78,7 @@ html[data-theme="dark"] .zd {
   width: 232px; flex-shrink: 0; padding: 28px 18px; display: flex; flex-direction: column; gap: 28px;
   border-right: 1px solid var(--zd-line); background: var(--zd-rail); position: sticky; top: 0; height: 100vh;
 }
-.zd-logo { font-family: var(--zd-display); font-size: 26px; font-weight: 600; letter-spacing: -0.02em; padding: 0 10px; color: var(--zd-ink); }
+.zd-logo { display: inline-flex; align-items: center; padding: 2px 10px 6px; }
 .zd-logo:hover { text-decoration: none; }
 .zd-nav { display: flex; flex-direction: column; gap: 2px; }
 .zd-nav a {
@@ -300,7 +300,8 @@ html[data-theme="dark"] .zd {
 @media (max-width: 560px) {
   .zd-main { padding: 18px 14px 40px; gap: 18px; }
   .zd-rail { padding: 10px 12px; gap: 8px; }
-  .zd-logo { font-size: 22px; padding: 0 4px; }
+  .zd-logo { padding: 0 4px; }
+  .zd-logo .zt-logo, .zd-logo .zt-logo img { height: 24px !important; }
   .zd-nav { overflow-x: auto; flex-wrap: nowrap; width: 100%; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
   .zd-nav::-webkit-scrollbar { display: none; }
   .zd-nav a { flex-shrink: 0; }

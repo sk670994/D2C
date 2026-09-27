@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SiteTopBar } from "@/components/brand/SiteTopBar";
 
 export const metadata: Metadata = {
   title: "FAQ — how Zooptrack and AdSpy work",
@@ -28,6 +29,7 @@ const faqs = [
 export default function FaqPage() {
   return (
     <main className="main policy-page faq-page">
+      <SiteTopBar />
       <header className="policy-hero">
         <p className="eyebrow">Support</p>
         <h1>FAQ</h1>
