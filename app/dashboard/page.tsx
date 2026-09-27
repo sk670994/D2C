@@ -15,7 +15,7 @@ import { DashboardSectionBlock } from "@/components/dashboard/DashboardSectionBl
 import { DashboardInsightsSection } from "@/components/dashboard/DashboardInsightsSection";
 import { DashboardCommandRail, DashboardExecutionControls, DashboardHero } from "@/components/dashboard/DashboardChrome";
 import { CommandCenter } from "@/components/command/CommandCenter";
-import { AppNav } from "@/components/app/AppNav";
+import { TodayShell } from "@/components/today/TodayShell";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -1754,8 +1754,8 @@ setReport(merged);
   }, [monthlyRecords]);
 
   return (
+    <TodayShell active="profit" email={userEmail}>
     <div className="zt-app-shell">
-    <AppNav email={userEmail} />
     <motion.div className="dashboard-shell" initial="hidden" animate="visible" variants={stagger}>
       <DashboardCommandRail
         items={sectionOptions}
@@ -2039,5 +2039,6 @@ setReport(merged);
       ) : null}
     </motion.div>
     </div>
+    </TodayShell>
   );
 }

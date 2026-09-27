@@ -11,7 +11,7 @@ const sections = [
   {
     title: "Service Scope",
     body:
-      "The platform provides planning tools for unit economics, paid media efficiency, and scale readiness. Outputs are guidance, not financial or legal advice."
+      "Zooptrack shows ads from Meta's public Ad Library, summaries of what changed, AI labels and suggestions, plus planning tools for unit economics. Counts and labels are our best reading of public data and can be incomplete; suggestions are guidance, not financial or legal advice. Ad creatives belong to their owners and are shown for research."
   },
   {
     title: "Accounts",
@@ -21,12 +21,12 @@ const sections = [
   {
     title: "Payments",
     body:
-      "If paid plans are enabled, subscription fees will be billed in advance. You may cancel at any time, with access until the end of the billing period."
+      "New accounts get a 7-day free trial. Paid plans are billed monthly in advance through Razorpay, in INR plus GST. You can cancel any time from Plan & billing and keep access until the end of the period you paid for. Fees already paid are not refunded, except where the law requires it."
   },
   {
     title: "Acceptable Use",
     body:
-      "You agree not to misuse the service, attempt to access data that is not yours, or interfere with platform performance."
+      "You agree not to misuse the service, resell or bulk-export its data, attempt to access data that is not yours, or interfere with platform performance."
   },
   {
     title: "Data Ownership",
@@ -41,7 +41,7 @@ const sections = [
   {
     title: "Contact",
     body:
-      "For questions about these terms, contact support@yourcompany.com."
+      "For questions about these terms, contact hello.zooptrack@gmail.com."
   }
 ];
 
@@ -53,7 +53,7 @@ export default function TermsPage() {
         <p className="eyebrow">Legal</p>
         <h1>Terms and Conditions</h1>
         <p className="muted-text">
-          These terms govern use of the Zooptrack Growth Intelligence Command Center. Please read them carefully.
+          These terms govern use of the Zooptrack service (competitor ad intelligence and the related tools). Please read them carefully.
         </p>
         <p className="policy-meta">Effective date: March 10, 2026</p>
       </header>

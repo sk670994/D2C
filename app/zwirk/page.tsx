@@ -167,10 +167,9 @@ export default function ZwirkPage() {
 
           <nav>
             <Link href="/today">Today</Link>
-            <Link href="/dashboard">Dashboard</Link>
-            <Link href="/adspy">AdSpy</Link>
+            <Link href="/adspy">Discover ads</Link>
             <Link href="/brand-vault">Brand Vault</Link>
-            <Link href="/competitors">Competitors</Link>
+            <Link href="/dashboard">Profit OS</Link>
             <Link href="/zwirk" className="active">ZWIRK</Link>
             <Link href="/records">Reports</Link>
           </nav>

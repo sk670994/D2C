@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ZooptrackLogo } from "@/components/brand/ZooptrackLogo";
+import { TodayShell } from "@/components/today/TodayShell";
 import type {
   BrandEconomics,
   BrandVaultAnalytics,
@@ -180,10 +180,10 @@ export default function BrandVaultPage() {
   }
 
   return (
+    <TodayShell active="vault">
     <main className="bvp-screen">
       <div className="bvp-shell">
         <header className="bvp-shell-header">
-          <ZooptrackLogo href="/today" height={24} className="bvp-logo" />
           <button className="bvp-brand-switch" onClick={() => setMenuOpen((value) => !value)} aria-expanded={menuOpen}>
             <span>Brand Vault Pro</span><span className="bvp-chevron">⌄</span>
           </button>
@@ -248,6 +248,7 @@ export default function BrandVaultPage() {
 
       {settingsOpen ? <VaultSettings data={data} onClose={() => setSettingsOpen(false)} onSaved={async () => { setSettingsOpen(false); await load(period); }} /> : null}
     </main>
+    </TodayShell>
   );
 }
 

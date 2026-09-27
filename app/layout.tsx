@@ -45,16 +45,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="site-footer-inner">
             <div className="footer-brand">
               <ZooptrackLogo height={30} tone="blue" />
-              <h3>Profit-aware growth intelligence for Indian D2C.</h3>
-              <p className="muted-text">Know what makes money. Know what the market is doing. Know what to do next.</p>
+              <h3>Competitor ad intelligence for Indian D2C.</h3>
+              <p className="muted-text">See what your rivals run. Know what changed. Know your next move.</p>
             </div>
             <div className="footer-columns">
               <div className="footer-column">
                 <p className="footer-title">Product</p>
                 <ul className="footer-list">
-                  <li><a href="/dashboard">Command Center</a></li>
-                  <li><a href="/adspy">Market intelligence</a></li>
-                  <li><a href="/login">Get Started</a></li>
+                  <li><a href="/today">Today</a></li>
+                  <li><a href="/adspy">Discover ads</a></li>
+                  <li><a href="/pricing">Pricing</a></li>
+                  <li><a href="/login">Start free trial</a></li>
                 </ul>
               </div>
               <div className="footer-column">
