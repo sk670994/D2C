@@ -20,5 +20,6 @@ export const config = {
   "/brand-vault/:path*",
   "/records/:path*",
   "/zwirk/:path*",
+  "/today/:path*",
 ],
 };

@@ -166,6 +166,7 @@ export default function ZwirkPage() {
           <BrandLogo href="/" />
 
           <nav>
+            <Link href="/today">Today</Link>
             <Link href="/dashboard">Dashboard</Link>
             <Link href="/adspy">AdSpy</Link>
             <Link href="/brand-vault">Brand Vault</Link>
