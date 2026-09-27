@@ -3,11 +3,19 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import type { BrandOverview } from "@/lib/today/load";
+import type { BrandOverview, CreativePatterns } from "@/lib/today/load";
+import { ELEMENT_LABEL, type ElementKey } from "@/lib/decode/taxonomy";
 
 import { EvidenceTile, formatInt, Initial } from "./parts";
 
 type State = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: BrandOverview };
+
+function topOf(patterns: CreativePatterns, key: ElementKey): string {
+  const p = patterns.top.find((item) => item.key === key);
+  return p ? `${p.label} (${p.share}%)` : "—";
+}
+
+const PATTERN_KEYS: ElementKey[] = ["hookType", "angle", "persona", "visualStyle", "language", "emotion"];
 
 function pct(part: number, whole: number): number {
   return whole > 0 ? Math.round((part / whole) * 100) : 0;
@@ -215,6 +223,34 @@ export function BrandOverviewView({ pageId, country = "IN" }: { pageId: string; 
             </ol>
           </section>
 
+          <section className="zd-card" aria-labelledby="patterns-title">
+            <div className="zd-row">
+              <h2 id="patterns-title" className="zd-h3">
+                Creative patterns
+              </h2>
+              <span className="zd-pill zd-pill-steady" style={{ marginLeft: "auto" }}>
+                AI · {formatInt(b.patterns.decoded)} of {formatInt(b.patterns.live)} live ads read
+              </span>
+            </div>
+            {b.patterns.decoded ? (
+              <dl className="zd-decoded">
+                {PATTERN_KEYS.map((key) => {
+                  const items = b.patterns.top.filter((p) => p.key === key);
+                  return (
+                    <div key={key}>
+                      <dt>{ELEMENT_LABEL[key]}</dt>
+                      <dd>{items.length ? items.map((p) => `${p.label} ${p.share}%`).join(" · ") : "—"}</dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            ) : (
+              <p className="zd-muted" style={{ margin: 0, fontSize: 14 }}>
+                The AI decoder hasn’t read this brand’s ads yet. It labels hook type, angle, persona, visual style and language for every live ad, a few at a time.
+              </p>
+            )}
+          </section>
+
           <section className="zd-col" aria-labelledby="worth-title" style={{ gap: 14 }}>
             <h2 id="worth-title" className="zd-h3">
               Ads worth your time
@@ -262,17 +298,54 @@ export function BrandOverviewView({ pageId, country = "IN" }: { pageId: string; 
               </span>
             </div>
           </section>
-          <section className="zd-card zd-card-dark" aria-labelledby="vs-title">
-            <h2 id="vs-title" className="zd-h3">
-              How does your brand compare?
-            </h2>
-            <p className="zd-muted" style={{ margin: 0, fontSize: 14 }}>
-              Add your brand and up to 3 rivals in Brand Vault to see offers, formats and launch pace side by side.
-            </p>
-            <Link href="/brand-vault" className="zd-btn" style={{ alignSelf: "flex-start" }}>
-              Open Brand Vault
-            </Link>
-          </section>
+          {b.vsYou ? (
+            <section className="zd-card" aria-labelledby="vs-title">
+              <h2 id="vs-title" className="zd-h3">
+                {b.name} vs you
+              </h2>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+                <thead>
+                  <tr style={{ textAlign: "left", color: "var(--zd-muted)" }}>
+                    <th scope="col" style={{ fontWeight: 500, padding: "6px 0" }}>
+                      <span className="zd-sr">Measure</span>
+                    </th>
+                    <th scope="col" style={{ fontWeight: 600, padding: "6px 8px" }}>{b.name}</th>
+                    <th scope="col" style={{ fontWeight: 600, padding: "6px 0" }}>{b.vsYou.you.name}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ["New ads, 7 days", formatInt(b.new7), formatInt(b.vsYou.you.new7)],
+                    ["Live ads", formatInt(b.active), formatInt(b.vsYou.you.active)],
+                    ["Video share", `${b.videoShare}%`, `${b.vsYou.you.videoShare}%`],
+                    ["Lead offer", b.offers[0]?.label ?? "—", b.vsYou.you.topOffer ?? "—"],
+                    ["Top angle (AI)", topOf(b.patterns, "angle"), topOf(b.vsYou.you.patterns, "angle")],
+                    ["Top hook (AI)", topOf(b.patterns, "hookType"), topOf(b.vsYou.you.patterns, "hookType")],
+                  ].map(([label, them, you]) => (
+                    <tr key={label} style={{ borderTop: "1px solid var(--zd-line-2)" }}>
+                      <th scope="row" style={{ textAlign: "left", fontWeight: 400, color: "var(--zd-muted)", padding: "8px 0" }}>
+                        {label}
+                      </th>
+                      <td style={{ padding: "8px" }}>{them}</td>
+                      <td style={{ padding: "8px 0" }}>{you}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          ) : (
+            <section className="zd-card zd-card-dark" aria-labelledby="vs-title">
+              <h2 id="vs-title" className="zd-h3">
+                How does your brand compare?
+              </h2>
+              <p className="zd-muted" style={{ margin: 0, fontSize: 14 }}>
+                Add your brand on Today. Every rival page then shows launches, offers, formats and AI patterns side by side with yours.
+              </p>
+              <Link href="/today" className="zd-btn" style={{ alignSelf: "flex-start" }}>
+                Add my brand
+              </Link>
+            </section>
+          )}
         </aside>
       </div>
     </>

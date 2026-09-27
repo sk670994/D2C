@@ -38,6 +38,7 @@ import type { Ad, AutocompleteAdvertiser, Job, MetaSourceCounts, SearchResponse,
 import { pageChoices, pickExactPage } from "@/lib/ad-intelligence/discovery/pick-page";
 import { coveragePercent } from "@/lib/ad-intelligence/global/source-scope";
 import { decodeAd } from "@/lib/today/insights";
+import { ELEMENT_LABEL, ELEMENTS, valueLabel, type Decoded, type ElementKey } from "@/lib/decode/taxonomy";
 import {
   NO_FILTERS,
   activeFilterCount,
@@ -1965,6 +1966,29 @@ function AdDetail({ ad, onClose }: { ad: Ad; onClose: () => void }) {
     };
   }, [onClose]);
 
+  // AI labels (hook type, angle, persona …) when the decoder has read this ad.
+  const creativeRowId = typeof ad.metadata?.creativeRowId === "string" ? ad.metadata.creativeRowId : null;
+  const [ai, setAi] = useState<Decoded | null>(null);
+  useEffect(() => {
+    setAi(null);
+    if (!creativeRowId) return;
+    let alive = true;
+    fetch(`/api/ad-intelligence/decode/${encodeURIComponent(creativeRowId)}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((data: { decoded?: Decoded | null }) => {
+        if (alive && data.decoded) setAi(data.decoded);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [creativeRowId]);
+  const aiLines = ai
+    ? (Object.keys(ELEMENTS) as ElementKey[])
+        .filter((key) => ai[key])
+        .map((key) => ({ label: ELEMENT_LABEL[key], value: valueLabel(String(ai[key])) }))
+    : [];
+
   const status = statusLabel(ad);
   const source = safeExternalUrl(ad.sourceUrl);
   const landing = safeExternalUrl(ad.landingPage);
@@ -2037,7 +2061,19 @@ function AdDetail({ ad, onClose }: { ad: Ad; onClose: () => void }) {
                     </dd>
                   </div>
                 ))}
+                {aiLines.map((line) => (
+                  <div key={`ai-${line.label}`}>
+                    <dt>{line.label}</dt>
+                    <dd>
+                      {line.value}{" "}
+                      <span className="azs-muted" style={{ fontSize: 11, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                        AI
+                      </span>
+                    </dd>
+                  </div>
+                ))}
               </dl>
+              {ai?.summary ? <p className="azs-fine">AI summary: {ai.summary}</p> : null}
             </section>
             <section>
               <h3>Ad copy</h3>

@@ -3,6 +3,9 @@ import "server-only";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { getSourceCounts, type SourceCounts } from "@/lib/ad-intelligence/global/source-counts";
 
+import { loadDecodes } from "@/lib/decode/run";
+import { topPatterns, type PatternCount } from "@/lib/decode/taxonomy";
+
 import { brandVerdict, pickMoves, summarizeBrand, todayHeadline, type BrandSummary, type Move, type TodayAdRow } from "./insights";
 
 const SELECT =
@@ -13,10 +16,18 @@ const MAX_RIVALS = 8;
 
 export type WatchedTarget = { pageId: string; name: string; country: string };
 
+export type CreativePatterns = { decoded: number; live: number; top: PatternCount[] };
+
+export type VsYou = {
+  you: { pageId: string; name: string; new7: number; active: number; videoShare: number; topOffer: string | null; patterns: CreativePatterns };
+};
+
 export type BrandOverview = BrandSummary & {
   verdict: string;
   country: string;
   coverage: SourceCounts | null;
+  patterns: CreativePatterns;
+  vsYou: VsYou | null;
 };
 
 export type TodayData = {
@@ -47,13 +58,54 @@ async function loadRows(pageId: string): Promise<TodayAdRow[]> {
   return rows;
 }
 
-export async function getBrandOverview(pageId: string, country = "IN"): Promise<BrandOverview> {
+/** AI patterns over a brand's live ads (only ads the decoder has labelled). */
+async function patternsFor(rows: TodayAdRow[]): Promise<CreativePatterns> {
+  const live = rows.filter((row) => row.is_currently_active).slice(0, 600);
+  const decodes = await loadDecodes(live.map((row) => row.id));
+  return { decoded: decodes.size, live: live.length, top: topPatterns(Array.from(decodes.values()), 2) };
+}
+
+/** The user's own Meta page (Brand Vault), when set. */
+export async function getOwnBrand(userId: string): Promise<{ pageId: string | null; brandName: string | null; websiteUrl: string | null }> {
+  const { data, error } = await createGlobalServiceClient()
+    .from("brand_vaults")
+    .select("own_page_id,brand_name,website_url")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error || !data) return { pageId: null, brandName: null, websiteUrl: null };
+  const row = data as { own_page_id?: string | null; brand_name?: string | null; website_url?: string | null };
+  return {
+    pageId: row.own_page_id && /^\d+$/.test(row.own_page_id) ? row.own_page_id : null,
+    brandName: row.brand_name ?? null,
+    websiteUrl: row.website_url ?? null,
+  };
+}
+
+export async function getBrandOverview(pageId: string, country = "IN", ownPageId: string | null = null): Promise<BrandOverview> {
   const [rows, coverage] = await Promise.all([
     loadRows(pageId),
     getSourceCounts({ platform: "meta", country, scope: { scopeType: "page", scopeKey: pageId } }),
   ]);
   const summary = summarizeBrand(pageId, rows);
-  return { ...summary, verdict: brandVerdict(summary), country, coverage };
+  const patterns = await patternsFor(rows);
+
+  let vsYou: VsYou | null = null;
+  if (ownPageId && ownPageId !== pageId) {
+    const ownRows = await loadRows(ownPageId);
+    const own = summarizeBrand(ownPageId, ownRows);
+    vsYou = {
+      you: {
+        pageId: ownPageId,
+        name: own.name,
+        new7: own.new7,
+        active: own.active,
+        videoShare: own.videoShare,
+        topOffer: own.offers[0]?.label ?? null,
+        patterns: await patternsFor(ownRows),
+      },
+    };
+  }
+  return { ...summary, verdict: brandVerdict(summary), country, coverage, patterns, vsYou };
 }
 
 /** The user's rivals: AdSpy watchlist first, then Brand Vault competitors (Page ID only). */

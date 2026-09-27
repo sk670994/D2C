@@ -66,7 +66,11 @@ async function listBrandVaultTargets(): Promise<Target[]> {
     return [];
   }
 
-  return (data ?? [])
+  // The user's own page too, so "Vs you" stays current. Missing column = skip.
+  const own = await createGlobalServiceClient().from("brand_vaults").select("user_id,brand_name,own_page_id").not("own_page_id", "is", null).limit(1000);
+  const ownRows = own.error ? [] : (own.data ?? []).map((row: any) => ({ user_id: row.user_id, name: row.brand_name, advertiser_page_id: row.own_page_id, country: "IN" }));
+
+  return [...(data ?? []), ...ownRows]
     .filter((row: any) => String(row.name ?? "").trim().length >= 2 || /^\d+$/.test(String(row.advertiser_page_id ?? "")))
     .map((row: any) => {
       const pageId = String(row.advertiser_page_id ?? "").trim();

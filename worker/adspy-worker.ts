@@ -39,6 +39,7 @@ import { recoverStaleRuns } from "@/lib/ad-intelligence/jobs/start-collection";
 import { reapExpiredAdSpyRequests } from "@/lib/ad-intelligence/durable-run";
 import { recycleMetaBrowser, metaBrowserState } from "@/lib/ad-intelligence/providers/deep-meta";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
+import { decodePendingAds } from "@/lib/decode/run";
 
 import {
   CircuitBreaker,
@@ -267,6 +268,21 @@ async function maintenance() {
   }
 }
 
+/** While idle, label a few ads with the AI decoder (needs GEMINI_API_KEY). */
+const DECODE_EVERY_MS = 60_000;
+let lastDecode = 0;
+async function decodeWhileIdle() {
+  if (!process.env.GEMINI_API_KEY || process.env.ADSPY_DECODE === "0") return;
+  if (Date.now() - lastDecode < DECODE_EVERY_MS) return;
+  lastDecode = Date.now();
+  try {
+    const result = await decodePendingAds({ limit: 10, deadlineAt: Date.now() + 45_000 });
+    if (result.decoded || result.failed) log("info", "ads_decoded", result);
+  } catch (error) {
+    log("warn", "decode_failed", { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 async function loop() {
   let idleRounds = 0;
   let lastReap = 0;
@@ -306,6 +322,7 @@ async function loop() {
     const next = pickRunnable(candidates);
     if (!next) {
       idleRounds += 1;
+      await decodeWhileIdle();
       await sleep(idleDelayMs(idleRounds));
       continue;
     }
@@ -324,6 +341,13 @@ function startHealthServer() {
       return;
     }
     res.writeHead(404).end();
+  });
+  server.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EADDRINUSE") {
+      log("error", "already_running", { port: HEALTH_PORT, hint: "Another worker is already running on this machine. Stop it (Ctrl+C) before starting a new one." });
+      process.exit(3);
+    }
+    log("error", "health_failed", { error: error.message });
   });
   server.listen(HEALTH_PORT, "0.0.0.0", () => log("info", "health_listening", { port: HEALTH_PORT }));
   return server;

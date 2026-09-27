@@ -242,3 +242,4 @@ html[data-theme="dark"] .zd {
 .zd .azs .azs-kicker, .zd .azs .azs-eyebrow { font-family: var(--zd-mono); letter-spacing: 0.1em; color: var(--zd-muted); }
 .zd .azs .azs-btn { border-radius: 10px; min-height: 40px; }
 .zd .azs .azs-btn-primary { background: var(--zd-accent); border-color: var(--zd-accent); color: var(--zd-accent-ink); }
+.zd .zd-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

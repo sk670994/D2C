@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
-import { getBrandOverview } from "@/lib/today/load";
+import { getBrandOverview, getOwnBrand } from "@/lib/today/load";
 
 export const runtime = "nodejs";
 // Run next to the Supabase database (ap-southeast-2 / Sydney).
@@ -20,7 +20,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pag
   const country = /^[A-Z]{2}$/.test(countryParam) ? countryParam : "IN";
 
   try {
-    const overview = await getBrandOverview(pageId, country);
+    const own = await getOwnBrand(userId);
+    const overview = await getBrandOverview(pageId, country, own.pageId);
     return NextResponse.json({ success: true, overview }, { headers: { "Cache-Control": "private, max-age=30" } });
   } catch (error) {
     console.error("[Today brand]", error);

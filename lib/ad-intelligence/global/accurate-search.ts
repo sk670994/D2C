@@ -654,9 +654,11 @@ function mapCreative(
     intelligence:
       undefined,
 
-    metadata:
-      row.metadata ??
-      {},
+    // creativeRowId: the database row id (AI labels are keyed by it).
+    metadata: {
+      ...(row.metadata ?? {}),
+      creativeRowId: row.id,
+    },
 
     brandId:
       row.brand_id ??
