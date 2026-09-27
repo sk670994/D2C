@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import type { BrandOverview, CreativePatterns } from "@/lib/today/load";
 import { ELEMENT_LABEL, type ElementKey } from "@/lib/decode/taxonomy";
 
+import { CountUp, GrowBar, Rise, SparkBar } from "./motion";
 import { EvidenceTile, formatInt, Initial } from "./parts";
 
 type State = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: BrandOverview };
@@ -110,12 +111,12 @@ export function BrandOverviewView({ pageId, country = "IN" }: { pageId: string; 
               Meta Ad Library shows
             </span>
             <span className="zd-num" style={{ fontSize: 28 }}>
-              {formatInt(coverage.meta)} {coverage.label} ads
+              <CountUp value={coverage.meta} /> {coverage.label} ads
             </span>
           </div>
           <div className="zd-col" style={{ gap: 8, minWidth: 240 }}>
             <div className="zd-bar" style={{ height: 12 }} role="img" aria-label={`Zooptrack holds ${pct(coverage.held, coverage.meta)}% of Meta's count`}>
-              <span style={{ width: `${Math.min(100, pct(coverage.held, coverage.meta))}%` }} />
+              <GrowBar pct={pct(coverage.held, coverage.meta)} delay={0.1} />
             </div>
             <div className="zd-row zd-muted" style={{ fontSize: 13 }}>
               <span>
@@ -129,28 +130,28 @@ export function BrandOverviewView({ pageId, country = "IN" }: { pageId: string; 
       ) : null}
 
       <div className="zd-grid-5">
-        <div className="zd-card" style={{ gap: 4, padding: 18 }}>
-          <span className="zd-num">{formatInt(b.total)}</span>
+        <Rise i={0} className="zd-card" style={{ gap: 4, padding: 18 }}>
+          <span className="zd-num"><CountUp value={b.total} /></span>
           <span className="zd-muted" style={{ fontSize: 13 }}>ads on record</span>
-        </div>
-        <div className="zd-card" style={{ gap: 4, padding: 18 }}>
-          <span className="zd-num" style={{ color: "var(--zd-accent)" }}>+{formatInt(b.new7)}</span>
+        </Rise>
+        <Rise i={1} className="zd-card" style={{ gap: 4, padding: 18 }}>
+          <span className="zd-num" style={{ color: "var(--zd-accent)" }}><CountUp value={b.new7} prefix="+" /></span>
           <span className="zd-muted" style={{ fontSize: 13 }}>launched in 7 days</span>
-        </div>
-        <div className="zd-card" style={{ gap: 4, padding: 18 }}>
-          <span className="zd-num">{formatInt(b.new30)}</span>
+        </Rise>
+        <Rise i={2} className="zd-card" style={{ gap: 4, padding: 18 }}>
+          <span className="zd-num"><CountUp value={b.new30} /></span>
           <span className="zd-muted" style={{ fontSize: 13 }}>launched in 30 days</span>
-        </div>
-        <div className="zd-card" style={{ gap: 4, padding: 18 }}>
-          <span className="zd-num">{b.videoShare}%</span>
+        </Rise>
+        <Rise i={3} className="zd-card" style={{ gap: 4, padding: 18 }}>
+          <span className="zd-num"><CountUp value={b.videoShare} suffix="%" /></span>
           <span className="zd-muted" style={{ fontSize: 13 }}>
             video ({formatInt(b.formats.video)} of {formatInt(b.total)})
           </span>
-        </div>
-        <div className="zd-card" style={{ gap: 4, padding: 18 }}>
+        </Rise>
+        <Rise i={4} className="zd-card" style={{ gap: 4, padding: 18 }}>
           <span className="zd-num">{b.longestLive ? `${b.longestLive.days}d` : "—"}</span>
           <span className="zd-muted" style={{ fontSize: 13 }}>longest still running</span>
-        </div>
+        </Rise>
       </div>
 
       <div className="zd-wrap">
@@ -166,7 +167,7 @@ export function BrandOverviewView({ pageId, country = "IN" }: { pageId: string; 
             </div>
             <div className="zd-spark" role="img" aria-label={`New ads per day: ${b.launches14.join(", ")}`}>
               {b.launches14.map((n, i) => (
-                <span key={i} className={n ? "" : "is-zero"} style={{ height: `${Math.max(4, Math.round((n / maxDay) * 100))}%` }} title={`${n} new`} />
+                <SparkBar key={i} i={i} className={n ? "" : "is-zero"} height={`${Math.max(4, Math.round((n / maxDay) * 100))}%`} title={`${n} new`} />
               ))}
             </div>
             <div className="zd-row zd-muted" style={{ fontFamily: "var(--zd-mono)", fontSize: 12 }}>

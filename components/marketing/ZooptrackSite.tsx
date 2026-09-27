@@ -4,6 +4,7 @@ import Link from "next/link";
 import { motion, useScroll, useSpring, useTransform } from "framer-motion";
 import { useRef, type ReactNode } from "react";
 import styles from "./ZooptrackSite.module.css";
+import { ProductStory } from "./ProductStory";
 
 type Scene = "home" | "radar" | "conveyor" | "ledger" | "unfold" | "cockpit" | "archive";
 
@@ -226,6 +227,8 @@ export function ZooptrackHome() {
           <Metric label="CAC / GUARDRAIL" value="+33%" accent />
         </div>
       </section>
+
+      <ProductStory />
 
       <section className={styles.narrative}>
         <SectionHeader kicker="THE DECISION LOOP" title="One system. Five transformations." copy="Zooptrack moves from signal to diagnosis to action — not from dashboard to dashboard." />

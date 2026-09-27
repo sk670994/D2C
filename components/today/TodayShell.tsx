@@ -5,6 +5,8 @@ import { BookOpen, CalendarClock, LayoutDashboard, Mail, Search, Sparkles } from
 import { SignOutButton } from "@/components/auth/SignOutButton";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 
+import { CommandBar } from "./CommandBar";
+
 type NavKey = "today" | "adspy" | "vault" | "report" | "zwirk" | "profit";
 
 const NAV: Array<{ key: NavKey; href: string; label: string; icon: ReactNode }> = [
@@ -24,6 +26,7 @@ export function TodayShell({ active, email, children }: { active: NavKey; email?
         <Link href="/today" className="zd-logo">
           Zooptrack
         </Link>
+        <CommandBar />
         <div className="zd-nav">
           {NAV.map((item) => (
             <Link key={item.key} href={item.href} aria-current={item.key === active ? "page" : undefined}>
