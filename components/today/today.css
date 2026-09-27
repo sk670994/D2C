@@ -206,3 +206,39 @@ html[data-theme="dark"] .zd {
 .zd-spin { animation: zd-spin 0.9s linear infinite; }
 @keyframes zd-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .zd-spin { animation: none; } }
+
+/* ---------- AdSpy workspace inside the new shell ----------
+ * The workspace keeps its own layout (.azs-*); this maps its colour tokens
+ * and type onto the design system so every screen looks like one product.
+ * ".azs.azs" outranks the workspace's html[data-theme="dark"] .azs rules. */
+.zd .azs.azs {
+  --azs-bg: var(--zd-ground);
+  --azs-surface: var(--zd-surface);
+  --azs-surface-2: var(--zd-surface-2);
+  --azs-ink: var(--zd-ink);
+  --azs-muted: var(--zd-muted);
+  --azs-soft: var(--zd-muted);
+  --azs-line: var(--zd-line);
+  --azs-line-strong: var(--zd-strong-line);
+  --azs-accent: var(--zd-accent);
+  --azs-accent-soft: var(--zd-accent-soft);
+  --azs-good: var(--zd-good);
+  --azs-good-soft: var(--zd-good-soft);
+  --azs-warn: var(--zd-warm);
+  --azs-shadow: none;
+  --azs-radius: var(--zd-radius-sm);
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  font-family: var(--zd-body);
+}
+.zd .azs .azs-search { top: 0; margin: 0; padding: 10px 0; }
+.zd .azs .azs-filters { top: 84px; }
+.zd .azs .azs-titlebar h1,
+.zd .azs .azs-adv-main h2,
+.zd .azs .azs-modal-head h2 { font-family: var(--zd-display); font-weight: 400; letter-spacing: -0.02em; }
+.zd .azs .azs-titlebar h1 { font-size: clamp(30px, 3.4vw, 44px); line-height: 1.08; }
+.zd .azs .azs-adv-main h2 { font-size: 30px; }
+.zd .azs .azs-kicker, .zd .azs .azs-eyebrow { font-family: var(--zd-mono); letter-spacing: 0.1em; color: var(--zd-muted); }
+.zd .azs .azs-btn { border-radius: 10px; min-height: 40px; }
+.zd .azs .azs-btn-primary { background: var(--zd-accent); border-color: var(--zd-accent); color: var(--zd-accent-ink); }

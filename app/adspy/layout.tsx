@@ -1,6 +1,5 @@
-import "@/components/dashboard/adspy/adspy.css";
+import "@/components/today/today.css";
 import "@/components/dashboard/adspy/adspy-workspace.css";
-import "@/components/dashboard/adspy/adspy-cinema.css";
 
 import { ZwirkDock } from "@/components/zwirk/ZwirkDock";
 
