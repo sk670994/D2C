@@ -163,7 +163,7 @@ export async function updateSession(
       request.nextUrl.clone();
 
     redirectUrl.pathname =
-      "/dashboard";
+      "/today";
 
     redirectUrl.search = "";
 

@@ -317,3 +317,6 @@ html[data-theme="dark"] .zd {
   .zd-cmd-backdrop { padding-top: 8vh; }
   .zd-cmd-trigger span { display: none; }
 }
+
+/* Decorative glows (e.g. the AdSpy hero) must never widen the page on phones. */
+.zd-main { overflow-x: clip; }

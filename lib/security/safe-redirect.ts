@@ -3,7 +3,7 @@
  *
  * Rejects anything that a browser could treat as another origin:
  * absolute URLs, protocol-relative "//host", backslash tricks "/\host",
- * and control characters. Falls back to /dashboard.
+ * and control characters. Falls back to /today.
  */
 export function safeNextPath(
   value: string | null | undefined,

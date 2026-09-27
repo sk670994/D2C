@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/client";
 
 export function GoogleSignInButton({
-  nextPath = "/dashboard",
+  nextPath = "/today",
   showBadge = false
 }: {
   nextPath?: string;
