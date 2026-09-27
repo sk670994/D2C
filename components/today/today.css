@@ -295,3 +295,24 @@ html[data-theme="dark"] .zd {
   .zd-cmd-trigger { width: auto; margin: 0; }
   .zd-cmd-trigger kbd { display: none; }
 }
+
+/* ---------- phone pass (founders read Today on the phone) ---------- */
+@media (max-width: 560px) {
+  .zd-main { padding: 18px 14px 40px; gap: 18px; }
+  .zd-rail { padding: 10px 12px; gap: 8px; }
+  .zd-logo { font-size: 22px; padding: 0 4px; }
+  .zd-nav { overflow-x: auto; flex-wrap: nowrap; width: 100%; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .zd-nav::-webkit-scrollbar { display: none; }
+  .zd-nav a { flex-shrink: 0; }
+  .zd-card { padding: 18px; border-radius: 16px; }
+  .zd-h1 { font-size: 30px; }
+  .zd-h2 { font-size: 23px; }
+  .zd-verdict { font-size: 20px; }
+  .zd-lede { font-size: 16px; }
+  .zd-num { font-size: 26px; }
+  .zd-row > .zd-btn { flex: 1 1 auto; }
+  .zd-tile { min-height: 128px; }
+  .zd-tile-hook { font-size: 18px; }
+  .zd-cmd-backdrop { padding-top: 8vh; }
+  .zd-cmd-trigger span { display: none; }
+}

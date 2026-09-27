@@ -34,7 +34,7 @@ export type TodayData = {
   generatedAt: string;
   headline: string;
   moves: Move[];
-  rivals: Array<{ pageId: string; name: string; new7: number; total: number }>;
+  rivals: Array<{ pageId: string; name: string; new7: number; total: number; lastSeenAt: string | null }>;
   watchedCount: number;
 };
 
@@ -157,7 +157,7 @@ export async function getToday(userId: string): Promise<TodayData> {
     headline: todayHeadline(moves),
     moves,
     rivals: summaries
-      .map((s) => ({ pageId: s.pageId, name: s.name, new7: s.new7, total: s.total }))
+      .map((s) => ({ pageId: s.pageId, name: s.name, new7: s.new7, total: s.total, lastSeenAt: s.lastSeenAt }))
       .sort((a, b) => b.new7 - a.new7 || b.total - a.total),
     watchedCount: targets.length,
   };

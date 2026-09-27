@@ -10,7 +10,7 @@ import {
 } from "playwright-core";
 import chromiumPack from "@sparticuz/chromium-min";
 
-import { ESBUILD_NAME_SHIM } from "@/lib/ad-intelligence/browser-shim";
+import { browserProxy, ESBUILD_NAME_SHIM } from "@/lib/ad-intelligence/browser-shim";
 
 export type MetaPageSearchResult = {
   pageId: string;
@@ -215,6 +215,7 @@ async function getBrowser(): Promise<Browser> {
           ? await chromium.launch({
               headless: true,
               args: ["--disable-dev-shm-usage", "--no-sandbox"],
+              ...browserProxy(),
             })
           : await chromium.launch({
               executablePath,

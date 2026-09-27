@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
+import { getEntitlement } from "@/lib/billing/server";
 import { getToday } from "@/lib/today/load";
 import { renderReportEmail, reportSubject } from "@/lib/today/report-email";
 
@@ -44,6 +45,12 @@ export async function GET(request: NextRequest) {
 
   for (const userId of userIds) {
     try {
+      // Only accounts with a running trial or plan get the report.
+      const { data: owner } = await service.auth.admin.getUserById(userId);
+      if (!(await getEntitlement(userId, owner?.user?.email ?? null)).active) {
+        skipped += 1;
+        continue;
+      }
       const today = await getToday(userId);
       if (!today.moves.length) {
         skipped += 1;

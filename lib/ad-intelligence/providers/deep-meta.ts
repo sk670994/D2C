@@ -36,7 +36,7 @@ import {
   type MetaIdentityScan,
 } from "../meta/graphql-identity";
 import { extractLibraryPage, normalizeLibraryNode } from "../meta/library-json";
-import { ESBUILD_NAME_SHIM } from "@/lib/ad-intelligence/browser-shim";
+import { browserProxy, ESBUILD_NAME_SHIM } from "@/lib/ad-intelligence/browser-shim";
 
 // Overridable only for local tests against a mock Ad Library.
 const META_LIBRARY_URL = process.env.ADSPY_META_LIBRARY_URL || "https://www.facebook.com/ads/library/";
@@ -121,7 +121,7 @@ async function getBrowser(): Promise<Browser> {
       // Background collector (GitHub Actions): use Playwright's own Chromium.
       const bundled = process.env.ADSPY_BROWSER === "playwright";
       const next = bundled
-        ? await playwrightChromium.launch({ headless: true, args: ["--disable-dev-shm-usage", "--no-sandbox"] })
+        ? await playwrightChromium.launch({ headless: true, args: ["--disable-dev-shm-usage", "--no-sandbox"], ...browserProxy() })
         : await playwrightChromium.launch({ executablePath, args, headless: true });
       next.on("disconnected", () => {
         if (browser === next) browser = null;

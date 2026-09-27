@@ -1,13 +1,13 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { BookOpen, CalendarClock, LayoutDashboard, Mail, Search, Sparkles } from "lucide-react";
+import { BookOpen, CalendarClock, CreditCard, LayoutDashboard, Mail, Search, Sparkles } from "lucide-react";
 
 import { SignOutButton } from "@/components/auth/SignOutButton";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 import { CommandBar } from "./CommandBar";
 
-type NavKey = "today" | "adspy" | "vault" | "report" | "zwirk" | "profit";
+type NavKey = "today" | "adspy" | "vault" | "report" | "zwirk" | "profit" | "billing";
 
 const NAV: Array<{ key: NavKey; href: string; label: string; icon: ReactNode }> = [
   { key: "today", href: "/today", label: "Today", icon: <CalendarClock size={18} aria-hidden="true" /> },
@@ -16,6 +16,7 @@ const NAV: Array<{ key: NavKey; href: string; label: string; icon: ReactNode }> 
   { key: "report", href: "/today/report", label: "Monday report", icon: <Mail size={18} aria-hidden="true" /> },
   { key: "zwirk", href: "/zwirk", label: "ZWIRK", icon: <Sparkles size={18} aria-hidden="true" /> },
   { key: "profit", href: "/dashboard", label: "Profit OS", icon: <LayoutDashboard size={18} aria-hidden="true" /> },
+  { key: "billing", href: "/today/billing", label: "Plan & billing", icon: <CreditCard size={18} aria-hidden="true" /> },
 ];
 
 /** App frame for the redesigned screens: left rail + main column. */

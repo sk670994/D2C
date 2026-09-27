@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
+import { canWatchMore } from "@/lib/billing/plans";
+import { getEntitlement } from "@/lib/billing/server";
 
 export const runtime = "nodejs";
 // Run next to the Supabase database (ap-southeast-2 / Sydney).
@@ -104,6 +106,17 @@ export async function POST(
   const body = await request.json().catch(() => ({}));
   const country = validCountry(typeof body?.country === "string" ? body.country : request.nextUrl.searchParams.get("country"));
   const service = createGlobalServiceClient();
+
+  // Plan limit: how many rivals this account may watch.
+  const [entitlement, watched] = await Promise.all([
+    getEntitlement(user.id, user.email),
+    service.from("adspy_advertiser_watchlists").select("advertiser_id").eq("user_id", user.id).eq("platform", "meta").limit(1000),
+  ]);
+  const watchedIds = new Set((watched.data ?? []).map((row) => String((row as { advertiser_id: unknown }).advertiser_id)));
+  const decision = canWatchMore(entitlement, watchedIds.size, watchedIds.has(pageId));
+  if (!decision.ok) {
+    return NextResponse.json({ success: false, error: decision.message, reason: decision.reason, upgradeUrl: "/today/billing" }, { status: 402 });
+  }
 
   const { data: profile } = await service.rpc("adspy_get_advertiser_profile", {
     p_page_id: pageId,

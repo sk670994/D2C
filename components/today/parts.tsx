@@ -13,6 +13,18 @@ export function safeImage(url: string | null | undefined): string | null {
   }
 }
 
+/** "3 h ago", "2 days ago" — how fresh a brand's data is. */
+export function timeAgo(iso: string | null | undefined, now: number = Date.now()): string | null {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(t)) return null;
+  const mins = Math.max(0, Math.round((now - t) / 60_000));
+  if (mins < 60) return mins <= 1 ? "just now" : `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 36) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  return `${days} ${days === 1 ? "day" : "days"} ago`;
+}
+
 export function formatInt(value: number): string {
   return new Intl.NumberFormat("en-IN").format(Math.round(value));
 }

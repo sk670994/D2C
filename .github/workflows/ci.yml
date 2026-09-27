@@ -1,0 +1,32 @@
+name: CI
+
+# Runs the unit tests and the type check on every pull request and push to main,
+# so a broken patch is caught before it is merged.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - name: Unit tests
+        run: npx vitest run
+      - name: Type check
+        # Reported, not blocking, until older files are fully typed.
+        continue-on-error: true
+        run: npx tsc --noEmit -p tsconfig.json
