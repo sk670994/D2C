@@ -48,6 +48,8 @@ export type BrandSummary = {
   leadHook: { text: string; count: number } | null;
   longestLive: EvidenceAd | null;
   newest: EvidenceAd[];
+  /** Ads launched in the last 7 days, newest first (evidence for launch moves). */
+  launched7: EvidenceAd[];
   /** Launches per day, oldest first, last 14 days. */
   launches14: number[];
   lastSeenAt: string | null;
@@ -60,10 +62,25 @@ function ms(value: string | null | undefined): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
-export function hookOf(ad: Pick<TodayAdRow, "headline" | "primary_text">): string | null {
+const compact = (v: unknown) => clean(v).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
+/** Short, readable: cut at a word boundary with an ellipsis. */
+export function shorten(text: string, max = 90): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,.;:!-]+$/, "")}…`;
+}
+
+/**
+ * The ad's hook: its headline, unless the headline is just the brand name
+ * (common: "POND'S"), then the first sentence of the copy.
+ */
+export function hookOf(ad: Pick<TodayAdRow, "headline" | "primary_text"> & { advertiser_name?: string | null }): string | null {
   const headline = clean(ad.headline);
-  if (headline && headline.length >= 4) return headline.slice(0, 140);
-  return firstSentence(ad.primary_text);
+  const isBrandOnly = headline && ad.advertiser_name && compact(headline) === compact(ad.advertiser_name);
+  const hook = headline && headline.length >= 4 && !isBrandOnly ? headline : firstSentence(ad.primary_text) ?? (headline || null);
+  return hook ? shorten(hook) : null;
 }
 
 function formatOf(type: string | null): "video" | "image" | "carousel" | "other" {
@@ -162,6 +179,11 @@ export function summarizeBrand(pageId: string, rows: TodayAdRow[], now = Date.no
     leadHook,
     longestLive: longest,
     newest,
+    launched7: recent
+      .slice()
+      .sort((a, b) => (ms(b.first_seen_at) ?? 0) - (ms(a.first_seen_at) ?? 0))
+      .slice(0, 6)
+      .map((ad) => evidence(ad, now)),
     launches14,
     lastSeenAt: lastSeen ? new Date(lastSeen).toISOString() : null,
   };
@@ -219,7 +241,7 @@ export function movesFor(s: BrandSummary): Move[] {
       detail: `${s.new30} launched in 30 days. ${s.videoShare}% of their ads are video.${s.offers[0] ? ` Lead offer: ${s.offers[0].label.toLowerCase()}.` : ""}`,
       action: "A counter-offer lands best while their push is live. Brief it this week.",
       score: 100 + s.new7,
-      evidence: s.newest.slice(0, 3),
+      evidence: s.launched7.slice(0, 3),
     });
   } else if (s.new7 > 0) {
     moves.push({
@@ -230,7 +252,7 @@ export function movesFor(s: BrandSummary): Move[] {
       detail: `${s.active} live in total.${s.offers[0] ? ` Lead offer: ${s.offers[0].label.toLowerCase()}.` : ""}`,
       action: "Worth a look: new creative usually means a new test.",
       score: 20 + s.new7,
-      evidence: s.newest.slice(0, 3),
+      evidence: s.launched7.slice(0, 3),
     });
   } else if (s.total > 0) {
     moves.push({
@@ -244,7 +266,7 @@ export function movesFor(s: BrandSummary): Move[] {
       evidence: [],
     });
   }
-  if (s.longestLive && s.longestLive.days >= 60 && s.longestLive.hook) {
+  if (s.longestLive && s.longestLive.days >= 60 && s.longestLive.hook && compact(s.longestLive.hook) !== compact(s.name)) {
     moves.push({
       ...base,
       kind: "staying",
