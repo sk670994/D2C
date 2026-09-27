@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { TodayData } from "@/lib/today/load";
 
 import { EvidenceTile, formatInt, Initial, MovePill } from "./parts";
+import { MyBrandCard } from "./MyBrandCard";
 import { RivalPicker } from "./RivalPicker";
 
 type State = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: TodayData };
@@ -74,8 +75,19 @@ export function TodayView() {
         <h1 className="zd-h1">
           Know what your rivals ran <em style={{ color: "var(--zd-accent)" }}>this week</em>.
         </h1>
-        <p className="zd-lede">Pick up to 3 rivals. Zooptrack reads their Meta ads every night and tells you what changed, here and in a Monday email.</p>
-        <RivalPicker onChanged={reload} />
+        <p className="zd-lede">Two steps. Zooptrack reads your rivals' Meta ads every night and tells you what changed, here and in a Monday email.</p>
+        <section className="zd-card" aria-labelledby="step-1">
+          <div className="zd-eyebrow" id="step-1">
+            Step 1 · Your brand
+          </div>
+          <MyBrandCard />
+        </section>
+        <section className="zd-card" aria-labelledby="step-2">
+          <div className="zd-eyebrow" id="step-2">
+            Step 2 · Rivals to watch (up to 3 to start)
+          </div>
+          <RivalPicker onChanged={reload} />
+        </section>
       </div>
     );
   }
@@ -198,6 +210,12 @@ export function TodayView() {
         </div>
 
         <aside className="zd-aside">
+          <section className="zd-card" aria-labelledby="my-brand-title">
+            <h2 id="my-brand-title" className="zd-h3">
+              Your brand
+            </h2>
+            <MyBrandCard compact />
+          </section>
           <section className="zd-card" aria-labelledby="new-ads-title">
             <h2 id="new-ads-title" className="zd-h3">
               New ads this week

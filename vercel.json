@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/weekly-report",
       "schedule": "30 3 * * 1"
+    },
+    {
+      "path": "/api/cron/decode-ads",
+      "schedule": "0 21 * * *"
     }
   ],
   "functions": {
