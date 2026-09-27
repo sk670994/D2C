@@ -103,3 +103,26 @@ describe("decoding", () => {
     expect(byLabel["Likely a winner"]).toEqual({ label: "Likely a winner", value: "Yes: live 118+ days", provenance: "heuristic" });
   });
 });
+
+describe("hooks from real ads", () => {
+  it("skips a headline that is just the brand name", () => {
+    const rows = [
+      ad(1, { advertiser_name: "POND'S", headline: "POND'S", primary_text: "Moisturizer with SPF 50 PA+++. Light and fresh.", first_seen_at: daysAgo(158) }),
+    ];
+    const s = summarizeBrand("149312081800686", rows, NOW);
+    expect(s.longestLive?.hook).toBe("Moisturizer with SPF 50 PA+++.");
+  });
+
+  it("uses only this week's launches as evidence for a launch move", () => {
+    const rows = [ad(1, { first_seen_at: daysAgo(2) }), ad(2, { first_seen_at: daysAgo(3) }), ad(3, { first_seen_at: daysAgo(40), headline: "Old ad" })];
+    const s = summarizeBrand("9", rows, NOW);
+    const move = movesFor(s).find((m) => m.kind === "steady");
+    expect(move?.evidence.map((e) => e.id)).toEqual(["a1", "a2"]);
+  });
+
+  it("shortens long hooks at a word boundary", () => {
+    const s = summarizeBrand("9", [ad(1, { headline: "Tired all day, but my skin gets to recover all night New POND’S Freeze Recovery Gel is basically my one moment of peace after work" })], NOW);
+    expect(s.newest[0].hook?.endsWith("…")).toBe(true);
+    expect((s.newest[0].hook ?? "").length <= 91).toBe(true);
+  });
+});
