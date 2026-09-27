@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { TodayData } from "@/lib/today/load";
 
 import { EvidenceTile, formatInt, Initial, MovePill } from "./parts";
+import { GrowBar, Rise } from "./motion";
 import { MyBrandCard } from "./MyBrandCard";
 import { RivalPicker } from "./RivalPicker";
 
@@ -120,7 +121,7 @@ export function TodayView() {
       <div className="zd-wrap">
         <div className="zd-col">
           {lead ? (
-            <article className="zd-card" aria-labelledby="move-1">
+            <Rise as="article" i={0} className="zd-card" aria-labelledby="move-1">
               <div className="zd-row">
                 <span className="zd-eyebrow">01</span>
                 <Initial name={lead.brand} />
@@ -164,7 +165,7 @@ export function TodayView() {
                   Brief a counter-ad
                 </button>
               </div>
-            </article>
+            </Rise>
           ) : (
             <div className="zd-empty">
               <h2 className="zd-h3">Collecting your rivals' ads</h2>
@@ -177,7 +178,7 @@ export function TodayView() {
           {rest.length ? (
             <div className="zd-grid-2">
               {rest.map((move, i) => (
-                <article key={`${move.pageId}-${move.kind}`} className="zd-card">
+                <Rise as="article" i={i + 1} key={`${move.pageId}-${move.kind}`} className="zd-card">
                   <div className="zd-row">
                     <span className="zd-eyebrow">0{i + 2}</span>
                     <Initial name={move.brand} />
@@ -196,7 +197,7 @@ export function TodayView() {
                   <Link href={`/today/brand/${move.pageId}`} style={{ marginTop: "auto", fontWeight: 600 }}>
                     See the evidence →
                   </Link>
-                </article>
+                </Rise>
               ))}
             </div>
           ) : null}
@@ -228,7 +229,7 @@ export function TodayView() {
                     <span style={{ marginLeft: "auto", fontFamily: "var(--zd-mono)" }}>{formatInt(rival.new7)}</span>
                   </span>
                   <span className="zd-bar" aria-hidden="true">
-                    <span style={{ width: `${Math.round((rival.new7 / maxNew) * 100)}%` }} />
+                    <GrowBar pct={Math.round((rival.new7 / maxNew) * 100)} delay={0.2} />
                   </span>
                 </Link>
               ))}
