@@ -120,3 +120,32 @@ export function topPatterns(decodes: Decoded[], perElement = 2): PatternCount[] 
   }
   return out;
 }
+
+
+/** Env values pasted as KEY="value" keep their quotes on some loaders. */
+export function cleanEnvValue(value: string | undefined | null): string {
+  const v = String(value ?? "").trim();
+  const m = /^(["'])(.*)\1$/.exec(v);
+  return (m ? m[2] : v).trim();
+}
+
+/** Hours before a failed decode is tried again. */
+export const DECODE_RETRY_HOURS = 6;
+
+/** True when an existing decode row means "leave this ad alone for now". */
+export function shouldSkipDecode(row: { status: string | null; decoded_at: string | null }, now: number = Date.now()): boolean {
+  if (row.status !== "failed") return true;
+  const at = row.decoded_at ? Date.parse(row.decoded_at) : NaN;
+  if (!Number.isFinite(at)) return false;
+  return now - at < DECODE_RETRY_HOURS * 3_600_000;
+}
+
+/** Timeouts and Google-side errors are worth one immediate retry. */
+export function isRetryableError(message: string): boolean {
+  return /abort|timeout|timed out|ECONNRESET|fetch failed|Gemini 5\d\d/i.test(message);
+}
+
+/** Errors caused by the key or model name, not by the ad. */
+export function isKeyError(message: string): boolean {
+  return /API key not valid|API_KEY_INVALID|PERMISSION_DENIED|Gemini 40[13]|Gemini 404|is not found for API version|models\/[^ ]+ is not found/i.test(message);
+}

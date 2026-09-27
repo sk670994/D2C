@@ -2,7 +2,7 @@ import "server-only";
 
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 
-import { decodePrompt, normalizeDecoded, parseModelJson, TAXONOMY_VERSION, type Decoded } from "./taxonomy";
+import { cleanEnvValue, decodePrompt, isKeyError, isRetryableError, normalizeDecoded, parseModelJson, shouldSkipDecode, TAXONOMY_VERSION, type Decoded } from "./taxonomy";
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -20,7 +20,7 @@ type CreativeForDecode = {
 };
 
 export function decodeModel(): string {
-  return (process.env.GEMINI_DECODE_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash").replace(/^models\//, "");
+  return (cleanEnvValue(process.env.GEMINI_DECODE_MODEL) || cleanEnvValue(process.env.GEMINI_MODEL) || "gemini-2.5-flash").replace(/^models\//, "");
 }
 
 async function fetchImage(url: string | null): Promise<{ mimeType: string; data: string } | null> {
@@ -61,7 +61,7 @@ export async function decodeCreative(ad: CreativeForDecode, apiKey: string): Pro
       contents: [{ role: "user", parts }],
       generationConfig: { temperature: 0.1, maxOutputTokens: 600, responseMimeType: "application/json" },
     }),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(60_000),
   });
   if (!response.ok) throw new Error(`Gemini ${response.status}: ${(await response.text().catch(() => "")).slice(0, 200)}`);
   const body = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
@@ -77,7 +77,7 @@ export async function decodeCreative(ad: CreativeForDecode, apiKey: string): Pro
  * Safe to run anywhere (worker, cron); needs GEMINI_API_KEY.
  */
 export async function decodePendingAds(options: { limit?: number; deadlineAt?: number } = {}): Promise<{ decoded: number; failed: number; skipped: string | null }> {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  const apiKey = cleanEnvValue(process.env.GEMINI_API_KEY);
   if (!apiKey) return { decoded: 0, failed: 0, skipped: "GEMINI_API_KEY not set" };
   const limit = Math.max(1, Math.min(options.limit ?? 20, 200));
   const client = createGlobalServiceClient();
@@ -95,9 +95,15 @@ export async function decodePendingAds(options: { limit?: number; deadlineAt?: n
     const rows = (data ?? []) as CreativeForDecode[];
     if (!rows.length) return;
     const ids = rows.map((r) => r.id);
-    const done = await client.from("ad_creative_decodes").select("creative_id").in("creative_id", ids);
+    const done = await client.from("ad_creative_decodes").select("creative_id,status,decoded_at").in("creative_id", ids);
     if (done.error) throw new Error(done.error.message);
-    const decoded = new Set((done.data ?? []).map((r) => String((r as { creative_id: unknown }).creative_id)));
+    // Done ads are skipped; failed ones come back after a cool-down.
+    const now = Date.now();
+    const decoded = new Set(
+      ((done.data ?? []) as Array<{ creative_id: unknown; status: string | null; decoded_at: string | null }>)
+        .filter((row) => shouldSkipDecode(row, now))
+        .map((row) => String(row.creative_id)),
+    );
     for (const row of rows) {
       if (!decoded.has(row.id) && !seen.has(row.id)) {
         seen.add(row.id);
@@ -136,7 +142,15 @@ export async function decodePendingAds(options: { limit?: number; deadlineAt?: n
   for (const ad of candidates.slice(0, limit)) {
     if (options.deadlineAt && Date.now() > options.deadlineAt) break;
     try {
-      const elements = await decodeCreative(ad, apiKey);
+      let elements: Decoded;
+      try {
+        elements = await decodeCreative(ad, apiKey);
+      } catch (first) {
+        // One quick retry for timeouts and Google-side 5xx.
+        if (!isRetryableError(first instanceof Error ? first.message : String(first))) throw first;
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        elements = await decodeCreative(ad, apiKey);
+      }
       const { error } = await client.from("ad_creative_decodes").upsert({
         creative_id: ad.id,
         advertiser_id: ad.advertiser_id,
@@ -150,8 +164,10 @@ export async function decodePendingAds(options: { limit?: number; deadlineAt?: n
       if (error) throw new Error(error.message);
       decoded += 1;
     } catch (error) {
-      failed += 1;
       const message = error instanceof Error ? error.message : String(error);
+      // A bad key or model is not the ad's fault: record nothing, stop, say why.
+      if (isKeyError(message)) return { decoded, failed, skipped: `Gemini rejected the key or model: ${message.slice(0, 160)}` };
+      failed += 1;
       // Rate limits: stop this batch and try again next run.
       if (/Gemini 429|RESOURCE_EXHAUSTED/i.test(message)) break;
       await client.from("ad_creative_decodes").upsert({

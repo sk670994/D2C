@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { decodePrompt, normalizeDecoded, parseModelJson, topPatterns, valueLabel } from "./taxonomy";
+import { cleanEnvValue, decodePrompt, isKeyError, isRetryableError, normalizeDecoded, parseModelJson, shouldSkipDecode, topPatterns, valueLabel } from "./taxonomy";
 
 describe("normalizeDecoded", () => {
   it("keeps only values from the taxonomy", () => {
@@ -60,5 +60,32 @@ describe("patterns", () => {
     const p = decodePrompt({ advertiser: "Mamaearth", headline: "Up to 35% OFF", copy: null, cta: "Shop now", format: "video" });
     expect(p.includes("hookType: one of offer")).toBe(true);
     expect(p.includes("Headline: Up to 35% OFF")).toBe(true);
+  });
+});
+
+describe("decode housekeeping", () => {
+  it("strips quotes pasted around env values", () => {
+    expect(cleanEnvValue('"AIzaKey"')).toBe("AIzaKey");
+    expect(cleanEnvValue(" 'gemini-2.5-flash' ")).toBe("gemini-2.5-flash");
+    expect(cleanEnvValue("plain")).toBe("plain");
+    expect(cleanEnvValue(undefined)).toBe("");
+    expect(cleanEnvValue('"half')).toBe('"half');
+  });
+
+  it("retries failed decodes after the cool-down, never done ones", () => {
+    const now = Date.parse("2026-09-27T12:00:00Z");
+    expect(shouldSkipDecode({ status: "done", decoded_at: "2026-01-01T00:00:00Z" }, now)).toBe(true);
+    expect(shouldSkipDecode({ status: "failed", decoded_at: "2026-09-27T10:00:00Z" }, now)).toBe(true);
+    expect(shouldSkipDecode({ status: "failed", decoded_at: "2026-09-27T05:00:00Z" }, now)).toBe(false);
+    expect(shouldSkipDecode({ status: "failed", decoded_at: null }, now)).toBe(false);
+  });
+
+  it("tells key problems from ad problems", () => {
+    expect(isKeyError('Gemini 400: {"error":{"message":"API key not valid. Please pass a valid API key."}}')).toBe(true);
+    expect(isKeyError("Gemini 404: models/gemini-9 is not found for API version v1beta")).toBe(true);
+    expect(isKeyError("Model did not return JSON.")).toBe(false);
+    expect(isRetryableError("The operation was aborted due to timeout")).toBe(true);
+    expect(isRetryableError("Gemini 503: overloaded")).toBe(true);
+    expect(isRetryableError("Gemini 400: bad image")).toBe(false);
   });
 });

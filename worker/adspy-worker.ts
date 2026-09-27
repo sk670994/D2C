@@ -277,7 +277,11 @@ async function decodeWhileIdle() {
   lastDecode = Date.now();
   try {
     const result = await decodePendingAds({ limit: 10, deadlineAt: Date.now() + 45_000 });
-    if (result.decoded || result.failed) log("info", "ads_decoded", result);
+    if (result.skipped && /rejected the key/.test(result.skipped)) {
+      // Wrong key or model in worker\.env: say so loudly, check again in 10 minutes.
+      log("error", "decode_key_rejected", { hint: "Check GEMINI_API_KEY / GEMINI_DECODE_MODEL in worker\\.env (no quotes), then restart.", detail: result.skipped });
+      lastDecode = Date.now() + 9 * 60_000;
+    } else if (result.decoded || result.failed) log("info", "ads_decoded", result);
   } catch (error) {
     log("warn", "decode_failed", { error: error instanceof Error ? error.message : String(error) });
   }
