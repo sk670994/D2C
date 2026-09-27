@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { SiteTopBar } from "@/components/brand/SiteTopBar";
+import { FAQ } from "@/components/marketing/faq";
 
 export const metadata: Metadata = {
   title: "FAQ — how Zooptrack and AdSpy work",
@@ -7,24 +8,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "/faq" },
 };
 
-const faqs = [
-  {
-    q: "What does Zooptrack do?",
-    a: "Zooptrack helps DTC teams model unit economics, track performance, and decide when to scale."
-  },
-  {
-    q: "Is my data safe?",
-    a: "We store workspace data securely and follow privacy controls described in the Privacy Policy."
-  },
-  {
-    q: "Do you offer team access?",
-    a: "Yes. Team workspaces are available on paid plans."
-  },
-  {
-    q: "Can I cancel anytime?",
-    a: "Yes. You can cancel from your account settings and retain access until the billing period ends."
-  }
-];
+const faqs = FAQ;
 
 export default function FaqPage() {
   return (

@@ -14,20 +14,20 @@ export default function ContactPage() {
       <header className="policy-hero">
         <p className="eyebrow">Support</p>
         <h1>Contact Us</h1>
-        <p className="muted-text">We respond within 1 business day.</p>
+        <p className="muted-text">Write to hello.zooptrack@gmail.com. We reply within 1 business day.</p>
       </header>
       <section className="policy-grid">
         <article className="policy-card">
           <h3>General Support</h3>
-          <p className="muted-text">Email: support@yourcompany.com</p>
+          <p className="muted-text">Email: hello.zooptrack@gmail.com</p>
         </article>
         <article className="policy-card">
           <h3>Sales</h3>
-          <p className="muted-text">Email: sales@yourcompany.com</p>
+          <p className="muted-text">Email: hello.zooptrack@gmail.com</p>
         </article>
         <article className="policy-card">
           <h3>Security</h3>
-          <p className="muted-text">Email: security@yourcompany.com</p>
+          <p className="muted-text">Email: hello.zooptrack@gmail.com</p>
         </article>
       </section>
     </main>

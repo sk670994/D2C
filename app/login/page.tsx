@@ -26,12 +26,12 @@ export default async function LoginPage({
       <div className="auth-shell">
         <div className="auth-hero">
           <BrandLogo href="/" />
-          <h1 className="auth-title">See the diagnosis, then decide.</h1>
-          <p className="auth-lead">True contribution after COD and returns, competitor creatives, and ZWIRK on what to do next.</p>
+          <h1 className="auth-title">Know what your rivals ran this week.</h1>
+          <p className="auth-lead">Start a 7-day free trial. No card, no ad-account access needed.</p>
           <ul className="auth-points">
-            <li>Command Center opens on attention, not an empty dashboard.</li>
-            <li>Paste a product URL to read the market.</li>
-            <li>Recommendations carry evidence and rupee impact.</li>
+            <li>Pick up to 5 rivals; their first ads load right away.</li>
+            <li>Today shows what changed, with the ads as evidence.</li>
+            <li>A Monday email sums up the week in two minutes.</li>
           </ul>
         </div>
         <Card className="auth-card">

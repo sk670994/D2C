@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export function EmailAuthForm({ nextPath = "/dashboard" }: { nextPath?: string }) {
+export function EmailAuthForm({ nextPath = "/today" }: { nextPath?: string }) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
@@ -33,10 +33,12 @@ export function EmailAuthForm({ nextPath = "/dashboard" }: { nextPath?: string }
         return;
       }
 
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
+          // The confirmation link lands straight in the app (Today), not back on login.
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
           data: {
             full_name: fullName.trim(),
             phone: phone.trim()
@@ -44,7 +46,13 @@ export function EmailAuthForm({ nextPath = "/dashboard" }: { nextPath?: string }
         }
       });
       if (error) throw error;
-      setMessage("Sign-up successful. Check your email for verification if required, then sign in.");
+      if (data.session) {
+        // Email confirmation is off: they are signed in, go straight to the app.
+        router.push(nextPath);
+        router.refresh();
+        return;
+      }
+      setMessage(`Almost there: we sent a confirmation link to ${email}. Open it to start your 7-day free trial. (Check spam if it is not there in a minute.)`);
       setMode("signin");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Authentication failed");

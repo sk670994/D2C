@@ -2,11 +2,7 @@ import "@/components/today/today.css";
 
 import { ZwirkDock } from "@/components/zwirk/ZwirkDock";
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function BrandVaultLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       {children}

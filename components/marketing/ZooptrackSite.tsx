@@ -5,6 +5,7 @@ import { motion, useScroll, useSpring, useTransform } from "framer-motion";
 import { useRef, type ReactNode } from "react";
 import styles from "./ZooptrackSite.module.css";
 import { ZooptrackLogo } from "@/components/brand/ZooptrackLogo";
+import { FAQ } from "./faq";
 import { ProductStory } from "./ProductStory";
 import { formatInr, PLANS, TRIAL_DAYS } from "@/lib/billing/plans";
 
@@ -13,7 +14,7 @@ type Scene = "home" | "radar" | "conveyor" | "ledger" | "unfold" | "cockpit" | "
 const nav = [
   ["AdSpy", "/adspy"],
   ["Brand ads", "/brand"],
-  ["Decision Loop", "/decision-loop"],
+  ["How it works", "/decision-loop"],
   ["Pricing", "/pricing"],
   ["FAQ", "/faq"],
 ] as const;
@@ -40,7 +41,7 @@ function SceneSVG({ scene }: { scene: Scene }) {
   }
 
   if (scene === "conveyor") {
-    const stations = ["MARKET", "ADS", "ECONOMICS", "DIAGNOSIS", "ACTION"];
+    const stations = ["RIVALS", "ADS", "CHECK", "DECODE", "BRIEF"];
     return (
       <svg className={styles.sceneSvg} viewBox="0 0 900 440" aria-hidden>
         <path className={styles.conveyorLine} d="M70 330 C230 150 320 150 450 270 S690 350 830 130" />
@@ -184,7 +185,7 @@ function Shell({ children, scene, eyebrow, title, copy, actions }: {
         <nav>
           {nav.map(([label, href]) => <Link key={href} href={href}>{label}</Link>)}
         </nav>
-        <Link className={styles.navCta} href="/login">Start free</Link>
+        <Link className={styles.navCta} href="/login">Start free trial</Link>
       </header>
 
       <section className={styles.hero}>
@@ -210,37 +211,48 @@ export function ZooptrackHome() {
   return (
     <Shell
       scene="home"
-      eyebrow="D2C GROWTH INTELLIGENCE / LIVE SYSTEM"
-      title={<>Know what makes money.<br /><em>Know what to do next.</em></>}
-      copy="Zooptrack connects your economics, market signals and competitor creatives into one decision loop — so growth decisions come with evidence."
-      actions={<><Button href="/login">Enter the command center</Button><Button href="/brand" secondary>See competitor ads free</Button></>}
+      eyebrow="COMPETITOR AD INTELLIGENCE / INDIAN D2C"
+      title={<>See every ad your rivals run.<br /><em>Know your next move by Monday.</em></>}
+      copy="Zooptrack reads your competitors' live Facebook and Instagram ads every night, checks its count against Meta's own, and tells you what changed: big pushes, new offers and the ads they keep paying for."
+      actions={<><Button href="/login">Start 7-day free trial</Button><Button href="/brand" secondary>See any brand&apos;s ads free</Button></>}
     >
-      <section className={styles.brief}>
-        <div><span className={styles.kicker}>LIVE BRIEF / 09:42</span><strong>ATTENTION 01</strong><p>CAC is drifting above the allowable guardrail.</p><small>Meta prospecting / estimated leakage ₹18.4k weekly</small></div>
+      <section className={styles.brief} aria-label="Example Monday brief">
+        <div>
+          <span className={styles.kicker}>EXAMPLE / MONDAY BRIEF</span>
+          <strong>BIG PUSH</strong>
+          <p>Glowleaf launched 38 ads in 7 days, most on a Buy 1 Get 1 offer.</p>
+          <small>What to do: answer with a bundle, not a discount. (Made-up brand; your brief uses your real rivals.)</small>
+        </div>
         <div className={styles.metricGrid}>
-          <Metric label="NET CONTRIBUTION" value="₹63,240" />
-          <Metric label="TRUE ROAS" value="2.7x" />
-          <Metric label="PROFITABLE REVENUE" value="+14%" />
-          <Metric label="CAC / GUARDRAIL" value="+33%" accent />
+          <Metric label="RIVALS WATCHED" value="5" />
+          <Metric label="NEW ADS THIS WEEK" value="61" />
+          <Metric label="LONGEST-RUNNING AD" value="64 days" />
+          <Metric label="COVERAGE VS META" value="97%" accent />
         </div>
       </section>
 
       <ProductStory />
 
       <section className={styles.narrative}>
-        <SectionHeader kicker="THE DECISION LOOP" title="One system. Five transformations." copy="Zooptrack moves from signal to diagnosis to action — not from dashboard to dashboard." />
+        <SectionHeader kicker="WHAT YOU GET" title="Five answers, every week." copy="From your rivals' ad libraries to one clear move, with the ads that prove it." />
         <div className={styles.nodeGrid}>
-          {["01 MARKET","02 ADS","03 ECONOMICS","04 DIAGNOSIS","05 ACTION"].map((x, i) => (
-            <motion.div key={x} className={styles.nodeCard} whileHover={{ y: -8, rotateX: 5 }}>
-              <span>{x.slice(0,2)}</span><strong>{x.slice(3)}</strong><small>{["see the opening","see what they test","know the actual margin","find the leak","run the next move"][i]}</small>
+          {[
+            ["01", "LAUNCHES", "who pushed hardest this week"],
+            ["02", "OFFERS", "what they discount and bundle"],
+            ["03", "WINNERS", "ads they keep paying for"],
+            ["04", "HOOKS", "what they say first, decoded by AI"],
+            ["05", "YOUR MOVE", "a counter-ad brief in one click"],
+          ].map(([n, t, c]) => (
+            <motion.div key={n} className={styles.nodeCard} whileHover={{ y: -8, rotateX: 5 }}>
+              <span>{n}</span><strong>{t}</strong><small>{c}</small>
             </motion.div>
           ))}
         </div>
       </section>
 
       <section className={styles.darkSection}>
-        <div><span className={styles.kicker}>WHY ZOOPTRACK</span><h2>Stop opening eleven dashboards to make one decision.</h2></div>
-        <div className={styles.statement}>DATA <b>→</b> DIAGNOSIS <b>→</b> RECOMMENDATION <b>→</b> ACTION</div>
+        <div><span className={styles.kicker}>WHY ZOOPTRACK</span><h2>Stop scrolling the Ad Library by hand.</h2></div>
+        <div className={styles.statement}>META AD LIBRARY <b>→</b> EVERY AD, CHECKED <b>→</b> WHAT CHANGED <b>→</b> YOUR MOVE</div>
       </section>
     </Shell>
   );
@@ -250,21 +262,21 @@ export function ZooptrackDecisionLoop() {
   return (
     <Shell
       scene="conveyor"
-      eyebrow="THE DECISION LOOP"
-      title={<>From market noise<br /><em>to the next move.</em></>}
-      copy="A visual operating model for D2C growth: every signal becomes evidence, every diagnosis carries a why, and every action can be measured."
-      actions={<Button href="/login">Open Command Center</Button>}
+      eyebrow="HOW IT WORKS"
+      title={<>From a rival&apos;s ad library<br /><em>to your next move.</em></>}
+      copy="Five steps run for you every night. You read the result in two minutes on Monday morning."
+      actions={<Button href="/login">Start 7-day free trial</Button>}
     >
       <section className={styles.narrative}>
-        <SectionHeader kicker="FIVE STATIONS" title="Watch the signal transform." />
+        <SectionHeader kicker="FIVE STEPS" title="What happens between Meta and your inbox." />
         <Scene scene="conveyor" />
         <div className={styles.stationRows}>
           {[
-            ["01","MARKET","External signals, category movement and competitor context."],
-            ["02","ADS","Creative angles, hooks, offers, formats and patterns."],
-            ["03","ECONOMICS","Contribution after COGS, COD, RTO, shipping and fees."],
-            ["04","DIAGNOSIS","The constraint, with evidence and expected rupee impact."],
-            ["05","ACTION","A prioritized experiment or intervention to run next."],
+            ["01","RIVALS","You pick the brands you lose sales to. We lock each one to its exact Meta page, so lookalike pages never mix in."],
+            ["02","ADS","Every night we read every ad they run on Facebook and Instagram in India, live and stopped."],
+            ["03","CHECK","We compare our count with Meta's own total and show you the coverage, so you know how complete the data is."],
+            ["04","DECODE","AI reads each ad: hook, offer, format, language and angle. Days live show which ads they keep paying for."],
+            ["05","BRIEF","Today and the Monday email tell you what changed and what to do, with the ads as evidence. One click writes a counter-ad brief."],
           ].map(([n,t,c]) => <article key={n}><span>{n}</span><div><h3>{t}</h3><p>{c}</p></div></article>)}
         </div>
       </section>
@@ -276,8 +288,8 @@ export function ZooptrackPricing() {
   return (
     <Shell
       scene="ledger"
-      eyebrow="PRICING / DECISION CAPACITY"
-      title={<>Price the<br /><em>decision loop.</em></>}
+      eyebrow="PRICING"
+      title={<>Simple plans.<br /><em>Cancel any time.</em></>}
       copy="Start with a 7-day free trial. Plans differ by how many rivals you watch and whether you get big-move alerts."
     >
       <section className={styles.pricingWrap}>
@@ -299,18 +311,13 @@ export function ZooptrackPricing() {
 }
 
 export function ZooptrackFaq() {
-  const items = [
-    ["Do you replace Shopify or Ads Manager?","No. Zooptrack sits above those systems and turns their signals into one decision: pause, test or scale."],
-    ["Will ZWIRK invent my profit?","No. Dashboard facts remain facts; observations remain observations; assumptions are labeled."],
-    ["How fast is the first diagnosis?","The Command Center starts with usable economics and attention signals rather than an empty dashboard."],
-    ["Is this built for Indian D2C?","Yes. COD, RTO, shipping, GST-aware selling price and INR are first-class concepts."],
-  ];
+  const items = FAQ.map((f) => [f.q, f.a] as const);
   return (
     <Shell
       scene="unfold"
-      eyebrow="SUPPORT / FAQ"
-      title={<>Every answer,<br /><em>one unfold away.</em></>}
-      copy="A spatial FAQ that behaves like the rest of the product: concise, tactile and easy to scan."
+      eyebrow="FAQ"
+      title={<>Straight<br /><em>answers.</em></>}
+      copy="Where the data comes from, what it costs, and what we never guess."
     >
       <section className={styles.faqWrap}>
         {items.map(([q,a], i) => (
