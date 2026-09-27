@@ -1891,6 +1891,27 @@ function AdRow({
 }) {
   const [ads, setAds] = useState<Ad[] | null>(null);
   const rowRef = useRef<HTMLDivElement | null>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+
+  // Arrows follow the scroll position: disabled at each end, hidden when it all fits.
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    const update = () => {
+      const max = row.scrollWidth - row.clientWidth;
+      setEdges({ left: row.scrollLeft > 4, right: row.scrollLeft < max - 4 });
+    };
+    update();
+    row.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
+    observer?.observe(row);
+    return () => {
+      row.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+      observer?.disconnect();
+    };
+  }, [ads]);
 
   useEffect(() => {
     let alive = true;
@@ -1914,14 +1935,16 @@ function AdRow({
           <h2>{title}</h2>
           <p>{subtitle}</p>
         </div>
-        <div className="azs-rownav">
-          <button type="button" aria-label="Scroll left" onClick={() => scroll(-1)}>
-            <ChevronLeft size={18} />
-          </button>
-          <button type="button" aria-label="Scroll right" onClick={() => scroll(1)}>
-            <ChevronRight size={18} />
-          </button>
-        </div>
+        {edges.left || edges.right ? (
+          <div className="azs-rownav">
+            <button type="button" aria-label={`Previous ${title} ads`} onClick={() => scroll(-1)} disabled={!edges.left}>
+              <ChevronLeft size={18} />
+            </button>
+            <button type="button" aria-label={`More ${title} ads`} onClick={() => scroll(1)} disabled={!edges.right}>
+              <ChevronRight size={18} />
+            </button>
+          </div>
+        ) : null}
       </div>
       <div className="azs-row" ref={rowRef}>
         {ads === null
