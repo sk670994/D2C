@@ -27,7 +27,12 @@ Get-Content $envFile | ForEach-Object {
   $line = $_.Trim()
   if ($line -and -not $line.StartsWith("#") -and $line.Contains("=")) {
     $name, $value = $line.Split("=", 2)
-    [Environment]::SetEnvironmentVariable($name.Trim(), $value.Trim(), "Process")
+    $value = $value.Trim()
+    # KEY="value" or KEY='value': drop the quotes, they are not part of the value.
+    if ($value.Length -ge 2 -and (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'")))) {
+      $value = $value.Substring(1, $value.Length - 2)
+    }
+    [Environment]::SetEnvironmentVariable($name.Trim(), $value, "Process")
   }
 }
 if (-not $env:SUPABASE_SERVICE_ROLE_KEY) {
