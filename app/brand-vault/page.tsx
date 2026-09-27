@@ -123,8 +123,9 @@ export default function BrandVaultPage() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
-  const load = useCallback(async (nextPeriod: BrandVaultPeriod) => {
-    setLoading(true);
+  const load = useCallback(async (nextPeriod: BrandVaultPeriod, silent = false) => {
+    // Background refreshes keep the page on screen instead of flashing "Updating…".
+    if (!silent) setLoading(true);
     setError("");
     try {
       const response = await fetch(`/api/brand-vault/pro?period=${nextPeriod}`, { cache: "no-store" });
@@ -132,9 +133,9 @@ export default function BrandVaultPage() {
       if (!response.ok || !body.success) throw new Error(body.error || "Unable to load Brand Vault Pro.");
       setData(normalizeResponse(body as BrandVaultProData));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to load Brand Vault Pro.");
+      if (!silent) setError(e instanceof Error ? e.message : "Unable to load Brand Vault Pro.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -147,7 +148,13 @@ export default function BrandVaultPage() {
   useEffect(() => {
     const collecting = analytics.competitors.some((item) => item.collectionState === "collecting");
     if (!collecting) return;
-    const timer = window.setInterval(() => { void load(period); }, 15_000);
+    // Quietly re-check while a rival is collecting; give up after ~10 minutes.
+    let polls = 0;
+    const timer = window.setInterval(() => {
+      polls += 1;
+      if (polls > 20) return window.clearInterval(timer);
+      void load(period, true);
+    }, 30_000);
     return () => window.clearInterval(timer);
   }, [analytics.competitors, load, period]);
 
