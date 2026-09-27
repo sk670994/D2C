@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SiteTopBar } from "@/components/brand/SiteTopBar";
 
 export const metadata: Metadata = {
   title: "Contact the Zooptrack team",
@@ -9,6 +10,7 @@ export const metadata: Metadata = {
 export default function ContactPage() {
   return (
     <main className="main policy-page contact-page">
+      <SiteTopBar />
       <header className="policy-hero">
         <p className="eyebrow">Support</p>
         <h1>Contact Us</h1>

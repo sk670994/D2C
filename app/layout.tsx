@@ -1,4 +1,5 @@
 import "./globals.css";
+import { ZooptrackLogo } from "@/components/brand/ZooptrackLogo";
 import type { Metadata } from "next";
 import { Plus_Jakarta_Sans } from "next/font/google";
 
@@ -43,7 +44,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <footer className="site-footer-global">
           <div className="site-footer-inner">
             <div className="footer-brand">
-              <p className="eyebrow">Zooptrack</p>
+              <ZooptrackLogo height={30} tone="blue" />
               <h3>Profit-aware growth intelligence for Indian D2C.</h3>
               <p className="muted-text">Know what makes money. Know what the market is doing. Know what to do next.</p>
             </div>

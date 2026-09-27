@@ -75,7 +75,7 @@ export function BillingView() {
           name: "Zooptrack",
           description: `${plan.name} plan · ${inr(plan.priceInr)} / month`,
           prefill: body.email ? { email: body.email } : undefined,
-          theme: { color: "#1D44B8" },
+          theme: { color: "#0255B1" },
           handler: async (payment: RazorpayResponse) => {
             const verify = await fetch("/api/billing/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payment) });
             const result = (await verify.json().catch(() => ({}))) as { success?: boolean; error?: string };

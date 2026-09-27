@@ -41,7 +41,7 @@ export function renderReportEmail(input: ReportInput): string {
 <div style="margin:8px 0 6px;font:400 22px/1.25 Georgia,'Times New Roman',serif;color:#15171C;">${escapeHtml(m.title)}</div>
 <div style="font:400 15px/1.6 Arial,Helvetica,sans-serif;color:#3A3E49;">${escapeHtml(m.detail)}</div>
 <div style="margin-top:8px;font:400 15px/1.6 Arial,Helvetica,sans-serif;color:#15171C;"><strong>What to do:</strong> ${escapeHtml(m.action)}</div>
-<div style="margin-top:10px;"><a href="${escapeHtml(`${app}/today/brand/${m.pageId}`)}" style="font:600 15px Arial,Helvetica,sans-serif;color:#1D44B8;text-decoration:none;">See the evidence →</a></div>
+<div style="margin-top:10px;"><a href="${escapeHtml(`${app}/today/brand/${m.pageId}`)}" style="font:600 15px Arial,Helvetica,sans-serif;color:#0255B1;text-decoration:none;">See the evidence →</a></div>
 </td></tr>`,
     )
     .join("");
@@ -50,7 +50,7 @@ export function renderReportEmail(input: ReportInput): string {
     .map(
       (r) => `
 <tr><td style="padding:4px 0;font:400 14px Arial,Helvetica,sans-serif;color:#15171C;width:140px;">${escapeHtml(r.name)}</td>
-<td style="padding:4px 12px;"><div style="height:8px;border-radius:8px;background:#ECE8DF;"><div style="height:8px;border-radius:8px;background:#1D44B8;width:${Math.round((r.new7 / maxNew) * 100)}%;"></div></div></td>
+<td style="padding:4px 12px;"><div style="height:8px;border-radius:8px;background:#ECE8DF;"><div style="height:8px;border-radius:8px;background:#0255B1;width:${Math.round((r.new7 / maxNew) * 100)}%;"></div></div></td>
 <td style="padding:4px 0;font:400 13px Menlo,monospace;color:#15171C;text-align:right;width:40px;">${r.new7}</td></tr>`,
     )
     .join("");
@@ -60,14 +60,14 @@ export function renderReportEmail(input: ReportInput): string {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#FFFFFF;border-radius:14px;overflow:hidden;">
 <tr><td style="padding:28px 32px;background:#15171C;color:#F4F2EC;">
-<div style="font:600 20px Georgia,serif;">Zooptrack <span style="float:right;font:400 12px Menlo,monospace;letter-spacing:.08em;text-transform:uppercase;color:#C9C6BD;">${escapeHtml(input.dateLabel)}</span></div>
+<div style="font:600 20px Georgia,serif;"><img src="${escapeHtml(`${app}/brand/zooptrack-logo-white.png`)}" width="112" height="32" alt="Zooptrack" style="display:inline-block;height:32px;width:auto;border:0;vertical-align:middle;"><span style="float:right;font:400 12px Menlo,monospace;letter-spacing:.08em;text-transform:uppercase;color:#C9C6BD;">${escapeHtml(input.dateLabel)}</span></div>
 <div style="margin-top:14px;font:400 30px/1.15 Georgia,'Times New Roman',serif;">${escapeHtml(input.headline)}</div>
 <div style="margin-top:8px;font:400 15px/1.5 Arial,Helvetica,sans-serif;color:#C9C6BD;">${input.moves.length} ${input.moves.length === 1 ? "move" : "moves"} from your rivals this week.</div>
 </td></tr>
 ${moves || `<tr><td style="padding:24px 32px;font:400 15px Arial,sans-serif;color:#3A3E49;">No rival moves yet. Add rivals in Zooptrack to start your report.</td></tr>`}
 ${bars ? `<tr><td style="padding:24px 32px;"><div style="font:600 12px Menlo,monospace;letter-spacing:.08em;text-transform:uppercase;color:#5B6070;margin-bottom:8px;">New ads last 7 days</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${bars}</table></td></tr>` : ""}
-<tr><td style="padding:8px 32px 32px;"><a href="${escapeHtml(`${app}/today`)}" style="display:inline-block;padding:14px 22px;border-radius:10px;background:#1D44B8;color:#FFFFFF;font:600 15px Arial,Helvetica,sans-serif;text-decoration:none;">Open this week in Zooptrack</a></td></tr>
+<tr><td style="padding:8px 32px 32px;"><a href="${escapeHtml(`${app}/today`)}" style="display:inline-block;padding:14px 22px;border-radius:10px;background:#0255B1;color:#FFFFFF;font:600 15px Arial,Helvetica,sans-serif;text-decoration:none;">Open this week in Zooptrack</a></td></tr>
 </table>
-<div style="max-width:600px;padding:14px 8px;font:400 12px/1.6 Arial,sans-serif;color:#5B6070;">Counts come from Zooptrack's read of the public Meta Ad Library. Spend and reach are not published by Meta, so they are never estimated. <a href="${escapeHtml(`${app}/today`)}" style="color:#1D44B8;">Change what you get</a></div>
+<div style="max-width:600px;padding:14px 8px;font:400 12px/1.6 Arial,sans-serif;color:#5B6070;">Counts come from Zooptrack's read of the public Meta Ad Library. Spend and reach are not published by Meta, so they are never estimated. <a href="${escapeHtml(`${app}/today`)}" style="color:#0255B1;">Change what you get</a></div>
 </td></tr></table></body></html>`;
 }

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SiteTopBar } from "@/components/brand/SiteTopBar";
 
 export const metadata: Metadata = {
   title: "Terms of service",
@@ -47,6 +48,7 @@ const sections = [
 export default function TermsPage() {
   return (
     <main className="main policy-page terms-page">
+      <SiteTopBar />
       <header className="policy-hero">
         <p className="eyebrow">Legal</p>
         <h1>Terms and Conditions</h1>

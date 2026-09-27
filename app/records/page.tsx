@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SiteTopBar } from "@/components/brand/SiteTopBar";
 
 type MonthlyRecord = {
   id: string;
@@ -172,6 +173,7 @@ export default function RecordsPage() {
 
   return (
     <main className="main records-page">
+      <SiteTopBar />
       <div className="section-head">
         <h2>Monthly Records Vault</h2>
         <p className="muted-text">Full archive of unit economics, ad metrics, scale planner, and P&L snapshots.</p>

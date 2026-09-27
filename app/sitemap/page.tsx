@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SiteTopBar } from "@/components/brand/SiteTopBar";
 
 export const metadata: Metadata = {
   title: "Sitemap",
@@ -25,6 +26,7 @@ const links = [
 export default function SitemapPage() {
   return (
     <main className="main policy-page sitemap-page">
+      <SiteTopBar />
       <header className="policy-hero">
         <p className="eyebrow">
           Navigation

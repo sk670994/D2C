@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SiteTopBar } from "@/components/brand/SiteTopBar";
 
 export const metadata: Metadata = {
   title: "Cookie policy",
@@ -24,6 +25,7 @@ const sections = [
 export default function CookiesPage() {
   return (
     <main className="main policy-page cookies-page">
+      <SiteTopBar />
       <header className="policy-hero">
         <p className="eyebrow">Legal</p>
         <h1>Cookie Policies</h1>

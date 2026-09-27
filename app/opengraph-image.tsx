@@ -10,7 +10,7 @@ export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
 export default async function OpengraphImage() {
-  const logo = await readFile(join(process.cwd(), "public/zooptrack-logo.png"));
+  const logo = await readFile(join(process.cwd(), "public/brand/zooptrack-logo.png"));
   const logoSrc = `data:image/png;base64,${logo.toString("base64")}`;
 
   return new ImageResponse(
@@ -27,7 +27,7 @@ export default async function OpengraphImage() {
           color: "#1d2a2e",
         }}
       >
-        <img src={logoSrc} alt="" width={330} height={180} style={{ objectFit: "contain", marginLeft: -24, marginTop: -40 }} />
+        <img src={logoSrc} alt="" width={316} height={90} style={{ objectFit: "contain" }} />
         <div style={{ display: "flex", flexDirection: "column" }}>
           <div style={{ fontSize: 68, fontWeight: 800, lineHeight: 1.05, letterSpacing: -2 }}>See every D2C brand&apos;s ads.</div>
           <div style={{ fontSize: 68, fontWeight: 800, lineHeight: 1.05, letterSpacing: -2, color: "#0255b1" }}>Know what to do next.</div>

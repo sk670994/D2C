@@ -5,6 +5,8 @@ import { BookOpen, CalendarClock, CreditCard, LayoutDashboard, Mail, Search, Spa
 import { SignOutButton } from "@/components/auth/SignOutButton";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 
+import { ZooptrackLogo } from "@/components/brand/ZooptrackLogo";
+
 import { CommandBar } from "./CommandBar";
 
 type NavKey = "today" | "adspy" | "vault" | "report" | "zwirk" | "profit" | "billing";
@@ -24,8 +26,8 @@ export function TodayShell({ active, email, children }: { active: NavKey; email?
   return (
     <div className="zd">
       <nav className="zd-rail" aria-label="Product">
-        <Link href="/today" className="zd-logo">
-          Zooptrack
+        <Link href="/today" className="zd-logo" aria-label="Zooptrack, go to Today">
+          <ZooptrackLogo height={30} priority />
         </Link>
         <CommandBar />
         <div className="zd-nav">
