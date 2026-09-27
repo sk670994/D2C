@@ -111,3 +111,22 @@ powershell -ExecutionPolicy Bypass -File worker\start-worker.ps1
 The script loads `worker\.env`, installs Chromium once, keeps the PC awake,
 and restarts the worker if it exits. Set `ADSPY_COLLECTOR=worker` in Vercel
 while it runs; collections wait in the queue whenever the PC is off.
+
+## Run it 24/7 on a cloud server (recommended once you have customers)
+
+Your PC works while it is on. For customers, run the same worker on a small server:
+
+1. Rent an Ubuntu server with 2 vCPU / 4 GB RAM (Mumbai or Singapore region).
+2. Buy a residential or ISP proxy in India (Meta blocks datacenter IPs faster).
+3. On the server:
+   ```bash
+   git clone https://github.com/sk670994/D2C.git && cd D2C
+   bash worker/setup-vps.sh
+   nano worker/.env          # service key, GEMINI_API_KEY, ADSPY_PROXY_URL (no quotes)
+   sudo docker compose -f worker/docker-compose.yml up -d --build
+   curl -s localhost:8787/healthz
+   ```
+4. Stop the PC worker (Ctrl+C) so only one collector runs.
+
+It restarts itself after crashes and reboots, updates itself daily from `main`,
+and the ops-health check emails you if it ever stops.

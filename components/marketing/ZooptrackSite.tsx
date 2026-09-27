@@ -5,6 +5,7 @@ import { motion, useScroll, useSpring, useTransform } from "framer-motion";
 import { useRef, type ReactNode } from "react";
 import styles from "./ZooptrackSite.module.css";
 import { ProductStory } from "./ProductStory";
+import { formatInr, PLANS, TRIAL_DAYS } from "@/lib/billing/plans";
 
 type Scene = "home" | "radar" | "conveyor" | "ledger" | "unfold" | "cockpit" | "archive";
 
@@ -281,21 +282,21 @@ export function ZooptrackPricing() {
       scene="ledger"
       eyebrow="PRICING / DECISION CAPACITY"
       title={<>Price the<br /><em>decision loop.</em></>}
-      copy="Plans unlock more history, tracked competitors, ZWIRK and alerts — not a pile of extra dashboards."
+      copy="Start with a 7-day free trial. Plans differ by how many rivals you watch and whether you get big-move alerts."
     >
       <section className={styles.pricingWrap}>
-        {[
-          ["FREE","₹0","One brand","Daily attention brief","Limited ZWIRK"],
-          ["STARTER","₹999","Product URL → market search","WhatsApp-ready brief","Basic experiments"],
-          ["GROWTH","₹2,499","Tracked competitors","Full ZWIRK","True ROAS vs platform ROAS"],
-          ["PRO","₹4,999","Historical intelligence","Team workspace","Alerts on CAC, RTO and leaks"],
-        ].map(([name, price, a, b, c], i) => (
-          <motion.article key={name} className={`${styles.priceCard} ${i === 2 ? styles.featured : ""}`} whileHover={{ y: -14, rotateX: 6 }}>
-            <span>{name}</span><strong>{price}</strong><small>/ month</small>
-            <div><p>✓ {a}</p><p>✓ {b}</p><p>✓ {c}</p></div>
-            <Button href="/login" secondary={i !== 2}>{i === 2 ? "Start 14-day trial" : "Get started"}</Button>
-          </motion.article>
-        ))}
+        {(["trial", "starter", "growth", "agency"] as const).map((key, i) => {
+          const plan = PLANS[key];
+          return (
+            <motion.article key={key} className={`${styles.priceCard} ${key === "growth" ? styles.featured : ""}`} whileHover={{ y: -14, rotateX: 6 }}>
+              <span>{plan.name.toUpperCase()}</span>
+              <strong>{key === "trial" ? "₹0" : formatInr(plan.priceInr)}</strong>
+              <small>{key === "trial" ? `${TRIAL_DAYS} days · no card` : "/ month + GST"}</small>
+              <div>{plan.features.slice(0, 4).map((f) => <p key={f}>✓ {f}</p>)}</div>
+              <Button href={key === "trial" ? "/login" : "/login?next=/today/billing"} secondary={key !== "growth"}>{i === 0 ? "Start free trial" : key === "growth" ? "Start with Growth" : "Get started"}</Button>
+            </motion.article>
+          );
+        })}
       </section>
     </Shell>
   );

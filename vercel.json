@@ -15,6 +15,14 @@
     {
       "path": "/api/cron/decode-ads",
       "schedule": "0 21 * * *"
+    },
+    {
+      "path": "/api/cron/ops-health",
+      "schedule": "15 3 * * *"
+    },
+    {
+      "path": "/api/cron/rival-alerts",
+      "schedule": "30 2 * * *"
     }
   ],
   "functions": {

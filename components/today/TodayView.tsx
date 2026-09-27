@@ -5,9 +5,10 @@ import { useCallback, useEffect, useState } from "react";
 
 import type { TodayData } from "@/lib/today/load";
 
-import { EvidenceTile, formatInt, Initial, MovePill } from "./parts";
+import { EvidenceTile, formatInt, Initial, MovePill, timeAgo } from "./parts";
 import { GrowBar, Rise } from "./motion";
 import { MyBrandCard } from "./MyBrandCard";
+import { PlanBanner } from "./PlanBanner";
 import { RivalPicker } from "./RivalPicker";
 
 type State = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: TodayData };
@@ -94,14 +95,17 @@ export function TodayView() {
   }
 
   const [lead, ...rest] = data.moves;
+  const freshest = data.rivals.map((r) => r.lastSeenAt).filter((v): v is string => Boolean(v)).sort().pop() ?? null;
+  const updated = timeAgo(freshest);
   const maxNew = Math.max(1, ...data.rivals.map((r) => r.new7));
 
   return (
     <>
+      <PlanBanner />
       <header className="zd-row" style={{ alignItems: "flex-end", gap: 24, flexWrap: "wrap" }}>
         <div className="zd-col" style={{ gap: 10 }}>
           <div className="zd-eyebrow">
-            Today · {dateLabel} · {data.watchedCount} {data.watchedCount === 1 ? "rival" : "rivals"} watched
+            Today · {dateLabel} · {data.watchedCount} {data.watchedCount === 1 ? "rival" : "rivals"} watched{updated ? ` · data updated ${updated}` : ""}
           </div>
           <h1 className="zd-h1">{data.headline}</h1>
           <p className="zd-lede">
@@ -226,7 +230,7 @@ export function TodayView() {
                 <Link key={rival.pageId} href={`/today/brand/${rival.pageId}`} className="zd-col" style={{ gap: 6, color: "var(--zd-ink)" }}>
                   <span className="zd-row" style={{ fontSize: 14 }}>
                     <span>{rival.name}</span>
-                    <span style={{ marginLeft: "auto", fontFamily: "var(--zd-mono)" }}>{formatInt(rival.new7)}</span>
+                    <span style={{ marginLeft: "auto", fontFamily: "var(--zd-mono)" }}>{rival.total === 0 ? <span className="zd-muted">collecting…</span> : formatInt(rival.new7)}</span>
                   </span>
                   <span className="zd-bar" aria-hidden="true">
                     <GrowBar pct={Math.round((rival.new7 / maxNew) * 100)} delay={0.2} />

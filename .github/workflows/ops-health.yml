@@ -1,0 +1,25 @@
+name: Ops health check
+
+# Every 30 minutes: asks zooptrack.co.in whether collection is healthy.
+# The site emails OPS_ALERT_EMAIL when the worker is down or the queue is stuck.
+# Needs repo secrets: CRON_SECRET (same value as in Vercel), SITE_URL (optional).
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Call ops-health
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          url="${SITE_URL:-https://www.zooptrack.co.in}/api/cron/ops-health"
+          code=$(curl -s -o body.json -w "%{http_code}" -H "Authorization: Bearer $CRON_SECRET" "$url")
+          cat body.json; echo
+          if [ "$code" = "401" ]; then echo "::error::CRON_SECRET secret does not match Vercel"; exit 1; fi
+          if [ "$code" -ge 500 ]; then echo "::error::ops-health failed ($code)"; exit 1; fi

@@ -16,6 +16,7 @@ export function RivalPicker({ onChanged, compact = false }: { onChanged: () => v
   const [results, setResults] = useState<Suggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [added, setAdded] = useState<Record<string, "adding" | "added" | "error">>({});
+  const [limitNote, setLimitNote] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -52,6 +53,17 @@ export function RivalPicker({ onChanged, compact = false }: { onChanged: () => v
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ country: "IN" }),
       });
+      if (response.status === 402) {
+        // Plan limit or ended trial: explain and link to billing.
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        setLimitNote(data.error || "Your plan's rival limit is reached.");
+        setAdded((m) => {
+          const next = { ...m };
+          delete next[s.pageId];
+          return next;
+        });
+        return;
+      }
       if (!response.ok) throw new Error("watch failed");
       // Start the first read now; the nightly pass keeps it fresh.
       const refresh = new URL("/api/ad-intelligence/refresh", window.location.origin);
@@ -91,6 +103,14 @@ export function RivalPicker({ onChanged, compact = false }: { onChanged: () => v
             </button>
           ))}
         </div>
+      ) : null}
+      {limitNote ? (
+        <p className="zd-error" role="alert" style={{ margin: 0 }}>
+          {limitNote}{" "}
+          <a href="/today/billing" style={{ fontWeight: 600 }}>
+            See plans →
+          </a>
+        </p>
       ) : null}
       {results.length ? (
         <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>

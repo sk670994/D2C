@@ -7,7 +7,7 @@ import type { BrandOverview, CreativePatterns } from "@/lib/today/load";
 import { ELEMENT_LABEL, type ElementKey } from "@/lib/decode/taxonomy";
 
 import { CountUp, GrowBar, Rise, SparkBar } from "./motion";
-import { EvidenceTile, formatInt, Initial } from "./parts";
+import { EvidenceTile, formatInt, Initial, timeAgo } from "./parts";
 
 type State = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: BrandOverview };
 
@@ -78,6 +78,7 @@ export function BrandOverviewView({ pageId, country = "IN" }: { pageId: string; 
         <div className="zd-col" style={{ gap: 10, minWidth: 280 }}>
           <div className="zd-eyebrow">
             Exact Meta page · {b.pageId} · {b.country}
+            {timeAgo(b.lastSeenAt) ? ` · updated ${timeAgo(b.lastSeenAt)}` : ""}
           </div>
           <h1 className="zd-h1" style={{ fontWeight: 600, fontSize: 44 }}>
             {b.name}
