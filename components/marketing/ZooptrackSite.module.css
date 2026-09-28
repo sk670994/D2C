@@ -1,4 +1,4 @@
-:global(:root){
+:root{
   --zt-ink:#061114;--zt-ink2:#0b1d21;--zt-paper:#eff6f2;--zt-paper2:#dceae4;
   --zt-signal:#0255b1;--zt-violet:#8d80ff;--zt-muted:#91a6a0;--zt-line:rgba(29, 42, 46,.16);
 }
