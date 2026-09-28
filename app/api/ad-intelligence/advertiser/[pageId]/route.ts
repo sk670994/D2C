@@ -118,11 +118,17 @@ export async function POST(
     return NextResponse.json({ success: false, error: decision.message, reason: decision.reason, upgradeUrl: "/today/billing" }, { status: 402 });
   }
 
-  const { data: profile } = await service.rpc("adspy_get_advertiser_profile", {
-    p_page_id: pageId,
-    p_country: country,
-    p_platform: "meta",
-  });
+  // Only the name is needed here: one indexed row, not the full profile aggregate
+  // (the aggregate scanned every ad of the page and stalled under load).
+  const { data: nameRow } = await service
+    .from("ad_intelligence_creatives")
+    .select("advertiser_name")
+    .eq("platform", "meta")
+    .eq("advertiser_id", pageId)
+    .not("advertiser_name", "is", null)
+    .order("first_seen_at", { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
 
   const { error } = await auth
     .from("adspy_advertiser_watchlists")
@@ -131,10 +137,7 @@ export async function POST(
         user_id: user.id,
         platform: "meta",
         advertiser_id: pageId,
-        advertiser_name:
-          profile && typeof profile === "object"
-            ? String((profile as Record<string, unknown>).advertiserName ?? "")
-            : null,
+        advertiser_name: (nameRow as { advertiser_name?: string | null } | null)?.advertiser_name ?? null,
         country,
         updated_at: new Date().toISOString(),
       },

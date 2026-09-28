@@ -6,6 +6,7 @@ import { getSourceCounts, type SourceCounts } from "@/lib/ad-intelligence/global
 import { loadDecodes } from "@/lib/decode/run";
 import { topPatterns, type PatternCount } from "@/lib/decode/taxonomy";
 
+import { cached } from "./cache";
 import { brandVerdict, pickMoves, summarizeBrand, todayHeadline, type BrandSummary, type Move, type TodayAdRow } from "./insights";
 
 const SELECT =
@@ -13,6 +14,24 @@ const SELECT =
 const PAGE = 1000;
 const MAX_ROWS = 3000;
 const MAX_RIVALS = 8;
+/** How long a brand's summary is reused across all users (data is refreshed nightly). */
+const SUMMARY_TTL_MS = 15 * 60_000;
+
+/** One brand's summary, shared by every user who watches it. */
+function brandSummary(pageId: string): Promise<BrandSummary> {
+  return cached(`sum:${pageId}`, SUMMARY_TTL_MS, async () => summarizeBrand(pageId, await loadRows(pageId)));
+}
+
+/** Summary + coverage + AI patterns for a brand page, shared across users. */
+function brandCore(pageId: string, country: string): Promise<{ summary: BrandSummary; coverage: SourceCounts | null; patterns: CreativePatterns }> {
+  return cached(`core:${pageId}:${country}`, SUMMARY_TTL_MS, async () => {
+    const [rows, coverage] = await Promise.all([
+      loadRows(pageId),
+      getSourceCounts({ platform: "meta", country, scope: { scopeType: "page", scopeKey: pageId } }),
+    ]);
+    return { summary: summarizeBrand(pageId, rows), coverage, patterns: await patternsFor(rows) };
+  });
+}
 
 export type WatchedTarget = { pageId: string; name: string; country: string };
 
@@ -82,17 +101,12 @@ export async function getOwnBrand(userId: string): Promise<{ pageId: string | nu
 }
 
 export async function getBrandOverview(pageId: string, country = "IN", ownPageId: string | null = null): Promise<BrandOverview> {
-  const [rows, coverage] = await Promise.all([
-    loadRows(pageId),
-    getSourceCounts({ platform: "meta", country, scope: { scopeType: "page", scopeKey: pageId } }),
-  ]);
-  const summary = summarizeBrand(pageId, rows);
-  const patterns = await patternsFor(rows);
+  const { summary, coverage, patterns } = await brandCore(pageId, country);
 
   let vsYou: VsYou | null = null;
   if (ownPageId && ownPageId !== pageId) {
-    const ownRows = await loadRows(ownPageId);
-    const own = summarizeBrand(ownPageId, ownRows);
+    const ownCore = await brandCore(ownPageId, country);
+    const own = ownCore.summary;
     vsYou = {
       you: {
         pageId: ownPageId,
@@ -101,7 +115,7 @@ export async function getBrandOverview(pageId: string, country = "IN", ownPageId
         active: own.active,
         videoShare: own.videoShare,
         topOffer: own.offers[0]?.label ?? null,
-        patterns: await patternsFor(ownRows),
+        patterns: ownCore.patterns,
       },
     };
   }
@@ -140,7 +154,7 @@ export async function listWatchedTargets(userId: string): Promise<WatchedTarget[
 export async function getToday(userId: string): Promise<TodayData> {
   const targets = await listWatchedTargets(userId);
   const chosen = targets.slice(0, MAX_RIVALS);
-  const settled = await Promise.allSettled(chosen.map(async (t) => summarizeBrand(t.pageId, await loadRows(t.pageId))));
+  const settled = await Promise.allSettled(chosen.map((t) => brandSummary(t.pageId)));
   const summaries: BrandSummary[] = [];
   settled.forEach((result, i) => {
     if (result.status === "fulfilled") {
