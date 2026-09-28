@@ -9,6 +9,10 @@
       "schedule": "30 20 * * *"
     },
     {
+      "path": "/api/adspy/drain",
+      "schedule": "45 20 * * *"
+    },
+    {
       "path": "/api/cron/weekly-report",
       "schedule": "30 3 * * 1"
     },

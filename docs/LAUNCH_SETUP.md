@@ -46,13 +46,32 @@ Test first with `rzp_test_` keys and test plans, then switch to live keys.
 
 Redeploy on Vercel after changing env vars.
 
-## 5. 24/7 collector (when you have customers)
-See `worker/README.md` → "Run it 24/7 on a cloud server".
+## 5. 24/7 collector: SearchApi on Vercel (recommended, no PC)
+1. Sign up at searchapi.io (100 free calls). Put the key in `worker\.env` as
+   `SEARCHAPI_API_KEY=...` (no quotes) and run the read-only check:
+   `npx tsx scripts/ops/searchapi-benchmark.ts` (uses ~20–60 calls).
+2. If the numbers look right, add in Vercel (Production):
+   | Name | Value |
+   |---|---|
+   | `SEARCHAPI_API_KEY` | your key (Sensitive) |
+   | `ADSPY_COLLECTOR` | `searchapi` (replaces `worker`) |
+   | `ADSPY_DRAIN_URL` | `https://www.zooptrack.co.in/api/adspy/drain` |
+   Then redeploy.
+3. Test: search a brand you have never searched in Discover ads; ads appear
+   within about a minute. Vercel logs show `[AdSpy collect] SearchApi` lines
+   with calls and ads.
+4. Stop the PC worker (Ctrl+C). Collection and AI decoding now run on Vercel.
+
+Roll back any time: set `ADSPY_COLLECTOR` back to `worker` in Vercel, redeploy,
+start `worker\start-worker.ps1`.
+
+Old option (own scraper on a server): `worker/README.md` → "Run it 24/7 on a cloud server".
 
 ## What runs when (IST)
 | Time | Job |
 |---|---|
 | 02:00 daily | refresh watched rivals (worker) |
+| 02:15 daily | drain the queue on Vercel (SearchApi mode) |
 | 02:30 daily | AI decoding catch-up |
 | 08:00 daily | big-move alerts (Growth, Agency, trial) |
 | 08:45 daily + every 30 min (GitHub) | ops health check |

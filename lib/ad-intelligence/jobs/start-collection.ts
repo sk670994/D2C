@@ -36,7 +36,7 @@ export const RUN_STALE_AFTER_MS = 3 * 60_000;
  */
 export const WAITING_RUN_STALE_AFTER_MS =
   Number(process.env.ADSPY_WAITING_RUN_STALE_MS) ||
-  (process.env.ADSPY_COLLECTOR === "worker" ? 30 * 60_000 : RUN_STALE_AFTER_MS);
+  (process.env.ADSPY_COLLECTOR === "worker" || process.env.ADSPY_COLLECTOR === "searchapi" ? 30 * 60_000 : RUN_STALE_AFTER_MS);
 
 const ACTIVE_JOB_STATUSES = new Set([
   "queued",
@@ -60,7 +60,8 @@ const ACTIVE_RUN_STATUSES = new Set(["queued", "running", "retrying"]);
 export function defaultCollectionDepth(): "quick" | "deep" {
   const forced = process.env.ADSPY_DEFAULT_DEPTH;
   if (forced === "quick" || forced === "deep") return forced;
-  return getAdSpyDispatchMode() === "worker" ? "deep" : "quick";
+  const mode = getAdSpyDispatchMode();
+  return mode === "worker" || mode === "searchapi" ? "deep" : "quick";
 }
 
 export type StartCollectionReason = "user" | "track" | "scheduled";

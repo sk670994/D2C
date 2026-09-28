@@ -14,6 +14,8 @@ export type OpsSnapshot = {
   decodesDone24h: number;
   decodesFailed24h: number;
   geminiConfigured: boolean;
+  /** Collection runs on Vercel (SearchApi); no PC/VPS worker is expected. */
+  serverlessCollector?: boolean;
 };
 
 export type OpsIssue = { key: string; severity: "critical" | "warning"; title: string; detail: string; fix: string };
@@ -25,7 +27,7 @@ export function evaluateOps(s: OpsSnapshot): OpsIssue[] {
   const beat = s.lastWorkerHeartbeat ? Date.parse(s.lastWorkerHeartbeat) : NaN;
   const silentMin = Number.isFinite(beat) ? Math.round((s.now - beat) / MIN) : null;
 
-  if (s.liveWorkers === 0 && (silentMin === null || silentMin >= 15)) {
+  if (!s.serverlessCollector && s.liveWorkers === 0 && (silentMin === null || silentMin >= 15)) {
     issues.push({
       key: "worker_down",
       severity: s.waitingRequests > 0 ? "critical" : "warning",
@@ -40,7 +42,9 @@ export function evaluateOps(s: OpsSnapshot): OpsIssue[] {
       severity: "critical",
       title: "Collection queue is stuck",
       detail: `${s.waitingRequests} request(s) waiting; oldest ${Math.round((s.oldestWaitingSec ?? 0) / 60)} min.`,
-      fix: "Check the worker log for errors; restart it.",
+      fix: s.serverlessCollector
+        ? "Open /api/adspy/drain?wait=1 (with CRON_SECRET) or check the Vercel logs for [AdSpy drain]; check the SearchApi key and quota."
+        : "Check the worker log for errors; restart it.",
     });
   }
   const finished = s.failed24h + s.completed24h;
