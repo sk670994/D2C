@@ -496,7 +496,10 @@ export function AdSpyWorkspace() {
     if (key !== baseKey) return;
     const lastSeen = result.lastUpdatedAt ? Date.parse(result.lastUpdatedAt) : NaN;
     const stale = Boolean(target.pageId) && Number.isFinite(lastSeen) && Date.now() - lastSeen > STALE_AFTER_MS;
-    if ((Number(result.total ?? 0) > 0 && !stale) || isJobActive(job)) return;
+    // Exact page with far fewer ads than Meta shows: finish collecting it.
+    const meta = result.metaSource?.scopeType === "page" ? (result.metaSource.all?.total ?? result.metaSource.active?.total ?? null) : null;
+    const incomplete = Boolean(target.pageId) && typeof meta === "number" && meta > 0 && Number(result.total ?? 0) < meta * 0.9;
+    if ((Number(result.total ?? 0) > 0 && !stale && !incomplete) || isJobActive(job)) return;
     if (autoCollected.current.has(baseKey)) return;
     autoCollected.current.add(baseKey);
     void startCollection("auto");

@@ -562,16 +562,16 @@ export async function collectAdIntelligence(
     await updateCollectionJob(
       data.jobId,
       {
-        status: "exhausted",
-        stage: "exhausted",
+        // A continuation follows: keep the job "collecting" so open pages keep polling.
+        status: continuation ? "deep" : "exhausted",
+        stage: continuation ? "deep" : "exhausted",
         discoveredAds:
           state.discoveredAds,
         normalizedAds:
           state.normalizedAds,
         persistedAds:
           state.persistedAds,
-        completedAt:
-          new Date().toISOString(),
+        completedAt: continuation ? null : new Date().toISOString(),
         errorMessage: null,
       },
     );
@@ -590,7 +590,6 @@ export async function collectAdIntelligence(
         priority: 90,
         maxAttempts: 2,
       });
-      await updateCollectionJob(data.jobId, { status: "deep", stage: "deep", completedAt: null });
       const { kickAdSpyDrain } = await import("./drain");
       kickAdSpyDrain();
     }
