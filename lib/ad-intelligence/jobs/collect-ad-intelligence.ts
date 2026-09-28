@@ -41,21 +41,29 @@ const SERVERLESS_BUDGET_MS = Number(process.env.ADSPY_SERVERLESS_BUDGET_MS) || 4
 const WORKER_BUDGET_MS = Number(process.env.ADSPY_WORKER_BUDGET_MS) || 8 * 60_000;
 const IS_SERVERLESS = Boolean(process.env.VERCEL) && process.env.ADSPY_BROWSER !== "playwright";
 /**
- * Where Meta ads come from: "searchapi" (SearchApi.io, runs on Vercel, no
- * browser) or "playwright" (our own collector on the worker PC/VPS).
- * ADSPY_COLLECTOR=searchapi switches the whole pipeline; ADSPY_META_SOURCE
- * can force one source (e.g. the PC worker as a fallback).
+ * Where Meta ads come from:
+ *  - "scrapecreators" / "searchapi": paid APIs, run on Vercel, no browser
+ *  - "playwright": our own collector on the worker PC/VPS
+ * ADSPY_COLLECTOR=searchapi moves collection to Vercel (API mode). The API is
+ * ADSPY_META_SOURCE when set, else whichever API key is configured
+ * (ScrapeCreators first: cheaper, prepaid credits).
  */
-export function metaSource(): "searchapi" | "playwright" {
+export type MetaSourceName = "scrapecreators" | "searchapi" | "playwright";
+export function metaSource(): MetaSourceName {
   const forced = process.env.ADSPY_META_SOURCE?.trim().toLowerCase();
-  if (forced === "searchapi" || forced === "playwright") return forced;
-  return process.env.ADSPY_COLLECTOR === "searchapi" ? "searchapi" : "playwright";
+  if (forced === "scrapecreators" || forced === "searchapi" || forced === "playwright") return forced;
+  if (process.env.ADSPY_COLLECTOR !== "searchapi") return "playwright";
+  if (process.env.SCRAPECREATORS_API_KEY?.trim()) return "scrapecreators";
+  return "searchapi";
+}
+function isApiSource(source: MetaSourceName): boolean {
+  return source === "scrapecreators" || source === "searchapi";
 }
 /** One SearchApi collection gets this long (the drain route runs up to 300 s). */
 const SEARCHAPI_JOB_BUDGET_MS = Number(process.env.SEARCHAPI_JOB_BUDGET_MS) || 150_000;
 /** Lease must cover one invocation, not 5 of them. */
 const LEASE_SECONDS =
-  metaSource() === "searchapi"
+  isApiSource(metaSource())
     ? Math.ceil(SEARCHAPI_JOB_BUDGET_MS / 1000) + 90
     : IS_SERVERLESS
       ? 90
@@ -293,15 +301,23 @@ export async function collectAdIntelligence(
       );
     }
 
-    if (data.platform === "meta" && metaSource() === "searchapi") {
-      const { collectMetaAdsViaSearchApi, resolvePageViaSearchApi } = await import(
-        "@/lib/ad-intelligence/sources/searchapi-meta"
-      );
+    if (data.platform === "meta" && isApiSource(metaSource())) {
+      const provider = metaSource();
+      const api =
+        provider === "scrapecreators"
+          ? await import("@/lib/ad-intelligence/sources/scrapecreators-meta").then((m) => ({
+              collect: m.collectMetaAdsViaScrapeCreators,
+              resolve: m.resolvePageViaScrapeCreators,
+            }))
+          : await import("@/lib/ad-intelligence/sources/searchapi-meta").then((m) => ({
+              collect: m.collectMetaAdsViaSearchApi,
+              resolve: m.resolvePageViaSearchApi,
+            }));
 
       // Brand name -> one exact Meta page (1 call). Ambiguous names stay a
       // name search, filtered to advertisers carrying that name.
       if (data.mode === "advertiser" && !scrapePageId) {
-        const page = await resolvePageViaSearchApi(data.query, data.country).catch(() => null);
+        const page = await api.resolve(data.query, data.country).catch(() => null);
         if (page) {
           scrapePageId = page.pageId;
           resolvedPageId = page.pageId;
@@ -309,7 +325,7 @@ export async function collectAdIntelligence(
       }
 
       const deadlineAt = Math.min(options.deadlineAt ?? Number.POSITIVE_INFINITY, Date.now() + SEARCHAPI_JOB_BUDGET_MS);
-      const outcome = await collectMetaAdsViaSearchApi(
+      const outcome = await api.collect(
         {
           query: data.query,
           country: data.country,
@@ -325,7 +341,8 @@ export async function collectAdIntelligence(
         },
       );
       searchApiCalls = outcome.calls;
-      console.info("[AdSpy collect] SearchApi", {
+      console.info("[AdSpy collect] API source", {
+        provider,
         query: data.query,
         pageId: scrapePageId,
         calls: outcome.calls,

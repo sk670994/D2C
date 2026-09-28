@@ -1,12 +1,13 @@
 /**
- * SearchApi proof of concept: is it good enough to be Zooptrack's Meta source?
+ * Meta ad API proof of concept: SearchApi and/or ScrapeCreators, compared.
  * READ-ONLY: calls SearchApi and reads our database; writes nothing.
  *
  *   npx tsx scripts/ops/searchapi-benchmark.ts
  *   npx tsx scripts/ops/searchapi-benchmark.ts --page 619181354927737 --brand "boAt" --brand "Minimalist"
  *   npx tsx scripts/ops/searchapi-benchmark.ts --max-pages 10      # cap billed calls per brand
+ *   npx tsx scripts/ops/searchapi-benchmark.ts --source scrapecreators   # or searchapi (default: every source with a key)
  *
- * Needs SEARCHAPI_API_KEY plus the Supabase keys in worker\.env.
+ * Needs SEARCHAPI_API_KEY and/or SCRAPECREATORS_API_KEY plus the Supabase keys in worker\.env.
  * Default brands: Mamaearth (exact page) + boAt + Minimalist (resolved by name).
  * Uses about 20-60 calls in total; the free trial has 100.
  *
@@ -26,7 +27,13 @@ import {
   searchApiRequestBody,
   sourceUrlFor,
   toLibraryNode,
+  type SearchApiPage,
 } from "../../lib/ad-intelligence/sources/searchapi-meta";
+import {
+  fetchScrapeCreatorsPage,
+  resolvePageViaScrapeCreators,
+  scrapeCreatorsRequest,
+} from "../../lib/ad-intelligence/sources/scrapecreators-meta";
 import { libraryNodeToAd } from "../../lib/ad-intelligence/meta/node-to-ad";
 import type { CompetitorAd } from "../../lib/ad-intelligence/types";
 
@@ -58,9 +65,30 @@ const targets: Array<{ label: string; pageId: string | null; name: string | null
         { label: "Minimalist", pageId: null, name: "Minimalist" },
       ];
 
-const apiKey = process.env.SEARCHAPI_API_KEY?.trim().replace(/^["']|["']$/g, "");
-if (!apiKey) {
-  console.error("Missing SEARCHAPI_API_KEY in worker\\.env (add the line SEARCHAPI_API_KEY=... without quotes).");
+const clean = (v: string | undefined) => v?.trim().replace(/^["']|["']$/g, "") || null;
+const keys = { searchapi: clean(process.env.SEARCHAPI_API_KEY), scrapecreators: clean(process.env.SCRAPECREATORS_API_KEY) };
+type SourceName = keyof typeof keys;
+type Source = {
+  name: SourceName;
+  resolve: (name: string, country: string) => Promise<{ pageId: string; name: string } | null>;
+  page: (input: { query: string; country: string; advertiserPageId: string | null }, token: string | null) => Promise<SearchApiPage>;
+};
+const SOURCES: Record<SourceName, (key: string) => Source> = {
+  searchapi: (apiKey) => ({
+    name: "searchapi",
+    resolve: (n, c) => resolvePageViaSearchApi(n, c, { apiKey }),
+    page: (input, token) => fetchSearchApiPage(searchApiRequestBody(input, { activeStatus: "all", nextPageToken: token }), { apiKey }),
+  }),
+  scrapecreators: (apiKey) => ({
+    name: "scrapecreators",
+    resolve: (n, c) => resolvePageViaScrapeCreators(n, c, { apiKey }),
+    page: (input, token) => fetchScrapeCreatorsPage(scrapeCreatorsRequest(input, { activeStatus: "all", cursor: token }), { apiKey }),
+  }),
+};
+const wanted = values("--source")[0] as SourceName | undefined;
+const sources = (Object.keys(keys) as SourceName[]).filter((n) => keys[n] && (!wanted || n === wanted)).map((n) => SOURCES[n](keys[n]!));
+if (!sources.length) {
+  console.error("Add SEARCHAPI_API_KEY and/or SCRAPECREATORS_API_KEY to worker\\.env (no quotes).");
   process.exit(1);
 }
 const supaUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/+$/, "");
@@ -71,13 +99,13 @@ const pct = (n: number, d: number) => (d ? `${Math.round((n / d) * 100)}%` : "-"
 
 type BrandReport = Record<string, unknown>;
 
-async function benchmark(target: (typeof targets)[number]): Promise<BrandReport> {
+async function benchmark(source: Source, target: (typeof targets)[number]): Promise<BrandReport> {
   let calls = 0;
   let pageId = target.pageId;
   let resolvedName: string | null = null;
   if (!pageId && target.name) {
     calls += 1;
-    const page = await resolvePageViaSearchApi(target.name, COUNTRY, { apiKey });
+    const page = await source.resolve(target.name, COUNTRY);
     pageId = page?.pageId ?? null;
     resolvedName = page?.name ?? null;
   }
@@ -97,12 +125,12 @@ async function benchmark(target: (typeof targets)[number]): Promise<BrandReport>
 
   for (let page = 0; page < MAX_PAGES; page += 1) {
     try {
-      const res = await fetchSearchApiPage(searchApiRequestBody(input, { activeStatus: "all", nextPageToken: token }), { apiKey: apiKey! });
+      const res = await source.page(input, token);
       calls += 1;
       callMs.push(res.ms);
       if (res.totalResults != null) total = res.totalResults;
       for (const raw of res.ads) {
-        const ad = libraryNodeToAd(toLibraryNode(raw), input, sourceUrl, total, { providerSource: "searchapi" });
+        const ad = libraryNodeToAd(toLibraryNode(raw), input, sourceUrl, total, { providerSource: source.name });
         if (!ad || !matchesBrandName(ad, input)) {
           dropped += 1;
           continue;
@@ -147,6 +175,7 @@ async function benchmark(target: (typeof targets)[number]): Promise<BrandReport>
   const callsPerMonth = Math.max(1, calls) * 30;
 
   return {
+    source: source.name,
     brand: target.label,
     pageId,
     resolvedName,
@@ -172,7 +201,8 @@ async function benchmark(target: (typeof targets)[number]): Promise<BrandReport>
     overlapWithOurs: overlap,
     newToUs: overlap == null ? null : n - overlap,
     estCallsPerMonthDailyFullRead: callsPerMonth,
-    estUsdPerMonthAt4per1k: Math.round(callsPerMonth * 0.004 * 100) / 100,
+    // SearchApi Developer ≈ $4 / 1k calls; ScrapeCreators ≈ $1.88 / 1k credits.
+    estUsdPerMonth: Math.round(callsPerMonth * (source.name === "scrapecreators" ? 0.00188 : 0.004) * 100) / 100,
     sample: ads.slice(0, 2).map((a) => ({ id: a.id, type: a.creativeType, text: (a.primaryText ?? "").slice(0, 80), cta: a.callToAction, start: a.firstSeen, active: a.isActive })),
   };
 }
@@ -180,15 +210,16 @@ async function benchmark(target: (typeof targets)[number]): Promise<BrandReport>
 async function main() {
   console.log(`SearchApi benchmark · country ${COUNTRY} · max ${MAX_PAGES} pages per brand\n`);
   const reports: BrandReport[] = [];
-  for (const target of targets) {
-    process.stdout.write(`${target.label} ... `);
-    const r = await benchmark(target);
+  for (const source of sources) for (const target of targets) {
+    process.stdout.write(`${source.name} · ${target.label} ... `);
+    const r = await benchmark(source, target);
     reports.push(r);
     console.log(`${r.searchApiAds} ads of Meta's ${r.metaTotal ?? "?"} in ${r.calls} calls, ${r.seconds}s${r.error ? ` · ERROR ${r.error}` : ""}`);
   }
   console.log("");
   console.table(
     reports.map((r) => ({
+      source: r.source,
       brand: r.brand,
       meta: r.metaTotal,
       got: r.searchApiAds,

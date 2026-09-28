@@ -21,7 +21,7 @@ export function escapeHtml(value: unknown): string {
     .replace(/'/g, "&#39;");
 }
 
-const KIND_COLOR: Record<Move["kind"], string> = { big: "#8A3A0B", staying: "#0B5C37", quiet: "#1D3F8F", steady: "#3A3E49" };
+const KIND_COLOR: Record<Move["kind"], string> = { big: "#8A3A0B", changed: "#6B2FA0", staying: "#0B5C37", quiet: "#1D3F8F", steady: "#3A3E49" };
 
 export function reportSubject(input: Pick<ReportInput, "moves" | "headline">): string {
   const top = input.moves[0];

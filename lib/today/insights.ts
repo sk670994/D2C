@@ -6,6 +6,8 @@
  */
 import { classifyOffer, firstSentence, hookKey, OFFER_LABEL, productKey, runningDays, type OfferType } from "@/lib/brand-vault/signals";
 
+import { CHANGE_WEIGHT, changeTitle, type AdChange } from "./changes";
+
 export const DAY = 86_400_000;
 
 export type TodayAdRow = {
@@ -53,6 +55,8 @@ export type BrandSummary = {
   /** Launches per day, oldest first, last 14 days. */
   launches14: number[];
   lastSeenAt: string | null;
+  /** Live ads whose offer / price / CTA / copy changed recently (most important first). */
+  changed: Array<AdChange & { evidence: EvidenceAd | null }>;
 };
 
 const clean = (v: unknown) => String(v ?? "").replace(/\s+/g, " ").trim();
@@ -99,7 +103,7 @@ function evidence(ad: TodayAdRow, now: number): EvidenceAd {
   };
 }
 
-export function summarizeBrand(pageId: string, rows: TodayAdRow[], now = Date.now()): BrandSummary {
+export function summarizeBrand(pageId: string, rows: TodayAdRow[], now = Date.now(), changes: AdChange[] = []): BrandSummary {
   const formats = { video: 0, image: 0, carousel: 0, other: 0 };
   const launches14 = new Array<number>(14).fill(0);
   const recent: TodayAdRow[] = [];
@@ -186,6 +190,16 @@ export function summarizeBrand(pageId: string, rows: TodayAdRow[], now = Date.no
       .map((ad) => evidence(ad, now)),
     launches14,
     lastSeenAt: lastSeen ? new Date(lastSeen).toISOString() : null,
+    changed: (() => {
+      const byId = new Map(rows.map((ad) => [ad.id, ad]));
+      return changes
+        .filter((c) => byId.get(c.creativeId)?.is_currently_active !== false)
+        .slice(0, 6)
+        .map((c) => {
+          const ad = byId.get(c.creativeId);
+          return { ...c, evidence: ad ? evidence(ad, now) : null };
+        });
+    })(),
   };
 }
 
@@ -212,7 +226,7 @@ export function brandVerdict(s: BrandSummary): string {
   return `No live ads right now. ${s.total} on record.`;
 }
 
-export type MoveKind = "big" | "staying" | "quiet" | "steady";
+export type MoveKind = "big" | "changed" | "staying" | "quiet" | "steady";
 
 export type Move = {
   kind: MoveKind;
@@ -226,7 +240,7 @@ export type Move = {
   evidence: EvidenceAd[];
 };
 
-const MOVE_LABEL: Record<MoveKind, string> = { big: "Big move", staying: "Staying power", quiet: "Quiet", steady: "Steady" };
+const MOVE_LABEL: Record<MoveKind, string> = { big: "Big move", changed: "Changed", staying: "Staying power", quiet: "Quiet", steady: "Steady" };
 
 export function movesFor(s: BrandSummary): Move[] {
   const moves: Move[] = [];
@@ -266,6 +280,23 @@ export function movesFor(s: BrandSummary): Move[] {
       evidence: [],
     });
   }
+  const change = s.changed?.[0];
+  if (change) {
+    const more = s.changed.length - 1;
+    moves.push({
+      ...base,
+      kind: "changed",
+      label: MOVE_LABEL.changed,
+      title: changeTitle(change),
+      detail: `On a live ad${change.evidence?.hook ? ` (“${change.evidence.hook}”)` : ""}.${more > 0 ? ` ${more} more ${more === 1 ? "change" : "changes"} this week.` : ""}`,
+      action:
+        change.kind === "offer" || change.kind === "price"
+          ? "A rival only changes an offer or price for a reason. Check yours against it this week."
+          : "They are testing new messaging on an ad that was already running. Watch which version stays.",
+      score: 50 + CHANGE_WEIGHT[change.kind],
+      evidence: change.evidence ? [change.evidence] : [],
+    });
+  }
   if (s.longestLive && s.longestLive.days >= 60 && s.longestLive.hook && compact(s.longestLive.hook) !== compact(s.name)) {
     moves.push({
       ...base,
@@ -301,6 +332,7 @@ export function todayHeadline(moves: Move[]): string {
   const top = moves[0];
   if (!top) return "Add rivals to see what they changed this week.";
   if (top.kind === "big") return `${top.brand} is pushing hard this week.`;
+  if (top.kind === "changed") return `${top.brand} changed a live ad this week.`;
   if (top.kind === "staying") return `${top.brand} is sticking with a winner.`;
   if (top.kind === "steady") return `${top.brand} launched new ads this week.`;
   return "A quiet week across your rivals.";

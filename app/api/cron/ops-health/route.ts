@@ -74,5 +74,17 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: issues.length === 0, issues, snapshot, alerted: due.map((i) => i.key), email });
+  // AI spend in the last 24 h from the cost ledger (estimate; absent until the table exists).
+  let aiSpend24h: Record<string, { calls: number; usd: number }> | null = null;
+  const spend = await client.from("ai_calls").select("provider,cost_usd").gte("created_at", since).limit(20000);
+  if (!spend.error) {
+    aiSpend24h = {};
+    for (const row of (spend.data ?? []) as Array<{ provider: string; cost_usd: number | null }>) {
+      const p = (aiSpend24h[row.provider] ??= { calls: 0, usd: 0 });
+      p.calls += 1;
+      p.usd = Math.round((p.usd + Number(row.cost_usd ?? 0)) * 10000) / 10000;
+    }
+  }
+
+  return NextResponse.json({ ok: issues.length === 0, issues, snapshot, aiSpend24h, alerted: due.map((i) => i.key), email });
 }

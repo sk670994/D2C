@@ -102,17 +102,25 @@ export function parseModelJson(text: string | null | undefined): unknown {
 
 export type PatternCount = { key: ElementKey; value: string; label: string; count: number; share: number };
 
-/** Most common value per element across decoded ads (share of decoded ads). */
+/**
+ * Most common value per element. The share is out of the ads where that
+ * element is known: text-only (Jev) labels have no visual fields, and an
+ * "unclear" answer should not dilute the others.
+ */
 export function topPatterns(decodes: Decoded[], perElement = 2): PatternCount[] {
-  const total = decodes.length;
-  if (!total) return [];
+  if (!decodes.length) return [];
   const out: PatternCount[] = [];
   for (const key of Object.keys(ELEMENTS) as ElementKey[]) {
     const counts = new Map<string, number>();
+    let total = 0;
     for (const d of decodes) {
       const v = d[key];
-      if (v) counts.set(v, (counts.get(v) ?? 0) + 1);
+      if (v) {
+        counts.set(v, (counts.get(v) ?? 0) + 1);
+        total += 1;
+      }
     }
+    if (!total) continue;
     Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, perElement)

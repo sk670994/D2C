@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 
 import type { CompetitorAd } from "@/lib/ad-intelligence/types";
+import { isR2Url, putR2Object, r2Config } from "@/lib/media/r2";
 import { createGlobalServiceClient } from "./supabase";
 
 /**
@@ -26,7 +27,19 @@ const CONCURRENCY = 6;
 let bucketReady: Promise<boolean> | null = null;
 
 export function mediaStoreEnabled(): boolean {
-  return process.env.ADSPY_STORE_MEDIA === "1" || process.env.ADSPY_BROWSER === "playwright";
+  if (process.env.ADSPY_STORE_MEDIA === "0") return false;
+  return (
+    process.env.ADSPY_STORE_MEDIA === "1" ||
+    process.env.ADSPY_BROWSER === "playwright" ||
+    // API collectors (SearchApi / ScrapeCreators) on Vercel: Meta's links expire.
+    process.env.ADSPY_COLLECTOR === "searchapi" ||
+    Boolean(r2Config())
+  );
+}
+
+/** Where new images go: Cloudflare R2 when configured, else Supabase Storage. */
+export function mediaTarget(): "r2" | "supabase" {
+  return r2Config() ? "r2" : "supabase";
 }
 
 function storagePrefix(): string {
@@ -34,8 +47,9 @@ function storagePrefix(): string {
   return `${base}/storage/v1/object/public/${BUCKET}/`;
 }
 
+/** An image we host (Supabase Storage or R2), as opposed to Meta's expiring CDN link. */
 export function isStoredMediaUrl(value?: string | null): boolean {
-  return Boolean(value && value.startsWith(storagePrefix()));
+  return Boolean(value && (value.startsWith(storagePrefix()) || isR2Url(value)));
 }
 
 async function ensureBucket(): Promise<boolean> {
@@ -98,7 +112,9 @@ async function rehost(url: string, key: string): Promise<string | null> {
     const small = await toSmallWebp(original);
     const bytes = small ?? original;
     const contentType = small ? "image/webp" : type;
-    const path = `${key}.${small ? "webp" : extFor(type)}`;
+    const ext = small ? "webp" : extFor(type);
+    if (mediaTarget() === "r2") return await putR2Object(bytes, contentType, ext);
+    const path = `${key}.${ext}`;
     const { error } = await createGlobalServiceClient()
       .storage.from(BUCKET)
       .upload(path, bytes, { contentType, upsert: true, cacheControl: "31536000" });
@@ -114,7 +130,7 @@ async function rehost(url: string, key: string): Promise<string | null> {
 /** Mutates ads in place: imageUrl / thumbnailUrl point at our storage when copied. */
 export async function persistAdMedia(ads: CompetitorAd[]): Promise<number> {
   if (!mediaStoreEnabled() || !ads.length) return 0;
-  if (!(await ensureBucket())) return 0;
+  if (mediaTarget() === "supabase" && !(await ensureBucket())) return 0;
 
   let stored = 0;
   const jobs: Array<() => Promise<void>> = [];

@@ -14,12 +14,13 @@ export function alertKey(move: Pick<Move, "kind" | "pageId">, week: string): str
   return `${move.kind}:${move.pageId}:${week}`;
 }
 
-/** Big moves this user has not been alerted about this week. */
+/** Big pushes and offer/price changes this user has not been alerted about this week. */
 export function alertsToSend(moves: Move[], alreadySent: Set<string>, week: string): Move[] {
-  return moves.filter((m) => m.kind === "big" && !alreadySent.has(alertKey(m, week)));
+  const alertable = (m: Move) => m.kind === "big" || (m.kind === "changed" && m.score >= 100); // offer (110) / price (105)
+  return moves.filter((m) => alertable(m) && !alreadySent.has(alertKey(m, week)));
 }
 
 export function alertSubject(moves: Move[]): string {
-  if (moves.length === 1) return `${moves[0].brand} just made a big move`;
+  if (moves.length === 1) return moves[0].kind === "changed" ? `${moves[0].brand} just changed an offer` : `${moves[0].brand} just made a big move`;
   return `${moves.length} rivals made big moves: ${moves.map((m) => m.brand).slice(0, 3).join(", ")}`;
 }

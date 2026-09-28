@@ -134,6 +134,8 @@ html[data-theme="dark"] .zd {
 }
 .zd-pill { display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .zd-pill-big { background: var(--zd-warm-soft); color: var(--zd-warm); }
+.zd-pill-changed { background: rgba(107, 47, 160, 0.1); color: #6b2fa0; }
+html[data-theme="dark"] .zd-pill-changed { background: rgba(190, 150, 240, 0.14); color: #cfb2f5; }
 .zd-pill-staying, .zd-pill-good { background: var(--zd-good-soft); color: var(--zd-good); }
 .zd-pill-quiet, .zd-pill-steady { background: var(--zd-cool-soft); color: var(--zd-cool); }
 .zd-chip { display: inline-flex; align-items: center; min-height: 32px; padding: 0 12px; border-radius: 999px; background: var(--zd-line-2); color: var(--zd-ink-2); font-size: 13px; }
@@ -320,3 +322,10 @@ html[data-theme="dark"] .zd {
 
 /* Decorative glows (e.g. the AdSpy hero) must never widen the page on phones. */
 .zd-main { overflow-x: clip; }
+
+/* ---------- selects (ad finder) ---------- */
+.zd-select {
+  min-height: 42px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--zd-strong-line);
+  background: var(--zd-surface); color: var(--zd-ink); font: inherit; font-size: 14px;
+}
+.zd-select:focus-visible { outline: 2px solid var(--zd-accent); outline-offset: 1px; }
