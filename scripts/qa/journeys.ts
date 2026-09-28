@@ -8,8 +8,8 @@
  * Every step is timed; page crashes, console errors and failed API calls are
  * recorded. Test accounts are deleted at the end (unless --keep).
  *
- * It never starts a Meta collection (it does not call /refresh), so running
- * it does not load the scraper or Meta.
+ * It never starts a Meta collection (no /refresh, and "Your brand" is saved
+ * without a Meta page), so running it does not load the scraper or Meta.
  *
  * Run on your PC from F:\D2C (uses the keys already in worker\.env):
  *   npx tsx scripts/qa/journeys.ts --users 100 --concurrency 5
@@ -183,7 +183,7 @@ async function runUser(browser: Browser, n: number, created: string[]): Promise<
     });
 
     await step(steps, "set Your brand", async () => {
-      const { status, json } = await api(page, "POST", "/api/today/my-brand", { brandName: `QA Brand ${n}`, pageId: rivals[rivals.length - 1]?.pageId ?? "" });
+      const { status, json } = await api(page, "POST", "/api/today/my-brand", { brandName: `QA Brand ${n}`, pageId: "" });
       must(status === 200 && json.success, `my-brand ${status} ${JSON.stringify(json).slice(0, 120)}`);
     });
 

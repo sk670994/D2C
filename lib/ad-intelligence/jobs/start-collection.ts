@@ -212,6 +212,27 @@ export async function startAdSpyCollection(input: {
     return { job, run: ownRun, dispatched: false, outcome: "running_for_another_request", collectionKey };
   }
 
+  // 3b. Same Meta page, different name ("Mamaearth" vs "mama earth", or many
+  //     users setting the same page as their brand): one collection per page.
+  //     Without this, 10 users = 10 deep scrapes of one page, all writing the
+  //     same rows at once (QA run, 27 Sep: timeouts and deadlocks).
+  if (pageId) {
+    const since = new Date(Date.now() - Math.max(input.minIntervalMs ?? 0, 30 * 60_000)).toISOString();
+    const { data: pageRuns } = await createGlobalServiceClient()
+      .from("adspy_runs")
+      .select("id,status,completed_at,collection_job_id")
+      .eq("advertiser_page_id", pageId)
+      .or(`status.in.(queued,running,retrying),completed_at.gte.${since}`)
+      .limit(5);
+    const busy = (pageRuns ?? []) as Array<{ status: string; completed_at: string | null; collection_job_id: string | null }>;
+    if (busy.some((r) => ACTIVE_RUN_STATUSES.has(r.status) && r.collection_job_id !== job.id)) {
+      return { job, run: ownRun, dispatched: false, outcome: "running_for_another_request", collectionKey };
+    }
+    if (busy.some((r) => r.status === "completed")) {
+      return { job, run: ownRun, dispatched: false, outcome: "recently_collected", collectionKey };
+    }
+  }
+
   // 4. Respect the minimum interval between collections.
   const minInterval = Math.max(0, input.minIntervalMs ?? 0);
   const lastActivityAt = Math.max(
