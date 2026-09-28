@@ -55,7 +55,7 @@ const HEALTH_PORT = Number(process.env.ADSPY_WORKER_HEALTH_PORT) || 8787;
 const RECYCLE_JOBS = Number(process.env.ADSPY_WORKER_RECYCLE_JOBS) || 15;
 const MAX_RSS_MB = Number(process.env.ADSPY_WORKER_MAX_RSS_MB) || 1200;
 const MIN_TMP_MB = Number(process.env.ADSPY_WORKER_MIN_TMP_MB) || 512;
-const REAP_EVERY_MS = 60_000;
+const REAP_EVERY_MS = 5 * 60_000;
 const DB_HEARTBEAT_EVERY_MS = 30_000;
 /** A single job may legitimately run this long (collector budget + ingest). */
 const MAX_JOB_MS = (Number(process.env.ADSPY_WORKER_BUDGET_MS) || 8 * 60_000) + 5 * 60_000;

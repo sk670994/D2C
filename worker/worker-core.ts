@@ -71,7 +71,9 @@ export function pickRunnable(candidates: Candidate[], now = Date.now()): Candida
 
 /** Idle poll delay: 1s right after work, backing off to 5s, with jitter. */
 export function idleDelayMs(idleRounds: number, random = Math.random): number {
-  const base = Math.min(5_000, 1_000 * Math.max(1, idleRounds));
+  // Quick for the first few empty polls (a user may have just asked), then
+  // settle at ~20 s so an idle worker is not hitting the database constantly.
+  const base = Math.min(20_000, 1_000 * Math.max(1, idleRounds));
   return Math.round(base * (0.85 + random() * 0.3));
 }
 
