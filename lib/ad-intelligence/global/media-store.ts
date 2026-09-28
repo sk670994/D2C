@@ -12,6 +12,10 @@ import { createGlobalServiceClient } from "./supabase";
  * Enabled by ADSPY_STORE_MEDIA=1, or automatically in the background
  * collector (ADSPY_BROWSER=playwright). Only ads with a stable Library ID
  * are rehosted, so the stored path never changes between runs.
+ *
+ * One small WebP per ad (max 640 px wide, ~30-60 KB) serves both the card
+ * thumbnail and the detail view. Before this, each ad kept two full-size
+ * copies (~440 KB), which pushed the Free plan past its 1 GB storage.
  */
 
 const BUCKET = "ad-media";
@@ -55,6 +59,24 @@ async function ensureBucket(): Promise<boolean> {
   return bucketReady;
 }
 
+export const MEDIA_MAX_WIDTH = 640;
+export const MEDIA_QUALITY = 68;
+
+/** Re-encode to a small WebP; null when sharp is unavailable or the image is unreadable. */
+export async function toSmallWebp(bytes: Uint8Array): Promise<Uint8Array | null> {
+  try {
+    const sharp = (await import("sharp")).default;
+    const out = await sharp(bytes, { failOn: "none", animated: false })
+      .rotate()
+      .resize({ width: MEDIA_MAX_WIDTH, withoutEnlargement: true })
+      .webp({ quality: MEDIA_QUALITY, effort: 4 })
+      .toBuffer();
+    return new Uint8Array(out);
+  } catch {
+    return null;
+  }
+}
+
 function extFor(type: string): string {
   if (type.includes("png")) return "png";
   if (type.includes("webp")) return "webp";
@@ -70,13 +92,16 @@ async function rehost(url: string, key: string): Promise<string | null> {
     const response = await fetch(url, { signal: controller.signal, redirect: "follow" });
     const type = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
     if (!response.ok || !type.startsWith("image/") || type.includes("svg")) return null;
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (!bytes.byteLength || bytes.byteLength > MAX_BYTES) return null;
+    const original = new Uint8Array(await response.arrayBuffer());
+    if (!original.byteLength || original.byteLength > MAX_BYTES) return null;
 
-    const path = `${key}.${extFor(type)}`;
+    const small = await toSmallWebp(original);
+    const bytes = small ?? original;
+    const contentType = small ? "image/webp" : type;
+    const path = `${key}.${small ? "webp" : extFor(type)}`;
     const { error } = await createGlobalServiceClient()
       .storage.from(BUCKET)
-      .upload(path, bytes, { contentType: type, upsert: true, cacheControl: "31536000" });
+      .upload(path, bytes, { contentType, upsert: true, cacheControl: "31536000" });
     if (error) return null;
     return `${storagePrefix()}${path}`;
   } catch {
@@ -97,17 +122,22 @@ export async function persistAdMedia(ads: CompetitorAd[]): Promise<number> {
     const id = ad.id?.trim();
     if (!id) continue;
     const base = `${ad.platform}/${createHash("sha1").update(id).digest("hex").slice(0, 2)}/${id.replace(/[^\w-]/g, "_")}`;
-    for (const field of ["thumbnailUrl", "imageUrl"] as const) {
-      const url = ad[field];
-      if (!url || isStoredMediaUrl(url)) continue;
-      jobs.push(async () => {
-        const next = await rehost(url, `${base}-${field === "thumbnailUrl" ? "thumb" : "image"}`);
-        if (next) {
-          ad[field] = next;
-          stored += 1;
-        }
-      });
+    // One stored image per ad, shared by the thumbnail and the detail view.
+    const already = [ad.thumbnailUrl, ad.imageUrl].find((u) => isStoredMediaUrl(u));
+    if (already) {
+      if (!ad.thumbnailUrl || !isStoredMediaUrl(ad.thumbnailUrl)) ad.thumbnailUrl = already;
+      continue;
     }
+    const source = ad.imageUrl || ad.thumbnailUrl;
+    if (!source) continue;
+    jobs.push(async () => {
+      const next = await rehost(source, base);
+      if (next) {
+        ad.thumbnailUrl = next;
+        if (!ad.imageUrl || ad.imageUrl === source) ad.imageUrl = next;
+        stored += 1;
+      }
+    });
   }
 
   let index = 0;

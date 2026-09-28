@@ -54,11 +54,11 @@ describe("pickRunnable", () => {
 });
 
 describe("idleDelayMs", () => {
-  it("backs off from ~1s to at most ~5s", () => {
+  it("backs off from ~1s to at most ~20s", () => {
     expect(idleDelayMs(1, () => 0.5)).toBe(1000);
     expect(idleDelayMs(3, () => 0.5)).toBe(3000);
-    expect(idleDelayMs(50, () => 0.5)).toBe(5000);
-    expect(idleDelayMs(50, () => 1)).toBeLessThanOrEqual(5750);
+    expect(idleDelayMs(50, () => 0.5)).toBe(20000);
+    expect(idleDelayMs(50, () => 1)).toBeLessThanOrEqual(23000);
   });
 });
 

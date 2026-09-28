@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
+import { cached } from "@/lib/today/cache";
 
 export const runtime = "nodejs";
 // Run next to the Supabase database (ap-southeast-2 / Sydney).
@@ -53,65 +54,71 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: true, ads: hit.ads });
   }
 
-  const since = new Date(Date.now() - 21 * 86_400_000).toISOString();
-  const longBefore = new Date(Date.now() - 60 * 86_400_000).toISOString();
-  const base = createGlobalServiceClient()
-    .from("ad_intelligence_creatives")
-    .select(
-      "id,external_ad_id,advertiser_name,advertiser_id,creative_type,image_url,video_url,thumbnail_url,primary_text,headline,call_to_action,landing_page_url,source_url,offer,first_seen_at,last_seen_at,is_currently_active,markets:ad_intelligence_markets!inner(country)",
-    )
-    .eq("platform", "meta")
-    .eq("markets.country", country)
-    .not("advertiser_id", "is", null)
-    .not("thumbnail_url", "is", null);
-  // "new": launched in the last 3 weeks. "long": still running after 60+ days.
-  const { data, error } = await (
-    kind === "long"
-      ? base.eq("is_currently_active", true).lte("first_seen_at", longBefore).order("first_seen_at", { ascending: true })
-      : base.gte("first_seen_at", since).order("first_seen_at", { ascending: false })
-  ).limit(160);
+  // Shared across servers (today_cache), so all users reuse one query per 10 minutes.
+  let ads: unknown[];
+  try {
+    ads = await cached(`fresh:${cacheKey}`, TTL_MS, async () => {
+    const since = new Date(Date.now() - 21 * 86_400_000).toISOString();
+    const longBefore = new Date(Date.now() - 60 * 86_400_000).toISOString();
+    const base = createGlobalServiceClient()
+      .from("ad_intelligence_creatives")
+      .select(
+        "id,external_ad_id,advertiser_name,advertiser_id,creative_type,image_url,video_url,thumbnail_url,primary_text,headline,call_to_action,landing_page_url,source_url,offer,first_seen_at,last_seen_at,is_currently_active,markets:ad_intelligence_markets!inner(country)",
+      )
+      .eq("platform", "meta")
+      .eq("markets.country", country)
+      .not("advertiser_id", "is", null)
+      .not("thumbnail_url", "is", null);
+    // "new": launched in the last 3 weeks. "long": still running after 60+ days.
+    const { data, error } = await (
+      kind === "long"
+        ? base.eq("is_currently_active", true).lte("first_seen_at", longBefore).order("first_seen_at", { ascending: true })
+        : base.gte("first_seen_at", since).order("first_seen_at", { ascending: false })
+    ).limit(160);
 
-  if (error) {
-    console.error("[AdSpy fresh]", error.message);
+    if (error) throw new Error(error.message);
+
+    // At most 2 ads per advertiser so one brand cannot fill the whole wall.
+    const perBrand = new Map<string, number>();
+    return ((data ?? []) as unknown as Row[])
+      .filter((row) => {
+        const key = String(row.advertiser_id);
+        const n = perBrand.get(key) ?? 0;
+        if (n >= 2) return false;
+        perBrand.set(key, n + 1);
+        return true;
+      })
+      .slice(0, 16)
+      .map((row) => {
+        const first = row.first_seen_at ? new Date(row.first_seen_at).getTime() : NaN;
+        const last = row.last_seen_at ? new Date(row.last_seen_at).getTime() : Date.now();
+        return {
+          id: row.external_ad_id ?? row.id,
+          platform: "meta",
+          advertiserName: row.advertiser_name,
+          advertiserId: row.advertiser_id,
+          creativeType: row.creative_type ?? "unknown",
+          imageUrl: row.image_url,
+          videoUrl: row.video_url,
+          thumbnailUrl: row.thumbnail_url,
+          primaryText: row.primary_text,
+          headline: row.headline,
+          callToAction: row.call_to_action,
+          landingPage: row.landing_page_url,
+          sourceUrl: row.source_url,
+          offer: row.offer,
+          firstSeen: row.first_seen_at,
+          lastSeen: row.last_seen_at,
+          isActive: row.is_currently_active,
+          runningDays: Number.isFinite(first) ? Math.max(1, Math.round((last - first) / 86_400_000)) : null,
+          country,
+        };
+      });
+    });
+  } catch (error) {
+    console.error("[AdSpy fresh]", error instanceof Error ? error.message : error);
     return NextResponse.json({ success: false, error: "Could not load fresh ads." }, { status: 500 });
   }
-
-  // At most 2 ads per advertiser so one brand cannot fill the whole wall.
-  const perBrand = new Map<string, number>();
-  const ads = ((data ?? []) as unknown as Row[])
-    .filter((row) => {
-      const key = String(row.advertiser_id);
-      const n = perBrand.get(key) ?? 0;
-      if (n >= 2) return false;
-      perBrand.set(key, n + 1);
-      return true;
-    })
-    .slice(0, 16)
-    .map((row) => {
-      const first = row.first_seen_at ? new Date(row.first_seen_at).getTime() : NaN;
-      const last = row.last_seen_at ? new Date(row.last_seen_at).getTime() : Date.now();
-      return {
-        id: row.external_ad_id ?? row.id,
-        platform: "meta",
-        advertiserName: row.advertiser_name,
-        advertiserId: row.advertiser_id,
-        creativeType: row.creative_type ?? "unknown",
-        imageUrl: row.image_url,
-        videoUrl: row.video_url,
-        thumbnailUrl: row.thumbnail_url,
-        primaryText: row.primary_text,
-        headline: row.headline,
-        callToAction: row.call_to_action,
-        landingPage: row.landing_page_url,
-        sourceUrl: row.source_url,
-        offer: row.offer,
-        firstSeen: row.first_seen_at,
-        lastSeen: row.last_seen_at,
-        isActive: row.is_currently_active,
-        runningDays: Number.isFinite(first) ? Math.max(1, Math.round((last - first) / 86_400_000)) : null,
-        country,
-      };
-    });
 
   cache.set(cacheKey, { at: Date.now(), ads });
   return NextResponse.json({ success: true, ads }, { headers: { "Cache-Control": "private, max-age=120" } });
