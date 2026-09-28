@@ -879,9 +879,11 @@ export function AdSpyWorkspace() {
               <div>
                 <strong>{jobCopy(job)}</strong>
                 <span>
-                  {job && job.persistedAds > 0
-                    ? `${formatInt(job.persistedAds)} creatives saved so far — they appear below as they land.`
-                    : "Usually 20–60 seconds. You can keep browsing; results update automatically."}
+                  {collectingHint(
+                    job?.persistedAds ?? 0,
+                    result?.metaSource?.scopeType === "page" ? (result.metaSource.all?.total ?? result.metaSource.active?.total ?? null) : null,
+                    total,
+                  )}
                 </span>
               </div>
             </div>
@@ -1133,6 +1135,23 @@ function Avatar({ src, label, size = 34 }: { src?: string | null; label: string;
       {src && !failed ? <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} /> : initial}
     </span>
   );
+}
+
+/**
+ * Honest progress copy while a collection runs. Big advertisers take minutes,
+ * not seconds; the ads already indexed stay usable the whole time.
+ */
+function collectingHint(saved: number, metaTotal: number | null, indexed: number): string {
+  const ready = indexed > 0 ? ` The ${formatInt(indexed)} ads below are ready to use meanwhile.` : "";
+  if (saved > 0) {
+    const of = metaTotal && metaTotal > saved ? ` of about ${formatInt(metaTotal)}` : "";
+    return `${formatInt(saved)}${of} ads checked so far. New ones appear below as they land.`;
+  }
+  if (metaTotal && metaTotal > 150) {
+    const minutes = Math.min(15, Math.max(2, Math.round(metaTotal / 120)));
+    return `Meta shows about ${formatInt(metaTotal)} ads for this page, so a full check takes around ${minutes} minutes. You can keep browsing.${ready}`;
+  }
+  return `Usually under a minute. You can keep browsing; results update automatically.${ready}`;
 }
 
 function SourceCoverage({

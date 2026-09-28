@@ -108,3 +108,11 @@ html:not([data-theme="dark"]) .zd .azs .azs-tag-offer { background: #fff4e5; bor
 .zd .azs .azs-rownav button:not(:disabled):hover { background: var(--azs-accent-soft); }
 .zd .azs .azs-rowsec .azs-row { scroll-padding-left: 2px; }
 .zd .azs .azs-rowsec .azs-card-media { aspect-ratio: 4 / 5; }
+
+/* ---------- advertiser header: name + facts on top, actions on their own row ----------
+ * With seven buttons in one flex row, the buttons took the whole width and the
+ * name/facts column shrank to one word per line on laptop screens. */
+.zd .azs .azs-adv { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 14px 16px; }
+.zd .azs .azs-adv-actions { grid-column: 1 / -1; justify-content: flex-start; }
+.zd .azs .azs-adv-meta { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.zd .azs .azs-adv .azs-coverage { max-width: 760px; }

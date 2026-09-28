@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ArrowRight, Search } from "lucide-react";
 
 type Item = { id: string; label: string; hint: string; href: string };
@@ -25,6 +26,7 @@ export function CommandBar() {
   const [active, setActive] = useState(0);
   const [mac, setMac] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const listId = useId();
 
@@ -106,12 +108,12 @@ export function CommandBar() {
 
   return (
     <>
-      <button type="button" className="zd-cmd-trigger" onClick={openBar} aria-haspopup="dialog">
+      <button ref={triggerRef} type="button" className="zd-cmd-trigger" onClick={openBar} aria-haspopup="dialog">
         <Search size={16} aria-hidden="true" />
         <span>Search brands</span>
         <kbd>{mac ? "⌘K" : "Ctrl K"}</kbd>
       </button>
-      {open ? (
+      {open && typeof document !== "undefined" ? createPortal(
         <div className="zd-cmd-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && close()}>
           <div className="zd-cmd" role="dialog" aria-modal="true" aria-label="Search brands and pages">
             <div className="zd-cmd-input">
@@ -181,7 +183,11 @@ export function CommandBar() {
               )}
             </ul>
           </div>
-        </div>
+        </div>,
+        // Render outside the sticky rail (its own stacking layer), but inside
+        // .zd so the theme colours still apply. Otherwise page headers such
+        // as the AdSpy search bar paint over the dialog.
+        triggerRef.current?.closest(".zd") ?? document.body,
       ) : null}
     </>
   );

@@ -265,7 +265,7 @@ html[data-theme="dark"] .zd {
   border: 1px solid var(--zd-line); background: var(--zd-surface-2); color: var(--zd-muted);
 }
 .zd-cmd-backdrop {
-  position: fixed; inset: 0; z-index: 80; display: flex; justify-content: center; align-items: flex-start;
+  position: fixed; inset: 0; z-index: 1200; display: flex; justify-content: center; align-items: flex-start;
   padding: 12vh 16px 16px; background: rgba(12, 13, 17, 0.42); backdrop-filter: blur(3px);
   animation: zd-fade 0.14s ease-out;
 }

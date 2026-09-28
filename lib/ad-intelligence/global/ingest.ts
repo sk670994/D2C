@@ -60,12 +60,6 @@ function observationKey(input: { creativeId: string; country: string | null; reg
 export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOrUpdated: number; observations: number; languages: number; markets: number }> {
   if (!ads.length) return { insertedOrUpdated: 0, observations: 0, languages: 0, markets: 0 };
 
-  // Keep previews alive after Meta's CDN links expire (collector only by default).
-  await persistAdMedia(ads).catch((error) => {
-    console.error("[AdSpy media] rehost skipped:", error instanceof Error ? error.message : error);
-    return 0;
-  });
-
   const client = createGlobalServiceClient();
   const now = new Date().toISOString();
   const day = now.slice(0, 10);
@@ -176,6 +170,26 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
         ],
       ),
     );
+
+  /*
+   * Ads we already hold keep their stored image: point them at it so the
+   * rehost step below only downloads media for ads that are new to us.
+   * (A refresh of a big advertiser used to re-download every image.)
+   */
+  for (const ad of ads) {
+    const history = existingCreativeHistoryMap.get(`${ad.platform}:${buildExternalKey(ad)}`);
+    if (!history) continue;
+    const stored = [history.thumbnail_url, history.image_url].find((u) => isStoredMediaUrl(u));
+    if (!stored) continue;
+    ad.thumbnailUrl = isStoredMediaUrl(history.thumbnail_url) ? history.thumbnail_url : stored;
+    if (isStoredMediaUrl(history.image_url)) ad.imageUrl = history.image_url;
+  }
+
+  // Keep previews alive after Meta's CDN links expire (collector only by default).
+  await persistAdMedia(ads).catch((error) => {
+    console.error("[AdSpy media] rehost skipped:", error instanceof Error ? error.message : error);
+    return 0;
+  });
 
   const creativeRows = ads.map((ad) => {
     const externalAdKey =
@@ -304,7 +318,7 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
   const observationRows: any[] = [];
   const marketRows: any[] = [];
   const languageRows: any[] = [];
-  const aliasRows: any[] = [];
+  const aliasRows = new Map<string, { brand_id: string; alias: string; normalized_alias: string; alias_type: string }>();
   const creatorRowsToUpsert = new Map<string, any>();
 
   for (const ad of ads) {
@@ -364,7 +378,7 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
     }
 
     const brandId = brandIds.get(normalize(ad.advertiserName));
-    if (brandId && ad.advertiserName) aliasRows.push({ brand_id: brandId, alias: ad.advertiserName, normalized_alias: normalize(ad.advertiserName), alias_type: "advertiser" });
+    if (brandId && ad.advertiserName) aliasRows.set(`${brandId}:${normalize(ad.advertiserName)}`, { brand_id: brandId, alias: ad.advertiserName, normalized_alias: normalize(ad.advertiserName), alias_type: "advertiser" });
 
     if (ad.creatorName) creatorRowsToUpsert.set(`${ad.platform}:${normalize(ad.creatorName)}`, {
       canonical_name: ad.creatorName,
@@ -385,8 +399,9 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
     const { error } = await client.from("ad_intelligence_languages").upsert(languageRows, { onConflict: "creative_id,language_code" });
     if (error) throw new Error(`Language upsert failed: ${error.message}`);
   }
-  if (aliasRows.length) {
-    const { error } = await client.from("ad_intelligence_brand_aliases").upsert(aliasRows, { onConflict: "brand_id,normalized_alias" });
+  if (aliasRows.size) {
+    // One row per alias: Postgres rejects an upsert that touches a row twice.
+    const { error } = await client.from("ad_intelligence_brand_aliases").upsert(Array.from(aliasRows.values()), { onConflict: "brand_id,normalized_alias" });
     if (error) console.warn("[GlobalAdIngest] Alias warning:", error.message);
   }
 
