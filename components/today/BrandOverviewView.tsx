@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import type { BrandOverview, CreativePatterns } from "@/lib/today/load";
 import { ELEMENT_LABEL, type ElementKey } from "@/lib/decode/taxonomy";
+import { changeTitle } from "@/lib/today/changes";
 
 import { CountUp, GrowBar, Rise, SparkBar } from "./motion";
 import { EvidenceTile, formatInt, Initial, timeAgo } from "./parts";
@@ -196,6 +197,33 @@ export function BrandOverviewView({ pageId, country = "IN" }: { pageId: string; 
                   </span>
                 </div>
               </li>
+              {(b.changed ?? []).slice(0, 3).map((c) => (
+                <li key={`${c.creativeId}-${c.kind}`}>
+                  <time>{timeAgo(c.at)}</time>
+                  <div className="zd-col" style={{ gap: 4 }}>
+                    <strong>{changeTitle(c)}</strong>
+                    <span className="zd-muted" style={{ fontSize: 14 }}>
+                      On a live ad{c.evidence?.hook ? `: “${c.evidence.hook}”` : ""}.
+                    </span>
+                  </div>
+                </li>
+              ))}
+              {b.landing && b.landing.checked > 0 ? (
+                <li>
+                  <time>Pages</time>
+                  <div className="zd-col" style={{ gap: 4 }}>
+                    <strong>
+                      {b.landing.mismatches
+                        ? `${formatInt(b.landing.mismatches)} of ${formatInt(b.landing.checked)} checked ads promise a deal their page doesn't show`
+                        : `Checked ${formatInt(b.landing.checked)} ads against their landing pages: offers match`}
+                    </strong>
+                    <span className="zd-muted" style={{ fontSize: 14 }}>
+                      {b.landing.example?.adOffer ? `For example the ad says “${b.landing.example.adOffer}”${b.landing.example.pageTitle ? ` but “${b.landing.example.pageTitle}” shows something else` : ""}. ` : ""}
+                      {b.landing.pricePoints.length ? `Prices on their pages: ${b.landing.pricePoints.map((p) => `₹${formatInt(p)}`).join(", ")}.` : ""}
+                    </span>
+                  </div>
+                </li>
+              ) : null}
               {b.offers.length ? (
                 <li>
                   <time>{b.new7 ? "7 days" : "Live"}</time>

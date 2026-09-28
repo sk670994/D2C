@@ -126,3 +126,20 @@ describe("hooks from real ads", () => {
     expect((s.newest[0].hook ?? "").length <= 91).toBe(true);
   });
 });
+
+describe("changed moves", () => {
+  it("turns an offer change on a live ad into an alertable move", async () => {
+    const { alertsToSend } = await import("./alerts");
+    const s = summarizeBrand("5", [ad(1, { first_seen_at: daysAgo(30) })], NOW, [
+      { creativeId: "a1", kind: "offer", before: "20% off", after: "Buy 2 Get 1", at: daysAgo(1) },
+      { creativeId: "gone", kind: "copy", before: "x", after: "y", at: daysAgo(2) },
+    ]);
+    expect(s.changed.length).toBe(2);
+    const move = movesFor(s).find((m) => m.kind === "changed");
+    expect(move?.title).toBe("Changed an offer: “20% off” → “Buy 2 Get 1”.");
+    expect(move?.score).toBe(110);
+    expect(move?.evidence.length).toBe(1);
+    expect(todayHeadline([move!])).toBe("Mamaearth changed a live ad this week.");
+    expect(alertsToSend([move!], new Set(), "2026-W39").length).toBe(1);
+  });
+});

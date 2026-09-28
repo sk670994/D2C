@@ -8,6 +8,7 @@ import { getSearchFacets, type FacetResult } from "@/lib/ad-intelligence/global/
 import { brandSlug } from "@/lib/ad-intelligence/brand-slug";
 import seed from "@/scripts/adspy-seed-brands.json";
 import styles from "../brand.module.css";
+import { isStoredMediaUrl } from "@/lib/ad-intelligence/global/media-store";
 
 // Public, cached teaser page (SEO). Refreshed every 6 hours.
 export const revalidate = 21600;
@@ -66,11 +67,10 @@ async function load(slug: string) {
       .limit(24),
   ]);
 
-  const storagePrefix = `${(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/+$/, "")}/storage/`;
   const ads = ((adsResult.data ?? []) as SampleAd[])
     .filter((a) => a.thumbnail_url || a.image_url)
-    // Stored copies never expire, so prefer them on a cached public page.
-    .sort((a, b) => Number((b.thumbnail_url ?? b.image_url ?? "").startsWith(storagePrefix)) - Number((a.thumbnail_url ?? a.image_url ?? "").startsWith(storagePrefix)))
+    // Stored copies (Supabase or R2) never expire, so prefer them on a cached public page.
+    .sort((a, b) => Number(isStoredMediaUrl(b.thumbnail_url ?? b.image_url)) - Number(isStoredMediaUrl(a.thumbnail_url ?? a.image_url)))
     .slice(0, 6);
 
   return { advertiser, facets, ads };

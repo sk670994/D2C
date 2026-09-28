@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { BookOpen, CalendarClock, CreditCard, LayoutDashboard, Mail, Search, Sparkles } from "lucide-react";
+import { BookOpen, CalendarClock, CreditCard, LayoutDashboard, Mail, Search, Sparkles, Tags } from "lucide-react";
 
 import { SignOutButton } from "@/components/auth/SignOutButton";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
@@ -9,11 +9,12 @@ import { ZooptrackLogo } from "@/components/brand/ZooptrackLogo";
 
 import { CommandBar } from "./CommandBar";
 
-type NavKey = "today" | "adspy" | "vault" | "report" | "zwirk" | "profit" | "billing";
+type NavKey = "today" | "adspy" | "finder" | "vault" | "report" | "zwirk" | "profit" | "billing";
 
 const NAV: Array<{ key: NavKey; href: string; label: string; icon: ReactNode }> = [
   { key: "today", href: "/today", label: "Today", icon: <CalendarClock size={18} aria-hidden="true" /> },
   { key: "adspy", href: "/adspy", label: "Discover ads", icon: <Search size={18} aria-hidden="true" /> },
+  { key: "finder", href: "/today/finder", label: "Ad finder", icon: <Tags size={18} aria-hidden="true" /> },
   { key: "vault", href: "/brand-vault", label: "Brand Vault", icon: <BookOpen size={18} aria-hidden="true" /> },
   { key: "report", href: "/today/report", label: "Monday report", icon: <Mail size={18} aria-hidden="true" /> },
   { key: "zwirk", href: "/zwirk", label: "ZWIRK", icon: <Sparkles size={18} aria-hidden="true" /> },

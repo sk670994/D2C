@@ -7,6 +7,8 @@ import { loadDecodes } from "@/lib/decode/run";
 import { topPatterns, type PatternCount } from "@/lib/decode/taxonomy";
 
 import { cached } from "./cache";
+import { detectChanges, type AdChange, type VersionRow } from "./changes";
+import { loadLandingSummary, type LandingSummary } from "@/lib/landing/check";
 import { brandVerdict, pickMoves, summarizeBrand, todayHeadline, type BrandSummary, type Move, type TodayAdRow } from "./insights";
 
 const SELECT =
@@ -19,17 +21,62 @@ const SUMMARY_TTL_MS = 15 * 60_000;
 
 /** One brand's summary, shared by every user who watches it. */
 function brandSummary(pageId: string): Promise<BrandSummary> {
-  return cached(`sum:${pageId}`, SUMMARY_TTL_MS, async () => summarizeBrand(pageId, await loadRows(pageId)));
+  return cached(`sum:${pageId}`, SUMMARY_TTL_MS, async () => {
+    const rows = await loadRows(pageId);
+    return summarizeBrand(pageId, rows, Date.now(), await loadChanges(rows));
+  });
+}
+
+const CHANGE_WINDOW_DAYS = 7;
+const VERSION_FIELDS = "creative_id,primary_text,headline,call_to_action,landing_page_url,offer,product_price,currency,first_observed_at";
+
+/**
+ * Recent content changes on a brand's live ads. Two light queries: which live
+ * ads got a new version this week, then the full history of only those ads.
+ * Best effort: a failure means "no changes", never a broken page.
+ */
+async function loadChanges(rows: TodayAdRow[]): Promise<AdChange[]> {
+  try {
+    const liveIds = rows.filter((row) => row.is_currently_active).map((row) => row.id).slice(0, 600);
+    if (!liveIds.length) return [];
+    const client = createGlobalServiceClient();
+    const since = new Date(Date.now() - CHANGE_WINDOW_DAYS * 86_400_000).toISOString();
+    const touched = new Set<string>();
+    for (let i = 0; i < liveIds.length; i += 150) {
+      const { data, error } = await client
+        .from("ad_intelligence_creative_versions")
+        .select("creative_id")
+        .in("creative_id", liveIds.slice(i, i + 150))
+        .gte("first_observed_at", since)
+        .limit(1000);
+      if (error) return [];
+      for (const row of (data ?? []) as Array<{ creative_id: string }>) touched.add(String(row.creative_id));
+    }
+    if (!touched.size) return [];
+    const ids = Array.from(touched).slice(0, 150);
+    const { data, error } = await client
+      .from("ad_intelligence_creative_versions")
+      .select(VERSION_FIELDS)
+      .in("creative_id", ids)
+      .order("first_observed_at", { ascending: true })
+      .limit(2000);
+    if (error) return [];
+    return detectChanges((data ?? []) as VersionRow[], Date.parse(since));
+  } catch {
+    return [];
+  }
 }
 
 /** Summary + coverage + AI patterns for a brand page, shared across users. */
-function brandCore(pageId: string, country: string): Promise<{ summary: BrandSummary; coverage: SourceCounts | null; patterns: CreativePatterns }> {
+function brandCore(pageId: string, country: string): Promise<{ summary: BrandSummary; coverage: SourceCounts | null; patterns: CreativePatterns; landing?: LandingSummary | null }> {
   return cached(`core:${pageId}:${country}`, SUMMARY_TTL_MS, async () => {
     const [rows, coverage] = await Promise.all([
       loadRows(pageId),
       getSourceCounts({ platform: "meta", country, scope: { scopeType: "page", scopeKey: pageId } }),
     ]);
-    return { summary: summarizeBrand(pageId, rows), coverage, patterns: await patternsFor(rows) };
+    const live = rows.filter((row) => row.is_currently_active);
+    const landing = await loadLandingSummary(live.map((row) => row.id), new Map(live.map((row) => [row.id, row.offer])));
+    return { summary: summarizeBrand(pageId, rows, Date.now(), await loadChanges(rows)), coverage, patterns: await patternsFor(rows), landing };
   });
 }
 
@@ -47,6 +94,8 @@ export type BrandOverview = BrandSummary & {
   coverage: SourceCounts | null;
   patterns: CreativePatterns;
   vsYou: VsYou | null;
+  /** How live ads line up with their landing pages (null until checked). */
+  landing: LandingSummary | null;
 };
 
 export type TodayData = {
@@ -101,7 +150,7 @@ export async function getOwnBrand(userId: string): Promise<{ pageId: string | nu
 }
 
 export async function getBrandOverview(pageId: string, country = "IN", ownPageId: string | null = null): Promise<BrandOverview> {
-  const { summary, coverage, patterns } = await brandCore(pageId, country);
+  const { summary, coverage, patterns, landing } = await brandCore(pageId, country);
 
   let vsYou: VsYou | null = null;
   if (ownPageId && ownPageId !== pageId) {
@@ -119,7 +168,7 @@ export async function getBrandOverview(pageId: string, country = "IN", ownPageId
       },
     };
   }
-  return { ...summary, verdict: brandVerdict(summary), country, coverage, patterns, vsYou };
+  return { ...summary, verdict: brandVerdict(summary), country, coverage, patterns, vsYou, landing: landing ?? null };
 }
 
 /** The user's rivals: AdSpy watchlist first, then Brand Vault competitors (Page ID only). */

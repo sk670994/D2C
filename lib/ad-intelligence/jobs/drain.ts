@@ -25,6 +25,7 @@ export type DrainResult = {
   remaining: boolean;
   reaped: number;
   decoded: number;
+  landingPages?: number;
   ms: number;
 };
 
@@ -87,6 +88,20 @@ export async function drainAdSpyQueue(input: { deadlineAt: number; maxJobs?: num
         result.decoded = Number(decoded.decoded ?? 0);
       } catch (error) {
         console.warn("[AdSpy drain] decode skipped", error instanceof Error ? error.message : error);
+      }
+    }
+  }
+
+  // Then landing pages of watched brands (Jina Reader), with what is left.
+  if (input.decode !== false && !result.remaining) {
+    const left = input.deadlineAt - Date.now() - 5_000;
+    if (left > 30_000) {
+      try {
+        const { checkLandingPages } = await import("@/lib/landing/check");
+        const landing = await checkLandingPages({ limit: 8, deadlineAt: Date.now() + Math.min(left, 90_000) });
+        result.landingPages = landing.pages;
+      } catch (error) {
+        console.warn("[AdSpy drain] landing check skipped", error instanceof Error ? error.message : error);
       }
     }
   }

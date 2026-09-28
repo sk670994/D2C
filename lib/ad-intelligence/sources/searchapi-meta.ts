@@ -183,13 +183,29 @@ export function sourceUrlFor(input: Pick<AdSearchInput, "query" | "country" | "a
 export async function collectMetaAdsViaSearchApi(
   input: SearchApiCollectInput,
   onBatch: (ads: CompetitorAd[]) => Promise<void> | void,
-  options: { apiKey?: string | null; fetchImpl?: typeof fetch } = {},
+  options: {
+    apiKey?: string | null;
+    fetchImpl?: typeof fetch;
+    /** Another provider's page fetcher (e.g. ScrapeCreators); same loop, same mapper. */
+    fetchPage?: (token: string | null, timeoutMs: number) => Promise<SearchApiPage>;
+    provider?: string;
+  } = {},
 ): Promise<SearchApiCollectResult> {
-  const apiKey = options.apiKey ?? searchApiKey();
-  if (!apiKey) throw new SearchApiError("SEARCHAPI_API_KEY is not set", null, false);
+  const provider = options.provider ?? "searchapi";
+  let fetchPage = options.fetchPage;
+  if (!fetchPage) {
+    const apiKey = options.apiKey ?? searchApiKey();
+    if (!apiKey) throw new SearchApiError("SEARCHAPI_API_KEY is not set", null, false);
+    fetchPage = (token, timeoutMs) =>
+      fetchSearchApiPage(searchApiRequestBody(input, { nextPageToken: token, activeStatus: input.activeStatus }), {
+        apiKey,
+        fetchImpl: options.fetchImpl,
+        timeoutMs,
+      });
+  }
 
   const started = Date.now();
-  const maxPages = Math.max(1, input.maxPages ?? (Number(process.env.SEARCHAPI_MAX_PAGES) || 40));
+  const maxPages = Math.max(1, input.maxPages ?? (Number(process.env.META_API_MAX_PAGES ?? process.env.SEARCHAPI_MAX_PAGES) || 40));
   const sourceUrl = sourceUrlFor(input);
   const normalizedInput: AdSearchInput = { ...input, country: (input.country ?? "IN").toUpperCase() };
 
@@ -207,11 +223,7 @@ export async function collectMetaAdsViaSearchApi(
       return { calls, ads: adsOut, totalResults, stoppedBy: "deadline", ms: Date.now() - started };
     }
 
-    const page = await fetchSearchApiPage(searchApiRequestBody(input, { nextPageToken: token, activeStatus: input.activeStatus }), {
-      apiKey,
-      fetchImpl: options.fetchImpl,
-      timeoutMs: Math.max(10_000, Math.min(45_000, input.deadlineAt - Date.now())),
-    });
+    const page = await fetchPage(token, Math.max(10_000, Math.min(45_000, input.deadlineAt - Date.now())));
     calls += 1;
     if (page.totalResults != null) totalResults = page.totalResults;
 
@@ -219,8 +231,8 @@ export async function collectMetaAdsViaSearchApi(
     let fresh = 0;
     for (const raw of page.ads) {
       const ad = libraryNodeToAd(toLibraryNode(raw), normalizedInput, sourceUrl, totalResults, {
-        extractionMethod: "searchapi-meta-v1",
-        providerSource: "searchapi",
+        extractionMethod: `${provider}-meta-v1`,
+        providerSource: provider,
       });
       if (!ad || seen.has(ad.id)) continue;
       if (!matchesBrandName(ad, input)) continue;
@@ -304,3 +316,6 @@ export async function resolvePageViaSearchApi(
   const json = (await response.json().catch(() => null)) as { page_results?: SearchApiPageResult[] | null } | null;
   return pickExactPage(query, Array.isArray(json?.page_results) ? json!.page_results! : []);
 }
+
+/** Provider-neutral name for the paging loop above. */
+export const collectMetaAdsViaApi = collectMetaAdsViaSearchApi;
