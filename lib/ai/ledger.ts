@@ -40,7 +40,7 @@ export function estimateCostUsd(call: Pick<AiCall, "provider" | "inputTokens" | 
   return Math.round(cost * 1e8) / 1e8;
 }
 
-type Insertable = { from: (table: string) => { insert: (rows: unknown) => PromiseLike<{ error: { message: string } | null }> } };
+type Insertable = { from: (table: string) => { insert: (rows: Record<string, unknown>[]) => PromiseLike<{ error: { message: string } | null }> } };
 
 let disabled = false;
 
