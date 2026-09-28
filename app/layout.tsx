@@ -5,6 +5,7 @@ import { Plus_Jakarta_Sans } from "next/font/google";
 
 import { pageFontVars } from "./page-fonts";
 import { RouteMark } from "./RouteMark";
+import { VersionWatcher } from "@/components/app/VersionWatcher";
 
 // Sets the page's type voice before first paint (see html[data-route] in globals.css).
 const routeScript = `document.documentElement.dataset.route=location.pathname.split("/")[1]||"home"`;
@@ -40,6 +41,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <RouteMark />
+        <VersionWatcher />
         {children}
         <footer className="site-footer-global">
           <div className="site-footer-inner">

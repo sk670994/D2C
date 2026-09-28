@@ -58,6 +58,9 @@ export function metaSource(): MetaSourceName {
 function isApiSource(source: MetaSourceName): boolean {
   return source === "scrapecreators" || source === "searchapi";
 }
+/** API sources: pages per run and per brand in total (~14 ads per page). */
+const PER_RUN_PAGES = Number(process.env.META_API_PAGES_PER_RUN) || 30;
+const TOTAL_PAGES = Number(process.env.META_API_MAX_TOTAL_PAGES) || 100;
 /** One SearchApi collection gets this long (the drain route runs up to 300 s). */
 const SEARCHAPI_JOB_BUDGET_MS = Number(process.env.SEARCHAPI_JOB_BUDGET_MS) || 150_000;
 /** Lease must cover one invocation, not 5 of them. */
@@ -93,6 +96,9 @@ export type CollectionEvent = {
   advertiserPageId?: string | null;
   runId?: string;
   requestId?: string;
+  /** API sources: page token to continue a big brand where the last run stopped. */
+  apiCursor?: string | null;
+  apiPagesSoFar?: number;
 };
 
 type State = {
@@ -208,6 +214,7 @@ export async function collectAdIntelligence(
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   // Billed SearchApi calls for this collection (cost tracking).
   let searchApiCalls = 0;
+  let continuation: { cursor: string; pagesSoFar: number; pageId: string | null } | null = null;
 
   const persist = async (
     incoming: CompetitorAd[],
@@ -342,6 +349,7 @@ export async function collectAdIntelligence(
       }
 
       const deadlineAt = Math.min(options.deadlineAt ?? Number.POSITIVE_INFINITY, Date.now() + SEARCHAPI_JOB_BUDGET_MS);
+      const pagesSoFar = Number(data.apiPagesSoFar ?? 0);
       const outcome = await api.collect(
         {
           query: data.query,
@@ -352,6 +360,8 @@ export async function collectAdIntelligence(
           advertiserPageId: scrapePageId,
           activeStatus: phase === "deep" ? "all" : "active",
           deadlineAt,
+          startToken: data.apiCursor ?? null,
+          maxPages: Math.max(1, Math.min(PER_RUN_PAGES, TOTAL_PAGES - pagesSoFar)),
           // Quick refresh: stop once pages bring nothing new (saves credits).
           ...(phase === "quick" && scrapePageId ? { isKnown: await knownAdIds(scrapePageId), stopAfterKnownPages: 2 } : {}),
         },
@@ -360,6 +370,15 @@ export async function collectAdIntelligence(
         },
       );
       searchApiCalls = outcome.calls;
+      // Big brand, time or page budget used up: continue in a fresh run.
+      if (
+        phase === "deep" &&
+        outcome.nextToken &&
+        (outcome.stoppedBy === "deadline" || outcome.stoppedBy === "max_pages") &&
+        pagesSoFar + outcome.calls < TOTAL_PAGES
+      ) {
+        continuation = { cursor: outcome.nextToken, pagesSoFar: pagesSoFar + outcome.calls, pageId: scrapePageId };
+      }
       console.info("[AdSpy collect] API source", {
         provider,
         query: data.query,
@@ -543,21 +562,37 @@ export async function collectAdIntelligence(
     await updateCollectionJob(
       data.jobId,
       {
-        status: "exhausted",
-        stage: "exhausted",
+        // A continuation follows: keep the job "collecting" so open pages keep polling.
+        status: continuation ? "deep" : "exhausted",
+        stage: continuation ? "deep" : "exhausted",
         discoveredAds:
           state.discoveredAds,
         normalizedAds:
           state.normalizedAds,
         persistedAds:
           state.persistedAds,
-        completedAt:
-          new Date().toISOString(),
+        completedAt: continuation ? null : new Date().toISOString(),
         errorMessage: null,
       },
     );
 
     await refreshAdvertiserSummaries(data.platform, data.country, touchedAdvertisers);
+
+    if (continuation) {
+      // Queue the next slice on the same run; the drain picks it up next.
+      const { enqueueAdSpyRequest } = await import("@/lib/ad-intelligence/durable-run");
+      const { requestId: _done, ...rest } = data;
+      await enqueueAdSpyRequest({
+        runId: data.runId,
+        uniqueKey: `cont:${continuation.pagesSoFar}:${Date.now()}`,
+        requestType: "deep",
+        payload: { ...rest, advertiserPageId: continuation.pageId ?? rest.advertiserPageId ?? null, apiCursor: continuation.cursor, apiPagesSoFar: continuation.pagesSoFar },
+        priority: 90,
+        maxAttempts: 2,
+      });
+      const { kickAdSpyDrain } = await import("./drain");
+      kickAdSpyDrain();
+    }
 
     await markTrackedBrandCollected({
       query: data.query,

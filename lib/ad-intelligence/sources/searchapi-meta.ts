@@ -158,6 +158,8 @@ export type SearchApiCollectInput = AdSearchInput & {
    */
   stopAfterKnownPages?: number;
   isKnown?: (adId: string) => boolean;
+  /** Continue a previous run from this page token. */
+  startToken?: string | null;
 };
 
 export type SearchApiCollectResult = {
@@ -165,6 +167,8 @@ export type SearchApiCollectResult = {
   ads: number;
   totalResults: number | null;
   stoppedBy: "exhausted" | "deadline" | "max_pages" | "caught_up";
+  /** Page token to continue from in a later run (deadline / max_pages only). */
+  nextToken?: string | null;
   ms: number;
 };
 
@@ -209,7 +213,7 @@ export async function collectMetaAdsViaSearchApi(
   const sourceUrl = sourceUrlFor(input);
   const normalizedInput: AdSearchInput = { ...input, country: (input.country ?? "IN").toUpperCase() };
 
-  let token: string | null = null;
+  let token: string | null = input.startToken ?? null;
   let calls = 0;
   let adsOut = 0;
   let totalResults: number | null = null;
@@ -217,10 +221,10 @@ export async function collectMetaAdsViaSearchApi(
   const seen = new Set<string>();
 
   for (;;) {
-    if (calls >= maxPages) return { calls, ads: adsOut, totalResults, stoppedBy: "max_pages", ms: Date.now() - started };
+    if (calls >= maxPages) return { calls, ads: adsOut, totalResults, stoppedBy: "max_pages", ms: Date.now() - started, nextToken: token };
     // Leave room for one more call plus persisting its ads.
     if (calls > 0 && Date.now() > input.deadlineAt - 15_000) {
-      return { calls, ads: adsOut, totalResults, stoppedBy: "deadline", ms: Date.now() - started };
+      return { calls, ads: adsOut, totalResults, stoppedBy: "deadline", ms: Date.now() - started, nextToken: token };
     }
 
     const page = await fetchPage(token, Math.max(10_000, Math.min(45_000, input.deadlineAt - Date.now())));
