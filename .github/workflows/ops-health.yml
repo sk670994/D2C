@@ -13,6 +13,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
+      - name: Wake the collector (SearchApi mode; no-op otherwise)
+        continue-on-error: true
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          curl -s --max-time 20 -X POST -H "Authorization: Bearer $CRON_SECRET" "${SITE_URL:-https://www.zooptrack.co.in}/api/adspy/drain"; echo
       - name: Call ops-health
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}

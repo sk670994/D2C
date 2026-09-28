@@ -3,7 +3,7 @@ import "server-only";
 import { send } from "@vercel/queue";
 import type { CollectionEvent } from "./collect-ad-intelligence";
 
-export type AdSpyDispatchMode = "queue" | "inline" | "runner" | "worker";
+export type AdSpyDispatchMode = "queue" | "inline" | "runner" | "worker" | "searchapi";
 
 type InlineRunner = (payload: CollectionEvent) => void;
 let inlineRunner: InlineRunner | null = null;
@@ -25,6 +25,7 @@ export function setAdSpyInlineRunner(runner: InlineRunner | null) {
 export function getAdSpyDispatchMode(): AdSpyDispatchMode {
   if (inlineRunner) return "runner";
   if (process.env.ADSPY_COLLECTOR === "worker") return "worker";
+  if (process.env.ADSPY_COLLECTOR === "searchapi") return "searchapi";
   return process.env.VERCEL ? "queue" : "inline";
 }
 
@@ -41,6 +42,14 @@ export async function dispatchAdSpyCollection(
 
   if (mode === "worker") {
     // Durable request row already exists (status "queued"); the worker picks it up.
+    return { mode };
+  }
+
+  if (mode === "searchapi") {
+    // Request row is queued; wake the drain route on Vercel right away.
+    // Safety nets: the GitHub workflow and the nightly cron also drain.
+    const { kickAdSpyDrain } = await import("./drain");
+    kickAdSpyDrain();
     return { mode };
   }
 

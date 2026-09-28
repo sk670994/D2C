@@ -40,8 +40,26 @@ const SERVERLESS_BUDGET_MS = Number(process.env.ADSPY_SERVERLESS_BUDGET_MS) || 4
 /** Long-running workers (GitHub Actions) get a per-brand budget instead. */
 const WORKER_BUDGET_MS = Number(process.env.ADSPY_WORKER_BUDGET_MS) || 8 * 60_000;
 const IS_SERVERLESS = Boolean(process.env.VERCEL) && process.env.ADSPY_BROWSER !== "playwright";
+/**
+ * Where Meta ads come from: "searchapi" (SearchApi.io, runs on Vercel, no
+ * browser) or "playwright" (our own collector on the worker PC/VPS).
+ * ADSPY_COLLECTOR=searchapi switches the whole pipeline; ADSPY_META_SOURCE
+ * can force one source (e.g. the PC worker as a fallback).
+ */
+export function metaSource(): "searchapi" | "playwright" {
+  const forced = process.env.ADSPY_META_SOURCE?.trim().toLowerCase();
+  if (forced === "searchapi" || forced === "playwright") return forced;
+  return process.env.ADSPY_COLLECTOR === "searchapi" ? "searchapi" : "playwright";
+}
+/** One SearchApi collection gets this long (the drain route runs up to 300 s). */
+const SEARCHAPI_JOB_BUDGET_MS = Number(process.env.SEARCHAPI_JOB_BUDGET_MS) || 150_000;
 /** Lease must cover one invocation, not 5 of them. */
-const LEASE_SECONDS = IS_SERVERLESS ? 90 : Math.ceil(WORKER_BUDGET_MS / 1000) + 120;
+const LEASE_SECONDS =
+  metaSource() === "searchapi"
+    ? Math.ceil(SEARCHAPI_JOB_BUDGET_MS / 1000) + 90
+    : IS_SERVERLESS
+      ? 90
+      : Math.ceil(WORKER_BUDGET_MS / 1000) + 120;
 
 /**
  * An error that retrying cannot fix (missing job, malformed message, request
@@ -111,6 +129,7 @@ async function refreshAdvertiserSummaries(platform: string, country: string, pag
 
 export async function collectAdIntelligence(
   data: CollectionEvent,
+  options: { deadlineAt?: number } = {},
 ): Promise<State & { jobId: string }> {
   const job = await getCollectionJob(data.jobId);
 
@@ -163,6 +182,8 @@ export async function collectAdIntelligence(
   let scrapePageId: string | null = data.advertiserPageId ?? null;
   let resolvedPageId: string | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  // Billed SearchApi calls for this collection (cost tracking).
+  let searchApiCalls = 0;
 
   const persist = async (
     incoming: CompetitorAd[],
@@ -272,7 +293,61 @@ export async function collectAdIntelligence(
       );
     }
 
-    if (data.platform === "meta") {
+    if (data.platform === "meta" && metaSource() === "searchapi") {
+      const { collectMetaAdsViaSearchApi, resolvePageViaSearchApi } = await import(
+        "@/lib/ad-intelligence/sources/searchapi-meta"
+      );
+
+      // Brand name -> one exact Meta page (1 call). Ambiguous names stay a
+      // name search, filtered to advertisers carrying that name.
+      if (data.mode === "advertiser" && !scrapePageId) {
+        const page = await resolvePageViaSearchApi(data.query, data.country).catch(() => null);
+        if (page) {
+          scrapePageId = page.pageId;
+          resolvedPageId = page.pageId;
+        }
+      }
+
+      const deadlineAt = Math.min(options.deadlineAt ?? Number.POSITIVE_INFINITY, Date.now() + SEARCHAPI_JOB_BUDGET_MS);
+      const outcome = await collectMetaAdsViaSearchApi(
+        {
+          query: data.query,
+          country: data.country,
+          platform: data.platform,
+          mode: data.mode,
+          collectionDepth: phase,
+          advertiserPageId: scrapePageId,
+          activeStatus: phase === "deep" ? "all" : "active",
+          deadlineAt,
+        },
+        async (batch) => {
+          await persist(batch);
+        },
+      );
+      searchApiCalls = outcome.calls;
+      console.info("[AdSpy collect] SearchApi", {
+        query: data.query,
+        pageId: scrapePageId,
+        calls: outcome.calls,
+        ads: outcome.ads,
+        metaTotal: outcome.totalResults,
+        stoppedBy: outcome.stoppedBy,
+        ms: outcome.ms,
+      });
+
+      const observedTotal = metaTotalCount as number | null;
+      const scope = sourceScopeFor({ mode: data.mode, query: data.query, pageId: scrapePageId });
+      if (scope && observedTotal != null) {
+        await recordSourceCount({
+          platform: data.platform,
+          country: data.country,
+          scope,
+          statusScope: statusScopeForDepth(phase),
+          metaTotal: observedTotal,
+          collectedAds: state.discoveredAds,
+        });
+      }
+    } else if (data.platform === "meta") {
       const {
         collectMetaAdsInBatches,
       } = await import(
@@ -412,6 +487,8 @@ export async function collectAdIntelligence(
         phase,
         metaTotalCount,
         resolvedPageId,
+        source: data.platform === "meta" ? metaSource() : null,
+        searchApiCalls,
         discoveredAds:
           state.discoveredAds,
         normalizedAds:

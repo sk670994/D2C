@@ -26,6 +26,13 @@ describe("evaluateOps", () => {
     expect(off[0].severity).toBe("critical");
     expect(evaluateOps({ ...base, liveWorkers: 0, lastWorkerHeartbeat: new Date(now - 5 * 60_000).toISOString() })).toEqual([]);
   });
+  it("does not expect a worker when SearchApi collects on Vercel", () => {
+    const off = { ...base, liveWorkers: 0, lastWorkerHeartbeat: null, serverlessCollector: true };
+    expect(evaluateOps(off)).toEqual([]);
+    const stuck = evaluateOps({ ...off, waitingRequests: 2, oldestWaitingSec: 3600 });
+    expect(stuck.map((i) => i.key).join(",")).toBe("queue_stuck");
+    expect(stuck[0].fix).toMatch(/drain/);
+  });
   it("flags a stuck queue and failing collections", () => {
     const keys = evaluateOps({ ...base, waitingRequests: 4, oldestWaitingSec: 3600, failed24h: 9, completed24h: 6 }).map((i) => i.key);
     expect(keys.includes("queue_stuck")).toBe(true);

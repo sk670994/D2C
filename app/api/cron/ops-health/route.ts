@@ -43,6 +43,7 @@ export async function GET(request: NextRequest) {
     decodesDone24h: done.count ?? 0,
     decodesFailed24h: failed.count ?? 0,
     geminiConfigured: Boolean(process.env.GEMINI_API_KEY?.trim()),
+    serverlessCollector: process.env.ADSPY_COLLECTOR === "searchapi",
   };
   const issues = evaluateOps(snapshot);
   const to = process.env.OPS_ALERT_EMAIL?.trim();
