@@ -135,6 +135,23 @@ async function refreshAdvertiserSummaries(platform: string, country: string, pag
   }
 }
 
+/** Ad archive ids we already hold for a page (for the incremental stop). */
+async function knownAdIds(pageId: string): Promise<(id: string) => boolean> {
+  const { createGlobalServiceClient } = await import("@/lib/ad-intelligence/global/supabase");
+  const known = new Set<string>();
+  const { data } = await createGlobalServiceClient()
+    .from("ad_intelligence_creatives")
+    .select("external_ad_key")
+    .eq("platform", "meta")
+    .eq("advertiser_id", pageId)
+    .limit(5000);
+  for (const row of (data ?? []) as Array<{ external_ad_key: string | null }>) {
+    const key = String(row.external_ad_key ?? "");
+    if (key.startsWith("meta:")) known.add(key.slice(5));
+  }
+  return (id) => known.has(id);
+}
+
 export async function collectAdIntelligence(
   data: CollectionEvent,
   options: { deadlineAt?: number } = {},
@@ -335,6 +352,8 @@ export async function collectAdIntelligence(
           advertiserPageId: scrapePageId,
           activeStatus: phase === "deep" ? "all" : "active",
           deadlineAt,
+          // Quick refresh: stop once pages bring nothing new (saves credits).
+          ...(phase === "quick" && scrapePageId ? { isKnown: await knownAdIds(scrapePageId), stopAfterKnownPages: 2 } : {}),
         },
         async (batch) => {
           await persist(batch);

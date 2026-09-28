@@ -150,7 +150,8 @@ export async function refreshTrackedAdSpy(options: {
         // A little under the refresh period so a daily cron always qualifies.
         minIntervalMs: Math.max(1, target.refreshHours - 2) * 60 * 60 * 1000,
         reason: "scheduled",
-        depth: options.depth,
+        // API mode pays per call: nightly = new/live ads only, full read on Sundays.
+        depth: options.depth ?? (process.env.ADSPY_COLLECTOR === "searchapi" ? (new Date().getUTCDay() === 0 ? "deep" : "quick") : undefined),
       });
 
       if (result.dispatched) dispatched += 1;
