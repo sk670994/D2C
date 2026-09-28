@@ -153,3 +153,26 @@ export const asyncChecks = (async () => {
 it("pages, stops when caught up, respects the cap", async () => {
   await asyncChecks;
 });
+
+export const resumeChecks = (async () => {
+  const calls: Array<Record<string, string>> = [];
+  const first = await collectMetaAdsViaSearchApi(
+    { query: "Mamaearth", country: "IN", advertiserPageId: "619181354927737", deadlineAt: Date.now() + 120_000, maxPages: 1 },
+    () => undefined,
+    { apiKey: "test", fetchImpl: fakeFetch(calls) },
+  );
+  expect(first.nextToken).toBe("1");
+  const rest = await collectMetaAdsViaSearchApi(
+    { query: "Mamaearth", country: "IN", advertiserPageId: "619181354927737", deadlineAt: Date.now() + 120_000, startToken: first.nextToken },
+    () => undefined,
+    { apiKey: "test", fetchImpl: fakeFetch(calls) },
+  );
+  expect(calls[1].next_page_token).toBe("1");
+  expect(rest.calls).toBe(2);
+  expect(rest.stoppedBy).toBe("exhausted");
+  return "resume ok";
+})();
+
+it("continues from a saved page token", async () => {
+  await resumeChecks;
+});
