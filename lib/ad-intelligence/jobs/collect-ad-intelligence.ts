@@ -1,6 +1,5 @@
 ﻿import "server-only";
 
-import { adProviders } from "@/lib/ad-intelligence/providers";
 import type { AdPlatform, CompetitorAd } from "@/lib/ad-intelligence/types";
 import type {
   AdSearchMode,
@@ -312,7 +311,8 @@ export async function collectAdIntelligence(
       });
     }, HEARTBEAT_MS);
 
-    if (!adProviders[data.platform]) {
+    // No static provider import here: it would load Playwright on Vercel API routes.
+    if (!["meta", "google", "linkedin"].includes(data.platform)) {
       throw new Error(
         `No provider configured for ${data.platform}.`,
       );
