@@ -57,6 +57,11 @@ function observationKey(input: { creativeId: string; country: string | null; reg
   return [input.creativeId, input.day, input.country ?? "", input.region ?? "", input.language ?? "", input.publisherPlatform ?? ""].join("|");
 }
 
+function deferMediaCopy(): boolean {
+  if (process.env.ADSPY_MEDIA_INLINE === "1") return false;
+  return process.env.ADSPY_COLLECTOR === "searchapi";
+}
+
 export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOrUpdated: number; observations: number; languages: number; markets: number }> {
   if (!ads.length) return { insertedOrUpdated: 0, observations: 0, languages: 0, markets: 0 };
 
@@ -186,7 +191,10 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
   }
 
   // Keep previews alive after Meta's CDN links expire (collector only by default).
-  await persistAdMedia(ads).catch((error) => {
+  // API collection on Vercel: save ads first, copy images later in idle time
+  // (lib/ad-intelligence/jobs/media-backfill.ts). Meta's links work for days,
+  // so ads show at once instead of waiting on image downloads.
+  if (!deferMediaCopy()) await persistAdMedia(ads).catch((error) => {
     console.error("[AdSpy media] rehost skipped:", error instanceof Error ? error.message : error);
     return 0;
   });

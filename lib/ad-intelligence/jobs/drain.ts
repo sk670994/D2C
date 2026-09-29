@@ -26,6 +26,7 @@ export type DrainResult = {
   reaped: number;
   decoded: number;
   landingPages?: number;
+  mediaCopied?: number;
   ms: number;
 };
 
@@ -75,6 +76,16 @@ export async function drainAdSpyQueue(input: { deadlineAt: number; maxJobs?: num
       // The job already recorded the failure / retry on the request row.
       result.failed += 1;
       console.error("[AdSpy drain] collection failed", { requestId: next.id, error: error instanceof Error ? error.message : error });
+    }
+  }
+
+  // Idle time -> copy new ads' images (collection saves ads first, images later).
+  if (input.decode !== false && !result.remaining && input.deadlineAt - Date.now() > 20_000) {
+    try {
+      const { backfillAdMedia } = await import("./media-backfill");
+      result.mediaCopied = await backfillAdMedia({ limit: 80, deadlineAt: Math.min(input.deadlineAt - 10_000, Date.now() + 60_000) });
+    } catch (error) {
+      console.warn("[AdSpy drain] media backfill skipped", error instanceof Error ? error.message : error);
     }
   }
 
