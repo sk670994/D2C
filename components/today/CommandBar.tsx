@@ -139,7 +139,10 @@ export function CommandBar() {
                     event.preventDefault();
                     go(items[active]);
                   } else if (event.key === "Tab") {
+                    // Focus stays in the dialog (one focusable field); Tab moves
+                    // through the results like the arrows, Shift+Tab goes back.
                     event.preventDefault();
+                    if (items.length) setActive((i) => (event.shiftKey ? (i - 1 + items.length) % items.length : (i + 1) % items.length));
                   }
                 }}
                 placeholder="Type a brand (Mamaearth, boAt…) or a page"

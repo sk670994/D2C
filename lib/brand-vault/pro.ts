@@ -1,5 +1,7 @@
 import "server-only";
 
+import { cached } from "@/lib/today/cache";
+
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { startAdSpyCollection } from "@/lib/ad-intelligence/jobs/start-collection";
 import {
@@ -602,7 +604,14 @@ export async function getBrandVaultAnalytics(input: {
 }): Promise<BrandVaultAnalytics> {
   const { breakEvenPrice, targetMarginPrice, contributionBeforeAds } = calculateBreakEven(input.economics);
   const settled = await Promise.allSettled(
-    input.competitors.map((competitor) => analyzeCompetitor({ competitor, period: input.period, breakEvenPrice, userId: input.userId })),
+    input.competitors.map((competitor) =>
+      // Reads up to thousands of ads per rival: compute once per 15 min, not per page view.
+      cached(
+        `bv:${input.userId}:${competitor.advertiserPageId ?? competitor.name}:${competitor.country ?? ""}:${input.period}:${Math.round(Number(breakEvenPrice ?? 0))}`,
+        15 * 60_000,
+        () => analyzeCompetitor({ competitor, period: input.period, breakEvenPrice, userId: input.userId }),
+      ),
+    ),
   );
   const competitors = settled
     .map((result, i) => {

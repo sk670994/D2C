@@ -13,6 +13,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Own ad-account sync (Profit OS) is off until its Meta/Google credentials
+  // are configured; a nightly job failing on missing config is only noise.
+  if (process.env.AD_ACCOUNT_SYNC !== "1") {
+    return NextResponse.json({ skipped: "AD_ACCOUNT_SYNC is not enabled" });
+  }
+
   try {
     const supabase = createServiceClient();
 

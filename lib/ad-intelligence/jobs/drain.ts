@@ -44,7 +44,7 @@ async function candidates(): Promise<Candidate[]> {
 }
 
 /** Minimum time left to start another brand (one SearchApi page + saving). */
-const MIN_START_MS = 45_000;
+const MIN_START_MS = 70_000;
 
 export async function drainAdSpyQueue(input: { deadlineAt: number; maxJobs?: number; decode?: boolean }): Promise<DrainResult> {
   const started = Date.now();
@@ -68,7 +68,16 @@ export async function drainAdSpyQueue(input: { deadlineAt: number; maxJobs?: num
     tried.add(next.id);
 
     const payload = (next.payload ?? {}) as Partial<CollectionEvent>;
-    if (!payload.jobId || !payload.runId) continue;
+    if (!payload.jobId || !payload.runId) {
+      // Poison message: record it as failed so it is never picked again.
+      await createGlobalServiceClient()
+        .from("adspy_requests")
+        .update({ status: "failed", last_error: "Invalid request payload (missing jobId/runId)", updated_at: new Date().toISOString() })
+        .eq("id", next.id)
+        .in("status", ["queued", "retrying"]);
+      result.failed += 1;
+      continue;
+    }
     try {
       await collectAdIntelligence({ ...(payload as CollectionEvent), runId: payload.runId, requestId: next.id }, { deadlineAt: input.deadlineAt - 10_000 });
       result.processed += 1;
@@ -83,7 +92,7 @@ export async function drainAdSpyQueue(input: { deadlineAt: number; maxJobs?: num
   if (input.decode !== false && !result.remaining && input.deadlineAt - Date.now() > 20_000) {
     try {
       const { backfillAdMedia } = await import("./media-backfill");
-      result.mediaCopied = await backfillAdMedia({ limit: 80, deadlineAt: Math.min(input.deadlineAt - 10_000, Date.now() + 60_000) });
+      result.mediaCopied = await backfillAdMedia({ limit: 40, deadlineAt: Math.min(input.deadlineAt - 15_000, Date.now() + 30_000) });
     } catch (error) {
       console.warn("[AdSpy drain] media backfill skipped", error instanceof Error ? error.message : error);
     }
@@ -95,7 +104,7 @@ export async function drainAdSpyQueue(input: { deadlineAt: number; maxJobs?: num
     if (left > 20_000) {
       try {
         const { decodePendingAds } = await import("@/lib/decode/run");
-        const decoded = await decodePendingAds({ limit: 15, deadlineAt: Date.now() + Math.min(left, 90_000) });
+        const decoded = await decodePendingAds({ limit: 10, deadlineAt: Date.now() + Math.min(left - 10_000, 30_000) });
         result.decoded = Number(decoded.decoded ?? 0);
       } catch (error) {
         console.warn("[AdSpy drain] decode skipped", error instanceof Error ? error.message : error);
@@ -109,7 +118,7 @@ export async function drainAdSpyQueue(input: { deadlineAt: number; maxJobs?: num
     if (left > 30_000) {
       try {
         const { checkLandingPages } = await import("@/lib/landing/check");
-        const landing = await checkLandingPages({ limit: 8, deadlineAt: Date.now() + Math.min(left, 90_000) });
+        const landing = await checkLandingPages({ limit: 4, deadlineAt: Date.now() + Math.min(left - 10_000, 25_000) });
         result.landingPages = landing.pages;
       } catch (error) {
         console.warn("[AdSpy drain] landing check skipped", error instanceof Error ? error.message : error);

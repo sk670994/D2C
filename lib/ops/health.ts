@@ -16,6 +16,9 @@ export type OpsSnapshot = {
   geminiConfigured: boolean;
   /** Collection runs on Vercel (SearchApi); no PC/VPS worker is expected. */
   serverlessCollector?: boolean;
+  /** Freshness, the product metric: watched brands not refreshed in 36 h. */
+  watchedBrands?: number;
+  staleWatchedBrands?: number;
 };
 
 export type OpsIssue = { key: string; severity: "critical" | "warning"; title: string; detail: string; fix: string };
@@ -45,6 +48,17 @@ export function evaluateOps(s: OpsSnapshot): OpsIssue[] {
       fix: s.serverlessCollector
         ? "Open /api/adspy/drain?wait=1 (with CRON_SECRET) or check the Vercel logs for [AdSpy drain]; check the SearchApi key and quota."
         : "Check the worker log for errors; restart it.",
+    });
+  }
+  const watched = s.watchedBrands ?? 0;
+  const stale = s.staleWatchedBrands ?? 0;
+  if (watched > 0 && stale >= Math.max(2, Math.ceil(watched * 0.3))) {
+    issues.push({
+      key: "data_stale",
+      severity: stale >= Math.ceil(watched * 0.6) ? "critical" : "warning",
+      title: "Rival data is going stale",
+      detail: `${stale} of ${watched} watched brands were not refreshed in 36 h.`,
+      fix: "Check the nightly refresh (Vercel cron /api/cron/refresh-tracked-adspy), the drain logs and the ScrapeCreators credits.",
     });
   }
   const finished = s.failed24h + s.completed24h;

@@ -45,6 +45,23 @@ export async function GET(request: NextRequest) {
     geminiConfigured: Boolean(process.env.GEMINI_API_KEY?.trim()),
     serverlessCollector: process.env.ADSPY_COLLECTOR === "searchapi",
   };
+  // Freshness: watched brands whose summary was not recomputed in 36 h.
+  try {
+    const { data: watchRows } = await client.from("adspy_advertiser_watchlists").select("advertiser_id").eq("platform", "meta").limit(2000);
+    const watchedIds = Array.from(new Set((watchRows ?? []).map((r: { advertiser_id: unknown }) => String(r.advertiser_id)).filter((id) => /^\d+$/.test(id))));
+    if (watchedIds.length) {
+      const fresh = new Set<string>();
+      const cutoff = new Date(now - 36 * 3_600_000).toISOString();
+      for (let i = 0; i < watchedIds.length; i += 200) {
+        const { data } = await client.from("adspy_advertiser_summaries").select("advertiser_id").in("advertiser_id", watchedIds.slice(i, i + 200)).gte("computed_at", cutoff);
+        for (const row of (data ?? []) as Array<{ advertiser_id: string }>) fresh.add(String(row.advertiser_id));
+      }
+      snapshot.watchedBrands = watchedIds.length;
+      snapshot.staleWatchedBrands = watchedIds.length - fresh.size;
+    }
+  } catch {
+    // freshness is best effort
+  }
   const issues = evaluateOps(snapshot);
   const to = process.env.OPS_ALERT_EMAIL?.trim();
   const dry = request.nextUrl.searchParams.get("dry") === "1";

@@ -33,6 +33,13 @@ describe("evaluateOps", () => {
     expect(stuck.map((i) => i.key).join(",")).toBe("queue_stuck");
     expect(stuck[0].fix).toMatch(/drain/);
   });
+  it("flags stale rival data", () => {
+    expect(evaluateOps({ ...base, watchedBrands: 10, staleWatchedBrands: 1 })).toEqual([]);
+    const warn = evaluateOps({ ...base, watchedBrands: 10, staleWatchedBrands: 4 });
+    expect(warn[0].key).toBe("data_stale");
+    expect(warn[0].severity).toBe("warning");
+    expect(evaluateOps({ ...base, watchedBrands: 10, staleWatchedBrands: 7 })[0].severity).toBe("critical");
+  });
   it("flags a stuck queue and failing collections", () => {
     const keys = evaluateOps({ ...base, waitingRequests: 4, oldestWaitingSec: 3600, failed24h: 9, completed24h: 6 }).map((i) => i.key);
     expect(keys.includes("queue_stuck")).toBe(true);

@@ -27,6 +27,6 @@ jobs:
       - name: Unit tests
         run: npx vitest run
       - name: Type check
-        # Reported, not blocking, until older files are fully typed.
-        continue-on-error: true
+        # Blocking: the Vercel build type-checks too, so a red check here means
+        # the deploy would fail as well.
         run: npx tsc --noEmit -p tsconfig.json
