@@ -5,11 +5,12 @@ import { drainAdSpyQueue, pingAdSpyDrain } from "@/lib/ad-intelligence/jobs/drai
 export const runtime = "nodejs";
 export const preferredRegion = "syd1";
 export const dynamic = "force-dynamic";
-// Fluid compute allows 300 s on every plan. Lower DRAIN_BUDGET_MS if the
-// project is ever limited to 60 s.
+// Short invocations, chained: each drain works ~3 minutes at most and hands
+// over to a fresh one, far from Vercel's 300 s ceiling (tail latency of the
+// provider or the database can no longer push a run into a timeout).
 export const maxDuration = 300;
 
-const BUDGET_MS = Number(process.env.DRAIN_BUDGET_MS) || 270_000;
+const BUDGET_MS = Math.min(Number(process.env.DRAIN_BUDGET_MS) || 180_000, 200_000);
 
 async function run() {
   const result = await drainAdSpyQueue({ deadlineAt: Date.now() + BUDGET_MS });

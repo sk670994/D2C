@@ -191,11 +191,10 @@ export async function GET(
       );
     }
 
-    let job =
-      await getCollectionJob(
-        normalized,
-        userId,
-      );
+    // The user's own job, or a shared collection they were pointed to (same
+    // brand page, started by someone else). Ad data is global either way.
+    const own = await getCollectionJob(normalized, userId);
+    let job = own ?? (await getCollectionJob(normalized));
 
     if (!job) {
       return NextResponse.json(
@@ -211,7 +210,7 @@ export async function GET(
     const durableRun =
       await getDurableRunByCollectionJob(
         job.id,
-        userId,
+        own ? userId : undefined,
       );
 
     const isOld = oldJob(job);

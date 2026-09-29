@@ -62,7 +62,7 @@ function isApiSource(source: MetaSourceName): boolean {
 const PER_RUN_PAGES = Number(process.env.META_API_PAGES_PER_RUN) || 30;
 const TOTAL_PAGES = Number(process.env.META_API_MAX_TOTAL_PAGES) || 100;
 /** One SearchApi collection gets this long (the drain route runs up to 300 s). */
-const SEARCHAPI_JOB_BUDGET_MS = Number(process.env.SEARCHAPI_JOB_BUDGET_MS) || 150_000;
+const SEARCHAPI_JOB_BUDGET_MS = Math.min(Number(process.env.SEARCHAPI_JOB_BUDGET_MS) || 100_000, 120_000);
 /** Lease must cover one invocation, not 5 of them. */
 const LEASE_SECONDS =
   isApiSource(metaSource())
@@ -536,6 +536,20 @@ export async function collectAdIntelligence(
         ...state,
       };
     }
+    // Continuation first, in the same breath as finishing this slice: the run
+    // then never passes through a terminal state while more work is due.
+    if (continuation) {
+      const { enqueueAdSpyRequest } = await import("@/lib/ad-intelligence/durable-run");
+      const { requestId: _done, ...rest } = data;
+      await enqueueAdSpyRequest({
+        runId: data.runId,
+        uniqueKey: `cont:${continuation.pagesSoFar}:${Date.now()}`,
+        requestType: "deep",
+        payload: { ...rest, advertiserPageId: continuation.pageId ?? rest.advertiserPageId ?? null, apiCursor: continuation.cursor, apiPagesSoFar: continuation.pagesSoFar },
+        priority: 90,
+        maxAttempts: 2,
+      });
+    }
     await completeAdSpyRequest({
       requestId: data.requestId,
       result: {
@@ -553,7 +567,7 @@ export async function collectAdIntelligence(
       },
     });
 
-    await finishAdSpyRun({
+    if (!continuation) await finishAdSpyRun({
       runId: data.runId,
       status: "exhausted",
       errorMessage: null,
@@ -578,18 +592,8 @@ export async function collectAdIntelligence(
 
     await refreshAdvertiserSummaries(data.platform, data.country, touchedAdvertisers);
 
+
     if (continuation) {
-      // Queue the next slice on the same run; the drain picks it up next.
-      const { enqueueAdSpyRequest } = await import("@/lib/ad-intelligence/durable-run");
-      const { requestId: _done, ...rest } = data;
-      await enqueueAdSpyRequest({
-        runId: data.runId,
-        uniqueKey: `cont:${continuation.pagesSoFar}:${Date.now()}`,
-        requestType: "deep",
-        payload: { ...rest, advertiserPageId: continuation.pageId ?? rest.advertiserPageId ?? null, apiCursor: continuation.cursor, apiPagesSoFar: continuation.pagesSoFar },
-        priority: 90,
-        maxAttempts: 2,
-      });
       const { kickAdSpyDrain } = await import("./drain");
       kickAdSpyDrain();
     }

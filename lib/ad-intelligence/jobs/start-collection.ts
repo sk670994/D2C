@@ -210,7 +210,9 @@ export async function startAdSpyCollection(input: {
   //    writes to the shared index, so don't start a duplicate scrape.
   const activeForKey = await findActiveRunForKey(collectionKey);
   if (activeForKey && activeForKey.collection_job_id !== job.id) {
-    return { job, run: ownRun, dispatched: false, outcome: "running_for_another_request", collectionKey };
+    // Hand back the job that is actually collecting, so the page follows its progress.
+    const live = (await getCollectionJob(activeForKey.collection_job_id)) ?? job;
+    return { job: live, run: ownRun, dispatched: false, outcome: "running_for_another_request", collectionKey };
   }
 
   // 3b. Same Meta page, different name ("Mamaearth" vs "mama earth", or many
@@ -226,8 +228,11 @@ export async function startAdSpyCollection(input: {
       .or(`status.in.(queued,running,retrying),completed_at.gte.${since}`)
       .limit(5);
     const busy = (pageRuns ?? []) as Array<{ status: string; completed_at: string | null; collection_job_id: string | null }>;
-    if (busy.some((r) => ACTIVE_RUN_STATUSES.has(r.status) && r.collection_job_id !== job.id)) {
-      return { job, run: ownRun, dispatched: false, outcome: "running_for_another_request", collectionKey };
+    const other = busy.find((r) => ACTIVE_RUN_STATUSES.has(r.status) && r.collection_job_id !== job.id);
+    if (other) {
+      // Follow the collection already running for this page (same data for everyone).
+      const live = other.collection_job_id ? await getCollectionJob(other.collection_job_id) : null;
+      return { job: live ?? job, run: ownRun, dispatched: false, outcome: "running_for_another_request", collectionKey };
     }
     if (busy.some((r) => r.status === "completed")) {
       return { job, run: ownRun, dispatched: false, outcome: "recently_collected", collectionKey };

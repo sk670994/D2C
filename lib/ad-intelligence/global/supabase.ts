@@ -34,6 +34,8 @@ function getEnv(
  *   or Supabase's automatic API-key Authorization header
  *   cannot interfere with the global dataset queries.
  */
+const DB_FETCH_TIMEOUT_MS = Number(process.env.DB_FETCH_TIMEOUT_MS) || 25_000;
+
 export function createGlobalServiceClient(): SupabaseClient {
   const url =
     getEnv(
@@ -100,11 +102,17 @@ export function createGlobalServiceClient(): SupabaseClient {
         secretKey,
       );
 
+      // No database call may hang a function until Vercel kills it (seen:
+      // /api/billing and /api/health at 300 s while the DB was unhealthy).
+      // Callers that pass their own signal keep it; otherwise cap at 25 s.
+      const signal = init?.signal ?? AbortSignal.timeout(DB_FETCH_TIMEOUT_MS);
+
       return fetch(
         request ?? input,
         {
           ...init,
           headers,
+          signal,
         },
       );
     };

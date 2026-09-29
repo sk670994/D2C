@@ -223,11 +223,11 @@ export async function collectMetaAdsViaSearchApi(
   for (;;) {
     if (calls >= maxPages) return { calls, ads: adsOut, totalResults, stoppedBy: "max_pages", ms: Date.now() - started, nextToken: token };
     // Leave room for one more call plus persisting its ads.
-    if (calls > 0 && Date.now() > input.deadlineAt - 15_000) {
+    if (calls > 0 && Date.now() > input.deadlineAt - 25_000) {
       return { calls, ads: adsOut, totalResults, stoppedBy: "deadline", ms: Date.now() - started, nextToken: token };
     }
 
-    const page = await fetchPage(token, Math.max(10_000, Math.min(45_000, input.deadlineAt - Date.now())));
+    const page = await fetchPage(token, Math.max(8_000, Math.min(20_000, input.deadlineAt - Date.now())));
     calls += 1;
     if (page.totalResults != null) totalResults = page.totalResults;
 
