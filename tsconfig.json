@@ -36,6 +36,14 @@
     ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "tests/**",
+    "test-results/**",
+    "playwright-report/**",
+    "tests/results/**",
+    "**/*-backup-*/**",
+    "**/*-backup*/**",
+    "zwirk-*/**",
+    ".adspy-backup-*/**"
   ]
 }
