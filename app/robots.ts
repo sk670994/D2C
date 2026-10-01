@@ -7,8 +7,18 @@ export default function robots(): MetadataRoute.Robots {
     rules: {
       userAgent: "*",
       allow: "/",
-      // Signed-in app screens and APIs have nothing for search engines.
-      disallow: ["/api/", "/auth/", "/dashboard", "/adspy", "/zwirk", "/records", "/brand-vault", "/demo"],
+      disallow: [
+        "/api/",
+        "/auth/",
+        "/dashboard",
+        "/adspy",
+        "/zwirk",
+        "/records",
+        "/brand-vault",
+        "/demo",
+        "/today",
+        "/login",
+      ],
     },
     sitemap: `${SITE}/sitemap.xml`,
     host: SITE,
