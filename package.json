@@ -7,11 +7,14 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run",
-    "validate:formulas": "npx tsx scripts/validate-formulas.ts"
+    "validate:formulas": "npx tsx scripts/validate-formulas.ts",
+    "test:multiuser": "playwright test tests/load/multi-user.spec.ts --config=tests/playwright.config.ts",
+    "test:multiuser:headed": "playwright test tests/load/multi-user.spec.ts --config=tests/playwright.config.ts --headed",
+    "test:multiuser:report": "playwright show-report tests/results/playwright-report"
   },
   "dependencies": {
     "@sparticuz/chromium-min": "147.0.2",
@@ -31,6 +34,7 @@
     "xlsx": "0.18.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "22.15.30",
     "@types/react": "19.2.2",

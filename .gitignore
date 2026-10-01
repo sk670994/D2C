@@ -16,3 +16,4 @@ pnpm-debug.log*
 .vercel
 .env*
 qa-report/
+tests/results/
