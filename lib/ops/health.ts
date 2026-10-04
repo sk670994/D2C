@@ -19,6 +19,8 @@ export type OpsSnapshot = {
   /** Freshness, the product metric: watched brands not refreshed in 36 h. */
   watchedBrands?: number;
   staleWatchedBrands?: number;
+  /** Runs killed mid-way (function timeout / crash), found by the reaper. */
+  cutOff24h?: number;
 };
 
 export type OpsIssue = { key: string; severity: "critical" | "warning"; title: string; detail: string; fix: string };
@@ -59,6 +61,15 @@ export function evaluateOps(s: OpsSnapshot): OpsIssue[] {
       title: "Rival data is going stale",
       detail: `${stale} of ${watched} watched brands were not refreshed in 36 h.`,
       fix: "Check the nightly refresh (Vercel cron /api/cron/refresh-tracked-adspy), the drain logs and the ScrapeCreators credits.",
+    });
+  }
+  if ((s.cutOff24h ?? 0) >= 3) {
+    issues.push({
+      key: "runs_cut_off",
+      severity: "warning",
+      title: "Collections are being cut off",
+      detail: `${s.cutOff24h} runs stopped mid-way in 24 h (function timeout or crash).`,
+      fix: "Vercel logs: search 'Task timed out' on /api/adspy/drain. Lower DRAIN_BUDGET_MS or SEARCHAPI_JOB_BUDGET_MS.",
     });
   }
   const finished = s.failed24h + s.completed24h;

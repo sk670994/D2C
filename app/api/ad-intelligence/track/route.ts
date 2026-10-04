@@ -22,7 +22,7 @@ import type {
   CollectionJob,
 } from "@/lib/ad-intelligence/global/types";
 
-import { checkRateLimit } from "@/lib/rate-limit";
+import { checkSharedRateLimit } from "@/lib/rate-limit";
 
 const PLATFORMS: AdPlatform[] = [
   "meta",
@@ -287,7 +287,7 @@ export async function POST(
     }
 
     const rate =
-      checkRateLimit(
+      await checkSharedRateLimit(
         `track:${user.id}`,
         10,
         60_000,
@@ -433,7 +433,7 @@ export async function DELETE(
     }
 
     const rate =
-      checkRateLimit(
+      await checkSharedRateLimit(
         `track:${user.id}`,
         10,
         60_000,

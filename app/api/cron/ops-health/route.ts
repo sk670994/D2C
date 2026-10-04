@@ -62,6 +62,11 @@ export async function GET(request: NextRequest) {
   } catch {
     // freshness is best effort
   }
+  // Runs the reaper had to kill: the only trace a Vercel timeout leaves in the DB.
+  const cut = await client.from("adspy_runs").select("id", { count: "exact", head: true })
+    .eq("status", "failed").ilike("error_message", "%stopped responding%").gte("updated_at", since);
+  snapshot.cutOff24h = cut.count ?? 0;
+  await client.rpc("rate_limits_prune").then(() => undefined, () => undefined);
   const issues = evaluateOps(snapshot);
   const to = process.env.OPS_ALERT_EMAIL?.trim();
   const dry = request.nextUrl.searchParams.get("dry") === "1";

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { checkSharedRateLimit } from "@/lib/rate-limit";
 import { routeZwirkIntent } from "@/lib/zwirk/reasoning/intent-router";
 import { buildSpecializedZwirkPrompt } from "@/lib/zwirk/prompts/context-prompt";
 import {
@@ -391,6 +392,15 @@ export async function POST(
         {
           status: 401,
         }
+      );
+    }
+
+    // Every ZWIRK message costs an AI call: one limit across all servers.
+    const zwirkRate = await checkSharedRateLimit(`zwirk:${user.id}`, 40, 3_600_000);
+    if (!zwirkRate.allowed) {
+      return NextResponse.json(
+        { error: `You have sent a lot of messages this hour. Try again in ${Math.ceil(zwirkRate.retryAfterSeconds / 60)} min.` },
+        { status: 429, headers: { "Retry-After": String(zwirkRate.retryAfterSeconds) } },
       );
     }
 

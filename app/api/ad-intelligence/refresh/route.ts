@@ -8,7 +8,7 @@ import {
   getCollectionJob,
 } from "@/lib/ad-intelligence/global/store";
 
-import { checkRateLimit } from "@/lib/rate-limit";
+import { checkSharedRateLimit } from "@/lib/rate-limit";
 
 import {
   getDurableRunByCollectionJob,
@@ -110,7 +110,7 @@ export async function POST(
       );
     }
 
-    const rate = checkRateLimit(
+    const rate = await checkSharedRateLimit(
       `adspy-refresh:${userId}`,
       8,
       60_000,

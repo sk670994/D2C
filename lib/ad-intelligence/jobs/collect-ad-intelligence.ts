@@ -543,7 +543,9 @@ export async function collectAdIntelligence(
       const { requestId: _done, ...rest } = data;
       await enqueueAdSpyRequest({
         runId: data.runId,
-        uniqueKey: `cont:${continuation.pagesSoFar}:${Date.now()}`,
+        // One continuation per slice: if this slice is retried after a crash, the
+        // same row comes back instead of a duplicate (unique run_id + key).
+        uniqueKey: `cont:${data.requestId}`,
         requestType: "deep",
         payload: { ...rest, advertiserPageId: continuation.pageId ?? rest.advertiserPageId ?? null, apiCursor: continuation.cursor, apiPagesSoFar: continuation.pagesSoFar },
         priority: 90,
