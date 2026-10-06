@@ -4566,7 +4566,7 @@ html[data-route="brand"]         { --pf-display: var(--f-archivo);     --pf-body
 html[data-route="demo"]          { --pf-body: var(--f-schibsted); }
 
 /* Single-weight serif display faces: never fake-bold them. */
-html:is([data-route="brand-vault"], [data-route="login"], [data-route="contact"]) body :is(h1, h2, h3) {
+html:is([data-route="brand-vault"], [data-route="contact"]) body :is(h1, h2, h3) {
   font-weight: 400 !important;
   letter-spacing: -0.01em;
 }
@@ -4576,7 +4576,6 @@ html:is([data-route="home"], [data-route="faq"], [data-route="privacy"], [data-r
   letter-spacing: -0.025em;
 }
 html[data-route="home"] body :is(h1, h2) em { font-style: italic; }
-html[data-route="login"] body :is(h1, h2) em { font-style: italic; }
 /* Records reads like a ledger. */
 html[data-route="records"] body :is(h1, h2, h3) { letter-spacing: 0; }
 html[data-route="records"] body :is(td, th, strong) { font-variant-numeric: tabular-nums; }
@@ -4745,3 +4744,4 @@ body:has(.auth-page.zt-scope)::before { content: none; display: none; }
 }
 .auth-page.zt-scope .google-cta:hover { border-color: var(--zt-text-primary); background: var(--zt-surface); box-shadow: none; transform: none; }
 .auth-page.zt-scope .google-cta-text { color: inherit; }
+.auth-page.zt-scope .auth-card-header .ui-button { white-space: nowrap; flex-shrink: 0; }
