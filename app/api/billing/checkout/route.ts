@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { isPaidPlan, PLANS } from "@/lib/billing/plans";
 import { createSubscription, razorpayConfigured } from "@/lib/billing/server";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { checkSharedRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const preferredRegion = "syd1";
@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => ({}))) as { plan?: unknown };
   if (!isPaidPlan(body.plan)) return NextResponse.json({ success: false, error: "Choose Starter, Growth or Agency." }, { status: 400 });
 
-  const limited = checkRateLimit(`billing-checkout:${user.id}`, 10, 3_600_000);
+  const limited = await checkSharedRateLimit(`billing-checkout:${user.id}`, 10, 3_600_000);
   if (!limited.allowed) return NextResponse.json({ success: false, error: "Too many attempts. Try again in a while." }, { status: 429 });
 
   try {

@@ -51,6 +51,13 @@ describe("evaluateOps", () => {
   });
 });
 
+describe("runs cut off", () => {
+  it("warns from 3 cut-off runs a day", () => {
+    expect(evaluateOps({ ...base, cutOff24h: 2 })).toEqual([]);
+    expect(evaluateOps({ ...base, cutOff24h: 3 }).map((i) => i.key)).toEqual(["runs_cut_off"]);
+  });
+});
+
 describe("shouldSendAlert", () => {
   it("throttles repeats", () => {
     expect(shouldSendAlert(null, now)).toBe(true);

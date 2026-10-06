@@ -969,7 +969,8 @@ export function AdSpyWorkspace() {
                 collapseAfter={6}
                 onToggle={(value) => setFilter("language", value)}
               />
-              <FacetGroup
+              {/* Meta gives no state/city data for Indian commercial ads: show Region only when we have some. */}
+              {(facets?.region?.length ?? 0) > 0 && <FacetGroup
                 title="Region"
                 icon={<MapPin size={14} />}
                 buckets={facets?.region ?? []}
@@ -978,7 +979,7 @@ export function AdSpyWorkspace() {
                 note="Mentioned in the ad or targeting"
                 collapseAfter={6}
                 onToggle={(value) => setFilter("region", value)}
-              />
+              />}
               {facets?.capped && <p className="azs-fine">Counts cover the first 5,000 matching creatives.</p>}
             </aside>
 
