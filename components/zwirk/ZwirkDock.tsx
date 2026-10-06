@@ -185,7 +185,7 @@ export function ZwirkDock() {
         onClick={() => setOpen(true)}
         aria-label="Open ZWIRK"
       >
-        ✦ ZWIRK
+        Ask ZWIRK
       </button>
 
       {open ? (

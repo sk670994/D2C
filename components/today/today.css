@@ -220,6 +220,7 @@
 .zd-skel { background: linear-gradient(90deg, var(--zt-border-subtle), var(--zt-surface-hover), var(--zt-border-subtle)); background-size: 200% 100%; animation: zd-shimmer 1.4s linear infinite; border-radius: var(--zt-radius-sm); }
 @keyframes zd-shimmer { to { background-position: -200% 0; } }
 .zd-empty { border-left: 3px solid var(--zt-signal); padding: var(--zt-space-sm) 0 var(--zt-space-sm) var(--zt-space-lg); display: flex; flex-direction: column; gap: var(--zt-space-sm); }
+.zd-notice { border-radius: var(--zt-radius-md); background: var(--zt-signal-soft); color: var(--zt-text-primary); box-shadow: inset 3px 0 0 var(--zt-signal); font: var(--zt-type-small); }
 .zd-error { border-radius: var(--zt-radius-md); padding: 12px 14px; background: var(--zt-danger-soft); color: var(--zt-danger); font: var(--zt-type-small); }
 .zd-spin { animation: zd-spin 0.9s linear infinite; }
 @keyframes zd-spin { to { transform: rotate(360deg); } }

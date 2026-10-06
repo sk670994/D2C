@@ -4745,3 +4745,11 @@ body:has(.auth-page.zt-scope)::before { content: none; display: none; }
 .auth-page.zt-scope .google-cta:hover { border-color: var(--zt-text-primary); background: var(--zt-surface); box-shadow: none; transform: none; }
 .auth-page.zt-scope .google-cta-text { color: inherit; }
 .auth-page.zt-scope .auth-card-header .ui-button { white-space: nowrap; flex-shrink: 0; }
+
+/* ZWIRK launcher inside the product: a plain ink button, no sparkle pill */
+body:has(.zd) .zwirk-dock-fab {
+  border-radius: 6px; padding: 0 16px; min-height: 44px; background: #18212b; color: #ffffff; border: 0;
+  font: 600 14px / 1 var(--f-schibsted, "Schibsted Grotesk"), Arial, sans-serif; letter-spacing: 0;
+  box-shadow: 0 8px 24px rgba(24, 33, 43, 0.2);
+}
+html[data-theme="dark"] body:has(.zd) .zwirk-dock-fab { background: #e8edf0; color: #0f151b; }

@@ -162,13 +162,13 @@
 .zd .azs .azs-sort select { height: 34px; border-radius: var(--zt-radius-sm); border-color: var(--zt-border-default); background: transparent; font: var(--zt-type-label); }
 .zd .azs .azs-chip { gap: 6px; padding: 3px 4px 3px 8px; border-radius: var(--zt-radius-sm); background: var(--zt-surface-ink); color: var(--zt-text-on-ink); font: var(--zt-type-label); }
 .zd .azs .azs-chip button:hover { background: rgba(255, 255, 255, 0.16); }
-.zd .azs .azs-grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 34px 22px; }
+.zd .azs .azs-grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 34px 22px; }
 
 /* ---------- ad card: media, ruled byline, words ----------
  * Variants (set in AdCard): data-format=image|video|carousel,
  * data-media=no (type-led card), data-long=yes (marigold run length). */
 .zd .azs .azs-card {
-  display: flex; flex-direction: column; overflow: visible; border: 0; border-radius: 0;
+  min-width: 0; display: flex; flex-direction: column; overflow: visible; border: 0; border-radius: 0;
   background: transparent; box-shadow: none; cursor: pointer; transition: none;
 }
 .zd .azs .azs-card:hover, .zd .azs .azs-card:focus-visible { transform: none; box-shadow: none; outline: none; }
@@ -194,7 +194,7 @@
 .zd .azs .azs-card[data-long="yes"] .azs-days { padding: 3px 6px; background: var(--zt-signal); color: #1c1400; }
 .zd .azs .azs-card[data-long="yes"] .azs-days small { color: #3d2c00; }
 
-.zd .azs .azs-card-text { display: grid; gap: 8px; padding: 10px 0 0; }
+.zd .azs .azs-card-text { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 8px; padding: 10px 0 0; }
 .zd .azs .azs-post-copy { margin: 0; padding: 0; min-height: 0; color: var(--zt-text-primary); font: 400 14px / 1.45 var(--zt-font-text); -webkit-line-clamp: 3; }
 .zd .azs .azs-post-copy.is-empty { color: var(--zt-text-muted); font-style: normal; }
 .zd .azs .azs-post-cta { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0; border: 0; background: transparent; }
@@ -247,7 +247,9 @@
 .zd .azs .azs-modal { border: 0; border-radius: var(--zt-radius-xl); background: var(--zt-surface-raised); box-shadow: var(--zt-shadow-strong); }
 .zd .azs .azs-modal-head { padding: 18px 22px; border-bottom: 1px solid var(--zt-border-subtle); }
 .zd .azs .azs-modal-head h2 { font: 750 22px / 1.2 var(--zt-font-text); letter-spacing: -0.02em; }
-.zd .azs .azs-modal-media { background: var(--zt-surface-ink); }
+.zd .azs .azs-modal-media { background: var(--zt-surface-ink); overflow: hidden; min-width: 0; }
+.zd .azs .azs-modal-info { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.zd .azs .azs-facts dd, .zd .azs .azs-modal-info p { overflow-wrap: anywhere; }
 .zd .azs .azs-modal-info { padding: 20px 22px 24px; gap: 22px; }
 .zd .azs .azs-modal-info h3 { margin: 0 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--zt-border-subtle); font: var(--zt-type-label); letter-spacing: 0; text-transform: none; color: var(--zt-text-muted); }
 .zd .azs .azs-modal-info p { font: var(--zt-type-body); }
@@ -285,7 +287,7 @@
   .zd .azs .azs-filters { padding: 14px; border-radius: var(--zt-radius-md); background: var(--zt-surface); }
   .zd .azs .azs-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 12px; }
   .zd .azs .azs-strip-lead { flex-basis: 100%; }
-  .zd .azs .azs-strip-lead strong { font-size: 34px; }
+  .zd .azs .azs-strip .azs-strip-lead strong { font-size: 34px; }
   .zd .azs .azs-strip strong { font-size: 17px; }
   .zd .azs .azs-post-copy { font-size: 13px; -webkit-line-clamp: 2; }
   .zd .azs .azs-card-status, .zd .azs .azs-post-cta small, .zd .azs .azs-post-button { display: none; }
@@ -296,6 +298,10 @@
   .zd .azs .azs-snapshot > div { padding-left: 12px; }
   .zd .azs .azs-modal { border-radius: var(--zt-radius-xl) var(--zt-radius-xl) 0 0; }
   .zd .azs .azs-modal-backdrop { align-items: end; padding: 0; }
+  .zd .azs .azs-modal-body { grid-template-columns: minmax(0, 1fr); }
+  .zd .azs .azs-modal-media { height: 48vh; min-height: 0; }
+  .zd .azs .azs-modal-media img, .zd .azs .azs-modal-media video { width: 100%; height: 100%; max-height: none; object-fit: contain; }
+  .zd .azs .azs-facts { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {
   .zd .azs .azs-card-media img { transition: none; }
