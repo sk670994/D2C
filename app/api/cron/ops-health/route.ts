@@ -67,6 +67,9 @@ export async function GET(request: NextRequest) {
     .eq("status", "failed").ilike("error_message", "%stopped responding%").gte("updated_at", since);
   snapshot.cutOff24h = cut.count ?? 0;
   await client.rpc("rate_limits_prune").then(() => undefined, () => undefined);
+  // Plan switches: make sure no old Razorpay subscription keeps billing.
+  const billingLeft = await import("@/lib/billing/server").then((m) => m.reconcilePlanSwitches()).catch(() => 0);
+  if (billingLeft > 0) console.warn("[ops-health] old subscriptions still not cancelled", billingLeft);
   const issues = evaluateOps(snapshot);
   const to = process.env.OPS_ALERT_EMAIL?.trim();
   const dry = request.nextUrl.searchParams.get("dry") === "1";
