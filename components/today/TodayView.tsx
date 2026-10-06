@@ -72,23 +72,29 @@ export function TodayView() {
 
   if (data.watchedCount === 0) {
     return (
-      <div className="zd-col" style={{ maxWidth: 880 }}>
-        <div className="zd-eyebrow">Get started · 1 minute</div>
-        <h1 className="zd-h1">
-          Know what your rivals ran <em style={{ color: "var(--zd-accent)" }}>this week</em>.
-        </h1>
-        <p className="zd-lede">Two steps. Zooptrack reads your rivals' Meta ads every night and tells you what changed, here and in an email on the schedule you choose.</p>
-        <section className="zd-card" aria-labelledby="step-1">
-          <div className="zd-eyebrow" id="step-1">
-            Step 1 · Your brand
+      <div className="zd-col" style={{ maxWidth: 880, gap: 40 }}>
+        <header className="zd-col" style={{ gap: 14 }}>
+          <span className="zd-eyebrow">Get started, about a minute</span>
+          <h1 className="zd-h1">Know what your rivals ran this week.</h1>
+          <p className="zd-lede">Two steps. Zooptrack reads your rivals' Meta ads every night and tells you what changed, here and in an email on the schedule you choose.</p>
+        </header>
+        <section className="zd-lead" aria-labelledby="step-1">
+          <span className="zd-rank" aria-hidden="true">1</span>
+          <div className="zd-lead-body">
+            <h2 className="zd-h3" id="step-1">
+              Your brand
+            </h2>
+            <MyBrandCard />
           </div>
-          <MyBrandCard />
         </section>
-        <section className="zd-card" aria-labelledby="step-2">
-          <div className="zd-eyebrow" id="step-2">
-            Step 2 · Rivals to watch (up to 3 to start)
+        <section className="zd-lead" aria-labelledby="step-2">
+          <span className="zd-rank" aria-hidden="true">2</span>
+          <div className="zd-lead-body">
+            <h2 className="zd-h3" id="step-2">
+              Rivals to watch, up to 3 to start
+            </h2>
+            <RivalPicker onChanged={reload} />
           </div>
-          <RivalPicker onChanged={reload} />
         </section>
       </div>
     );
@@ -102,12 +108,18 @@ export function TodayView() {
   return (
     <>
       <PlanBanner />
-      <header className="zd-row" style={{ alignItems: "flex-end", gap: 24, flexWrap: "wrap" }}>
-        <div className="zd-col" style={{ gap: 10 }}>
-          <div className="zd-eyebrow">
-            Today · {dateLabel} · {data.watchedCount} {data.watchedCount === 1 ? "rival" : "rivals"} watched{updated ? ` · data updated ${updated}` : ""}
-          </div>
-          <h1 className="zd-h1">{data.headline}</h1>
+      <header className="zd-masthead">
+        <div className="zd-col" style={{ gap: 14 }}>
+          <p className="zd-dateline" style={{ margin: 0 }}>
+            <span>{dateLabel}</span>
+            <span>
+              {data.watchedCount} {data.watchedCount === 1 ? "rival" : "rivals"} watched
+            </span>
+            {updated ? <span>Data updated {updated}</span> : null}
+          </p>
+          <h1 className="zd-h1" style={{ maxWidth: "24ch" }}>
+            {data.headline}
+          </h1>
           <p className="zd-lede">
             {data.moves.length ? `${data.moves.length} ${data.moves.length === 1 ? "move" : "moves"} from your rivals. Each one opens the ads that prove it.` : "No moves yet: your rivals' ads are still being collected."}
           </p>
@@ -123,51 +135,54 @@ export function TodayView() {
       </header>
 
       <div className="zd-wrap">
-        <div className="zd-col">
+        <div className="zd-col" style={{ gap: 48 }}>
           {lead ? (
-            <Rise as="article" i={0} className="zd-card" aria-labelledby="move-1">
-              <div className="zd-row">
-                <span className="zd-eyebrow">01</span>
-                <Initial name={lead.brand} />
-                <strong>{lead.brand}</strong>
-                <span style={{ marginLeft: "auto" }}>
+            <Rise as="article" i={0} className="zd-lead" aria-labelledby="move-1">
+              <span className="zd-rank" aria-hidden="true">
+                1
+              </span>
+              <div className="zd-lead-body">
+                <div className="zd-byline">
+                  <Initial name={lead.brand} />
+                  <span>{lead.brand}</span>
                   <MovePill kind={lead.kind} label={lead.label} />
-                </span>
-              </div>
-              <h2 id="move-1" className="zd-h2">
-                {lead.title}
-              </h2>
-              <p style={{ margin: 0, color: "var(--zd-ink-2)" }}>{lead.detail}</p>
-              {lead.evidence.length ? (
-                <div className="zd-col" style={{ gap: 10 }}>
-                  <div className="zd-eyebrow">Evidence</div>
-                  <div className="zd-grid-3">
-                    {lead.evidence.map((ad, i) => (
-                      <EvidenceTile key={ad.id} ad={ad} index={i} brand={lead.brand} pageId={lead.pageId} />
-                    ))}
-                  </div>
                 </div>
-              ) : null}
-              <div className="zd-row zd-divider" style={{ flexWrap: "wrap" }}>
-                <p style={{ margin: 0, flex: 1, minWidth: 260, color: "var(--zd-ink-2)" }}>
-                  <strong style={{ color: "var(--zd-ink)" }}>What to do:</strong> {lead.action}
-                </p>
-                <Link href={`/today/brand/${lead.pageId}`} className="zd-btn">
-                  Open {lead.brand}
-                </Link>
-                <button
-                  type="button"
-                  className="zd-btn zd-btn-ink"
-                  onClick={() =>
-                    window.dispatchEvent(
-                      new CustomEvent("zooptrack:ask-zwirk", {
-                        detail: `${lead.brand}: ${lead.title} ${lead.detail} Write a counter-ad brief for my brand: hook, offer, format, language and a 20-second script outline.`,
-                      }),
-                    )
-                  }
-                >
-                  Brief a counter-ad
-                </button>
+                <h2 id="move-1" className="zd-h2">
+                  {lead.title}
+                </h2>
+                <p style={{ margin: 0, color: "var(--zt-text-secondary)", maxWidth: "66ch" }}>{lead.detail}</p>
+                {lead.evidence.length ? (
+                  <div className="zd-col" style={{ gap: 8 }}>
+                    <span className="zd-eyebrow">The ads behind it</span>
+                    <div className="zd-grid-3">
+                      {lead.evidence.map((ad, i) => (
+                        <EvidenceTile key={ad.id} ad={ad} index={i} brand={lead.brand} pageId={lead.pageId} />
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                <div className="zd-todo">
+                  <b>What to do</b>
+                  <p>{lead.action}</p>
+                </div>
+                <div className="zd-row" style={{ flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="zd-btn zd-btn-ink"
+                    onClick={() =>
+                      window.dispatchEvent(
+                        new CustomEvent("zooptrack:ask-zwirk", {
+                          detail: `${lead.brand}: ${lead.title} ${lead.detail} Write a counter-ad brief for my brand: hook, offer, format, language and a 20-second script outline.`,
+                        }),
+                      )
+                    }
+                  >
+                    Brief a counter-ad
+                  </button>
+                  <Link href={`/today/brand/${lead.pageId}`} className="zd-btn">
+                    Open {lead.brand}
+                  </Link>
+                </div>
               </div>
             </Rise>
           ) : (
@@ -180,33 +195,32 @@ export function TodayView() {
           )}
 
           {rest.length ? (
-            <div className="zd-grid-2">
+            <ol className="zd-moves" aria-label="More moves">
               {rest.map((move, i) => (
-                <Rise as="article" i={i + 1} key={`${move.pageId}-${move.kind}`} className="zd-card">
-                  <div className="zd-row">
-                    <span className="zd-eyebrow">0{i + 2}</span>
-                    <Initial name={move.brand} />
-                    <strong>{move.brand}</strong>
-                    <span style={{ marginLeft: "auto" }}>
+                <li key={`${move.pageId}-${move.kind}`} className="zd-move">
+                  <span className="zd-rank zd-rank-sm" aria-hidden="true">
+                    {i + 2}
+                  </span>
+                  <div className="zd-col" style={{ gap: 8 }}>
+                    <div className="zd-byline">
+                      <span>{move.brand}</span>
                       <MovePill kind={move.kind} label={move.label} />
-                    </span>
+                    </div>
+                    <h3>{move.title}</h3>
+                    <p>{move.detail}</p>
+                    <p style={{ color: "var(--zt-text-primary)" }}>
+                      <b style={{ color: "var(--zt-insight)" }}>What to do:</b> {move.action}
+                    </p>
                   </div>
-                  <h2 className="zd-h2" style={{ fontSize: 24 }}>
-                    {move.title}
-                  </h2>
-                  <p style={{ margin: 0, color: "var(--zd-ink-2)" }}>{move.detail}</p>
-                  <p style={{ margin: 0 }}>
-                    <strong>What to do:</strong> {move.action}
-                  </p>
-                  <Link href={`/today/brand/${move.pageId}`} style={{ marginTop: "auto", fontWeight: 600 }}>
-                    See the evidence →
-                  </Link>
-                </Rise>
+                  <div className="zd-move-side">
+                    <Link href={`/today/brand/${move.pageId}`}>See the ads</Link>
+                  </div>
+                </li>
               ))}
-            </div>
+            </ol>
           ) : null}
 
-          <section id="add-rival" className="zd-card" aria-labelledby="add-rival-title">
+          <section id="add-rival" className="zd-section" aria-labelledby="add-rival-title">
             <h2 id="add-rival-title" className="zd-h3">
               Watch another rival
             </h2>
@@ -215,22 +229,18 @@ export function TodayView() {
         </div>
 
         <aside className="zd-aside">
-          <section className="zd-card" aria-labelledby="my-brand-title">
-            <h2 id="my-brand-title" className="zd-h3">
-              Your brand
-            </h2>
-            <MyBrandCard compact />
-          </section>
-          <section className="zd-card" aria-labelledby="new-ads-title">
+          <section className="zd-section" aria-labelledby="new-ads-title">
             <h2 id="new-ads-title" className="zd-h3">
               New ads this week
             </h2>
-            <div className="zd-col" style={{ gap: 12 }}>
+            <div className="zd-col" style={{ gap: 14 }}>
               {data.rivals.map((rival) => (
-                <Link key={rival.pageId} href={`/today/brand/${rival.pageId}`} className="zd-col" style={{ gap: 6, color: "var(--zd-ink)" }}>
-                  <span className="zd-row" style={{ fontSize: 14 }}>
-                    <span>{rival.name}</span>
-                    <span style={{ marginLeft: "auto", fontFamily: "var(--zd-mono)" }}>{rival.total === 0 ? <span className="zd-muted">collecting…</span> : formatInt(rival.new7)}</span>
+                <Link key={rival.pageId} href={`/today/brand/${rival.pageId}`} className="zd-col" style={{ gap: 6, color: "var(--zt-text-primary)" }}>
+                  <span className="zd-row" style={{ alignItems: "baseline" }}>
+                    <span style={{ fontWeight: 600 }}>{rival.name}</span>
+                    <span className="zd-figure" style={{ marginLeft: "auto", fontSize: 20 }}>
+                      {rival.total === 0 ? <span className="zd-muted" style={{ fontSize: 13, fontFamily: "var(--zt-font-text)", fontWeight: 400 }}>collecting…</span> : formatInt(rival.new7)}
+                    </span>
                   </span>
                   <span className="zd-bar" aria-hidden="true">
                     <GrowBar pct={Math.round((rival.new7 / maxNew) * 100)} delay={0.2} />
@@ -240,33 +250,43 @@ export function TodayView() {
             </div>
           </section>
 
-          <section className="zd-card zd-card-dark" aria-labelledby="zwirk-title">
-            <h2 id="zwirk-title" className="zd-h3">
-              Ask ZWIRK
+          <section className="zd-section" aria-labelledby="my-brand-title">
+            <h2 id="my-brand-title" className="zd-h3">
+              Your brand
             </h2>
-            <p className="zd-muted" style={{ margin: 0, fontSize: 14 }}>
-              Reads the same data you see here.
-            </p>
-            {ZWIRK_PROMPTS.map((prompt) => (
-              <button
-                key={prompt}
-                type="button"
-                className="zd-btn"
-                style={{ justifyContent: "flex-start", whiteSpace: "normal", textAlign: "left", background: "transparent", color: "inherit", borderColor: "#3a3d45", padding: "10px 14px" }}
-                onClick={() => window.dispatchEvent(new CustomEvent("zooptrack:ask-zwirk", { detail: prompt }))}
-              >
-                {prompt}
-              </button>
-            ))}
+            <MyBrandCard compact />
           </section>
 
-          <section className="zd-empty" aria-labelledby="inbox-title">
+          <section className="zd-ink" aria-labelledby="zwirk-title">
+            <div className="zd-col" style={{ gap: 4 }}>
+              <h2 id="zwirk-title" className="zd-h3">
+                Ask ZWIRK
+              </h2>
+              <p className="zd-muted" style={{ margin: 0, fontSize: 14 }}>
+                Answers from the same data you see here.
+              </p>
+            </div>
+            <div className="zd-col" style={{ gap: 0 }}>
+              {ZWIRK_PROMPTS.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  className="zd-ask"
+                  onClick={() => window.dispatchEvent(new CustomEvent("zooptrack:ask-zwirk", { detail: prompt }))}
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="zd-col" style={{ gap: 6 }} aria-labelledby="inbox-title">
             <h2 id="inbox-title" className="zd-h3">
               This lands in your inbox
             </h2>
-            <p style={{ margin: 0, fontSize: 14, color: "var(--zd-ink-2)" }}>The same moves, by email, daily or weekly. You choose.</p>
+            <p style={{ margin: 0, fontSize: 14, color: "var(--zt-text-secondary)" }}>The same moves, by email, daily or weekly. You choose when.</p>
             <Link href="/today/report" style={{ fontWeight: 600, fontSize: 14 }}>
-              See the email →
+              Set up the email
             </Link>
           </section>
         </aside>

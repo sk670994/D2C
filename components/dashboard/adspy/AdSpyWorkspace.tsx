@@ -682,13 +682,11 @@ export function AdSpyWorkspace() {
               <h1>AdSpy</h1>
             ) : (
               <>
-                <span className="azs-eyebrow">AdSpy · live from Meta Ad Library</span>
-                <h1>
-                  See what every D2C brand <em>is running right now.</em>
-                </h1>
+                <span className="azs-eyebrow">From the Meta Ad Library</span>
+                <h1>See every ad a D2C brand is running right now.</h1>
               </>
             )}
-            <p>Search a brand to watch every Facebook and Instagram ad it runs — videos, offers, languages and how long each one has been live.</p>
+            <p>Search a brand to see its Facebook and Instagram ads: videos, offers, languages, and how long each one has been live.</p>
           </div>
         </div>
       </div>
@@ -1278,7 +1276,7 @@ function Landing({
       <AdRow
         kind="long"
         title="Still running after 60+ days"
-        subtitle="Ads brands keep paying for — the ones worth studying"
+        subtitle="Ads brands keep paying for. These are the ones worth studying."
         country={country}
         onOpenAd={onOpenAd}
         onAdvertiser={onAdvertiser}
@@ -1769,10 +1767,19 @@ function AdCard({
 
   if (hideIfBroken && mediaBroken) return null;
 
+  const format = ad.creativeType === "video" || ad.creativeType === "carousel" ? ad.creativeType : "image";
+  const hasMedia = Boolean(ad.thumbnailUrl ?? ad.imageUrl) && !mediaBroken;
+  const longRunning = days >= 60;
+
+  // Editorial card: media, a ruled byline (who / how long), then the words.
+  // data-format and data-media pick one of a few deliberate variants in CSS.
   return (
     <article
       ref={cardRef}
       className="azs-card"
+      data-format={format}
+      data-media={hasMedia ? "yes" : "no"}
+      data-long={longRunning ? "yes" : undefined}
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={(event) => {
@@ -1799,12 +1806,7 @@ function AdCard({
         )}
         {ad.creativeType === "video" && !playing && (
           <span className="azs-play" aria-hidden="true">
-            <Play size={16} />
-          </span>
-        )}
-        {days > 0 && (
-          <span className={`azs-days ${days >= 60 ? "is-long" : ""}`} title={days >= 60 ? "Running for 60+ days — usually worth studying. Meta does not publish spend or results." : undefined}>
-            {days >= 60 ? `Running ${days} days` : `${days}d live`}
+            <Play size={14} />
           </span>
         )}
         {ad.creativeType === "carousel" && (
@@ -1812,31 +1814,32 @@ function AdCard({
             <Layers size={11} /> Carousel
           </span>
         )}
-        <div className="azs-card-overlay">
-          <span className="azs-post-avatar" aria-hidden="true">
-            {name.trim().slice(0, 1).toUpperCase()}
+      </div>
+
+      <div className="azs-card-byline">
+        {onAdvertiser ? (
+          <button
+            type="button"
+            className="azs-post-name"
+            onClick={(event) => {
+              event.stopPropagation();
+              onAdvertiser();
+            }}
+          >
+            {name}
+          </button>
+        ) : (
+          <strong className="azs-post-name">{name}</strong>
+        )}
+        {days > 0 && (
+          <span
+            className={`azs-days ${longRunning ? "is-long" : ""}`}
+            title={longRunning ? "Running for 60+ days, usually worth studying. Meta does not publish spend or results." : undefined}
+          >
+            {days}
+            <small>{days === 1 ? "day" : "days"}</small>
           </span>
-          <span className="azs-post-who">
-            {onAdvertiser ? (
-              <button
-                type="button"
-                className="azs-post-name"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onAdvertiser();
-                }}
-              >
-                {name}
-              </button>
-            ) : (
-              <strong className="azs-post-name">{name}</strong>
-            )}
-            <small>
-              {ad.isActive === false ? "Stopped" : "Live"}
-              {since ? ` · since ${since}` : ""}
-            </small>
-          </span>
-        </div>
+        )}
       </div>
 
       <div className="azs-card-text">
@@ -1850,6 +1853,11 @@ function AdCard({
             {ad.callToAction && <span className="azs-post-button">{ad.callToAction}</span>}
           </div>
         )}
+        <p className="azs-card-status">
+          <span className={ad.isActive === false ? "is-stopped" : "is-live"}>{ad.isActive === false ? "Stopped" : "Live"}</span>
+          {since ? <span>since {since}</span> : null}
+          {format !== "image" ? <span>{format === "video" ? "Video" : "Carousel"}</span> : null}
+        </p>
         {(ad.offer || language || ad.creatorName) && (
           <div className="azs-card-tags">
             {ad.offer && <span className="azs-tag azs-tag-offer">{ad.offer}</span>}
@@ -1886,9 +1894,13 @@ function StatStrip({ summary, facets, loading }: { summary: Summary | null; face
   if (facets) items.push([formatInt(facets.momentum.launched30d), "new this month"]);
   if (s.averageRunningDays) items.push([`${Math.round(s.averageRunningDays)} days`, "avg. run"]);
   if (s.longestRunningDays) items.push([`${formatInt(s.longestRunningDays)} days`, "longest run"]);
+  const [first, ...others] = items;
   return (
     <div className="azs-strip" aria-label="Summary">
-      {items.map(([value, label]) => (
+      <span className="azs-strip-lead">
+        <strong>{first[0]}</strong> {first[1]}
+      </span>
+      {others.map(([value, label]) => (
         <span key={label}>
           <strong>{value}</strong> {label}
         </span>
