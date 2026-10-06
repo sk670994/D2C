@@ -1,4 +1,5 @@
 import "./globals.css";
+import "./zt-tokens.css";
 import { ZooptrackLogo } from "@/components/brand/ZooptrackLogo";
 import type { Metadata } from "next";
 import { Plus_Jakarta_Sans } from "next/font/google";

@@ -28,7 +28,7 @@ export default async function LoginPage({
   const nextPath = safeNextPath(params.next);
 
   return (
-    <main className="main auth-page">
+    <main className="main auth-page zt-scope">
       <div className="auth-shell">
         <div className="auth-hero">
           <BrandLogo href="/" />
@@ -40,16 +40,16 @@ export default async function LoginPage({
             ad-account access needed.
           </p>
           <ul className="auth-points">
-            <li>Pick up to 5 rivals; their first ads load right away.</li>
+            <li>Pick your rivals; their first ads load right away.</li>
             <li>Today shows what changed, with the ads as evidence.</li>
-            <li>A Monday email sums up the week in two minutes.</li>
+            <li>An email sums it up, daily or weekly, at the hour you pick.</li>
           </ul>
         </div>
 
         <Card className="auth-card">
           <CardHeader className="auth-card-header">
             <div>
-              <CardTitle>Sign In or Create Account</CardTitle>
+              <CardTitle>Sign in or create an account</CardTitle>
               <CardDescription>
                 Verify your email with a one-time code, or continue with
                 Google.

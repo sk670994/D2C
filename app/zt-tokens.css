@@ -1,0 +1,151 @@
+/*
+ * Zooptrack design tokens (design system v2, "slate & marigold").
+ * The single source of colour, type, space, radius, shadow and motion.
+ * Scoped to .zd (product shell) and .zt-scope (any other screen that
+ * opts in, e.g. sign-in). Docs: docs/ZOOPTRACK_DESIGN_SYSTEM.md.
+ */
+.zd,
+.zt-scope {
+  /* ---- colour: neutrals (cool porcelain + slate ink) ---- */
+  --zt-background: #edf0f2;
+  --zt-background-muted: #e3e7ea;
+  --zt-surface: #ffffff;
+  --zt-surface-raised: #ffffff;
+  --zt-surface-hover: #f5f7f8;
+  --zt-surface-selected: #fdf3dc;
+  --zt-surface-ink: #18212b; /* dark analytical surface */
+  --zt-text-primary: #18212b;
+  --zt-text-secondary: #3d4955;
+  --zt-text-muted: #5f6b77;
+  --zt-text-disabled: #9aa4ad;
+  --zt-text-on-ink: #eef2f4;
+  --zt-text-on-ink-muted: #a9b4be;
+  --zt-border-subtle: #dfe4e8;
+  --zt-border-default: #cdd4da;
+  --zt-border-strong: #18212b;
+  /* ---- colour: meaning ---- */
+  --zt-accent: #18212b;          /* primary action = ink */
+  --zt-accent-hover: #2b3744;
+  --zt-accent-muted: #e3e7ea;
+  --zt-signal: #e8a317;          /* marigold: something moved */
+  --zt-signal-ink: #7a5300;
+  --zt-signal-soft: #fdf0d2;
+  --zt-evidence: #2f4fae;        /* links to proof, provenance */
+  --zt-evidence-soft: #e7ecf8;
+  --zt-insight: #1d6b55;         /* recommendations */
+  --zt-insight-soft: #e2f1ec;
+  --zt-success: #1d6b55;
+  --zt-success-soft: #e2f1ec;
+  --zt-warning: #9a5b00;
+  --zt-warning-soft: #fdf0d2;
+  --zt-danger: #b3321f;
+  --zt-danger-soft: #fbe9e5;
+  --zt-info: #2f4fae;
+  --zt-focus: #2f4fae;
+
+  /* ---- type ---- */
+  --zt-font-text: var(--f-schibsted, "Schibsted Grotesk"), "Helvetica Neue", Arial, sans-serif;
+  --zt-font-figure: var(--f-archivo, "Archivo"), "Helvetica Neue", Arial, sans-serif;
+  --zt-type-display: 800 clamp(36px, 4.6vw, 60px) / 1.0 var(--zt-font-text);
+  --zt-type-h1: 750 clamp(30px, 3.4vw, 44px) / 1.06 var(--zt-font-text);
+  --zt-type-h2: 700 26px / 1.15 var(--zt-font-text);
+  --zt-type-h3: 650 17px / 1.3 var(--zt-font-text);
+  --zt-type-body: 400 15px / 1.55 var(--zt-font-text);
+  --zt-type-small: 400 14px / 1.5 var(--zt-font-text);
+  --zt-type-caption: 400 12.5px / 1.4 var(--zt-font-text);
+  --zt-type-label: 600 13px / 1.3 var(--zt-font-text);
+  --zt-type-metric: 700 40px / 1 var(--zt-font-figure);
+
+  /* ---- space (4px base, deliberately uneven at the top end) ---- */
+  --zt-space-xs: 4px;
+  --zt-space-sm: 8px;
+  --zt-space-md: 14px;
+  --zt-space-lg: 22px;
+  --zt-space-xl: 32px;
+  --zt-space-2xl: 48px;
+  --zt-space-3xl: 72px;
+  --zt-space-4xl: 104px;
+
+  /* ---- radius: varies by role ---- */
+  --zt-radius-none: 0;
+  --zt-radius-sm: 3px;   /* chips, tags, small controls */
+  --zt-radius-md: 6px;   /* buttons, inputs, data surfaces */
+  --zt-radius-lg: 10px;  /* search field, media */
+  --zt-radius-xl: 16px;  /* dialogs */
+
+  /* ---- shadow: only for things that float ---- */
+  --zt-shadow-none: none;
+  --zt-shadow-subtle: 0 1px 0 rgba(24, 33, 43, 0.06);
+  --zt-shadow-medium: 0 8px 24px rgba(24, 33, 43, 0.12);
+  --zt-shadow-strong: 0 24px 64px rgba(24, 33, 43, 0.26);
+
+  /* ---- motion ---- */
+  --zt-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --zt-fast: 120ms;
+  --zt-base: 200ms;
+
+  /* ---- legacy aliases (inline styles in components use these) ---- */
+  --zd-ground: var(--zt-background);
+  --zd-surface: var(--zt-surface);
+  --zd-surface-2: var(--zt-surface-hover);
+  --zd-rail: var(--zt-background);
+  --zd-ink: var(--zt-text-primary);
+  --zd-ink-2: var(--zt-text-secondary);
+  --zd-muted: var(--zt-text-muted);
+  --zd-line: var(--zt-border-subtle);
+  --zd-line-2: var(--zt-border-subtle);
+  --zd-strong-line: var(--zt-border-default);
+  --zd-accent: var(--zt-evidence);
+  --zd-accent-ink: #ffffff;
+  --zd-accent-soft: var(--zt-evidence-soft);
+  --zd-warm: var(--zt-signal-ink);
+  --zd-warm-soft: var(--zt-signal-soft);
+  --zd-good: var(--zt-success);
+  --zd-good-soft: var(--zt-success-soft);
+  --zd-cool: var(--zt-evidence);
+  --zd-cool-soft: var(--zt-evidence-soft);
+  --zd-radius: var(--zt-radius-md);
+  --zd-radius-sm: var(--zt-radius-sm);
+  --zd-display: var(--zt-font-text);
+  --zd-body: var(--zt-font-text);
+  --zd-mono: var(--zt-font-figure);
+
+}
+html[data-theme="dark"] .zd,
+html[data-theme="dark"] .zt-scope {
+  --zt-background: #0f151b;
+  --zt-background-muted: #141c24;
+  --zt-surface: #161f28;
+  --zt-surface-raised: #1c2631;
+  --zt-surface-hover: #1c2631;
+  --zt-surface-selected: #3a2d10;
+  --zt-surface-ink: #0a0f14;
+  --zt-text-primary: #e8edf0;
+  --zt-text-secondary: #c2cbd2;
+  --zt-text-muted: #8d99a4;
+  --zt-text-disabled: #5d6873;
+  --zt-text-on-ink: #e8edf0;
+  --zt-text-on-ink-muted: #8d99a4;
+  --zt-border-subtle: #243039;
+  --zt-border-default: #33414c;
+  --zt-border-strong: #e8edf0;
+  --zt-accent: #e8edf0;
+  --zt-accent-hover: #ffffff;
+  --zt-accent-muted: #243039;
+  --zt-signal: #f2b632;
+  --zt-signal-ink: #f2c75f;
+  --zt-signal-soft: #33280f;
+  --zt-evidence: #8fa7ef;
+  --zt-evidence-soft: #1d2846;
+  --zt-insight: #6fd1ae;
+  --zt-insight-soft: #13302a;
+  --zt-success: #6fd1ae;
+  --zt-success-soft: #13302a;
+  --zt-warning: #f2c75f;
+  --zt-warning-soft: #33280f;
+  --zt-danger: #f08a77;
+  --zt-danger-soft: #3a1c17;
+  --zt-info: #8fa7ef;
+  --zt-focus: #8fa7ef;
+  --zd-accent-ink: #0f151b;
+}

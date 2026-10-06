@@ -11,15 +11,31 @@ import { CommandBar } from "./CommandBar";
 
 type NavKey = "today" | "adspy" | "finder" | "vault" | "report" | "zwirk" | "profit" | "billing";
 
-const NAV: Array<{ key: NavKey; href: string; label: string; icon: ReactNode }> = [
-  { key: "today", href: "/today", label: "Today", icon: <CalendarClock size={18} aria-hidden="true" /> },
-  { key: "adspy", href: "/adspy", label: "Discover ads", icon: <Search size={18} aria-hidden="true" /> },
-  { key: "finder", href: "/today/finder", label: "Ad finder", icon: <Tags size={18} aria-hidden="true" /> },
-  { key: "vault", href: "/brand-vault", label: "Brand Vault", icon: <BookOpen size={18} aria-hidden="true" /> },
-  { key: "report", href: "/today/report", label: "Report", icon: <Mail size={18} aria-hidden="true" /> },
-  { key: "zwirk", href: "/zwirk", label: "ZWIRK", icon: <Sparkles size={18} aria-hidden="true" /> },
-  { key: "profit", href: "/dashboard", label: "Profit OS", icon: <LayoutDashboard size={18} aria-hidden="true" /> },
-  { key: "billing", href: "/today/billing", label: "Plan & billing", icon: <CreditCard size={18} aria-hidden="true" /> },
+type NavItem = { key: NavKey; href: string; label: string; icon: ReactNode };
+
+/** Grouped by what the user is doing: watching rivals, acting on it, their account. */
+const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
+  {
+    label: "Watch",
+    items: [
+      { key: "today", href: "/today", label: "Today", icon: <CalendarClock aria-hidden="true" /> },
+      { key: "adspy", href: "/adspy", label: "Discover ads", icon: <Search aria-hidden="true" /> },
+      { key: "finder", href: "/today/finder", label: "Ad finder", icon: <Tags aria-hidden="true" /> },
+      { key: "vault", href: "/brand-vault", label: "Brand Vault", icon: <BookOpen aria-hidden="true" /> },
+    ],
+  },
+  {
+    label: "Act",
+    items: [
+      { key: "report", href: "/today/report", label: "Report", icon: <Mail aria-hidden="true" /> },
+      { key: "zwirk", href: "/zwirk", label: "ZWIRK", icon: <Sparkles aria-hidden="true" /> },
+      { key: "profit", href: "/dashboard", label: "Profit OS", icon: <LayoutDashboard aria-hidden="true" /> },
+    ],
+  },
+  {
+    label: "Account",
+    items: [{ key: "billing", href: "/today/billing", label: "Plan & billing", icon: <CreditCard aria-hidden="true" /> }],
+  },
 ];
 
 /** App frame for the redesigned screens: left rail + main column. */
@@ -32,11 +48,18 @@ export function TodayShell({ active, email, children }: { active: NavKey; email?
         </Link>
         <CommandBar />
         <div className="zd-nav">
-          {NAV.map((item) => (
-            <Link key={item.key} href={item.href} aria-current={item.key === active ? "page" : undefined}>
-              {item.icon}
-              {item.label}
-            </Link>
+          {NAV_GROUPS.map((group) => (
+            <div key={group.label} className="zd-nav-group" role="group" aria-label={group.label}>
+              <span className="zd-nav-label" aria-hidden="true">
+                {group.label}
+              </span>
+              {group.items.map((item) => (
+                <Link key={item.key} href={item.href} aria-current={item.key === active ? "page" : undefined}>
+                  {item.icon}
+                  {item.label}
+                </Link>
+              ))}
+            </div>
           ))}
         </div>
         <div className="zd-rail-foot">
@@ -45,9 +68,13 @@ export function TodayShell({ active, email, children }: { active: NavKey; email?
               {email}
             </span>
           ) : null}
-          <div className="zd-row" style={{ padding: "0 8px", flexWrap: "wrap" }}>
+          <div className="zd-row" style={{ flexWrap: "wrap", gap: 8 }}>
             <ThemeToggle />
             <SignOutButton />
+          </div>
+          <div className="zd-rail-legal">
+            <Link href="/terms">Terms</Link>
+            <Link href="/privacy">Privacy</Link>
           </div>
         </div>
       </nav>

@@ -62,7 +62,7 @@ const f_spectral = Spectral({ subsets: ["latin"], weight: ["400", "600", "700"],
 const f_mulish = Mulish({ subsets: ["latin"], display: "swap", preload: false, variable: "--f-mulish" });
 const f_youngserif = Young_Serif({ subsets: ["latin"], weight: ["400"], display: "swap", preload: false, variable: "--f-youngserif" });
 const f_franklin = Libre_Franklin({ subsets: ["latin"], display: "swap", preload: false, variable: "--f-franklin" });
-const f_archivo = Archivo({ subsets: ["latin"], display: "swap", preload: false, variable: "--f-archivo" });
+const f_archivo = Archivo({ subsets: ["latin"], axes: ["wdth"], display: "swap", preload: false, variable: "--f-archivo" });
 const f_worksans = Work_Sans({ subsets: ["latin"], display: "swap", preload: false, variable: "--f-worksans" });
 const f_schibsted = Schibsted_Grotesk({ subsets: ["latin"], display: "swap", preload: false, variable: "--f-schibsted" });
 
