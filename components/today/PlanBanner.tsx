@@ -24,7 +24,7 @@ export function PlanBanner() {
   return (
     <div className={needsAction ? "zd-error" : "zd-card"} role="status" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, padding: "12px 16px", flexDirection: "row" }}>
       <span style={{ flex: 1, minWidth: 220 }}>
-        <strong>{e.label}.</strong> {needsAction ? "New rivals and alerts are paused until a plan is active. Your data stays." : "Pick a plan to keep your rivals, Today and the Monday report running."}
+        <strong>{e.label}.</strong> {needsAction ? "New rivals and alerts are paused until a plan is active. Your data stays." : "Pick a plan to keep your rivals, Today and your rival report running."}
       </span>
       <Link href="/today/billing" className="zd-btn zd-btn-primary">
         See plans

@@ -10,7 +10,7 @@ type Item = { id: string; label: string; hint: string; href: string };
 const ACTIONS: Item[] = [
   { id: "go-today", label: "Today", hint: "This week's rival moves", href: "/today" },
   { id: "go-adspy", label: "Discover ads", hint: "Search any brand's Meta ads", href: "/adspy" },
-  { id: "go-report", label: "Monday report", hint: "Preview the email", href: "/today/report" },
+  { id: "go-report", label: "Report", hint: "Preview the email and choose when it arrives", href: "/today/report" },
   { id: "go-vault", label: "Brand Vault", hint: "Your brand, rivals and economics", href: "/brand-vault" },
 ];
 

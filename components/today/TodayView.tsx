@@ -77,7 +77,7 @@ export function TodayView() {
         <h1 className="zd-h1">
           Know what your rivals ran <em style={{ color: "var(--zd-accent)" }}>this week</em>.
         </h1>
-        <p className="zd-lede">Two steps. Zooptrack reads your rivals' Meta ads every night and tells you what changed, here and in a Monday email.</p>
+        <p className="zd-lede">Two steps. Zooptrack reads your rivals' Meta ads every night and tells you what changed, here and in an email on the schedule you choose.</p>
         <section className="zd-card" aria-labelledby="step-1">
           <div className="zd-eyebrow" id="step-1">
             Step 1 · Your brand
@@ -114,7 +114,7 @@ export function TodayView() {
         </div>
         <div className="zd-row">
           <Link href="/today/report" className="zd-btn">
-            Preview Monday report
+            Preview report
           </Link>
           <a href="#add-rival" className="zd-btn zd-btn-primary">
             Add a rival
@@ -264,7 +264,7 @@ export function TodayView() {
             <h2 id="inbox-title" className="zd-h3">
               This lands in your inbox
             </h2>
-            <p style={{ margin: 0, fontSize: 14, color: "var(--zd-ink-2)" }}>The same moves, every Monday at 9 AM IST.</p>
+            <p style={{ margin: 0, fontSize: 14, color: "var(--zd-ink-2)" }}>The same moves, by email, daily or weekly. You choose.</p>
             <Link href="/today/report" style={{ fontWeight: 600, fontSize: 14 }}>
               See the email →
             </Link>

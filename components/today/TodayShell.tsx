@@ -16,7 +16,7 @@ const NAV: Array<{ key: NavKey; href: string; label: string; icon: ReactNode }> 
   { key: "adspy", href: "/adspy", label: "Discover ads", icon: <Search size={18} aria-hidden="true" /> },
   { key: "finder", href: "/today/finder", label: "Ad finder", icon: <Tags size={18} aria-hidden="true" /> },
   { key: "vault", href: "/brand-vault", label: "Brand Vault", icon: <BookOpen size={18} aria-hidden="true" /> },
-  { key: "report", href: "/today/report", label: "Monday report", icon: <Mail size={18} aria-hidden="true" /> },
+  { key: "report", href: "/today/report", label: "Report", icon: <Mail size={18} aria-hidden="true" /> },
   { key: "zwirk", href: "/zwirk", label: "ZWIRK", icon: <Sparkles size={18} aria-hidden="true" /> },
   { key: "profit", href: "/dashboard", label: "Profit OS", icon: <LayoutDashboard size={18} aria-hidden="true" /> },
   { key: "billing", href: "/today/billing", label: "Plan & billing", icon: <CreditCard size={18} aria-hidden="true" /> },

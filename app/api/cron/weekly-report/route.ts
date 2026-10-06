@@ -3,9 +3,10 @@ import { NextRequest } from "next/server";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { getEntitlement } from "@/lib/billing/server";
 import { runCronSlices, runUserBatch } from "@/lib/cron/batch";
-import { isoWeek } from "@/lib/today/alerts";
 import { getToday } from "@/lib/today/load";
 import { renderReportEmail, reportSubject } from "@/lib/today/report-email";
+import { loadReportPrefs } from "@/lib/today/report-prefs-store";
+import { dueReportKey } from "@/lib/today/report-schedule";
 
 export const runtime = "nodejs";
 export const preferredRegion = "syd1";
@@ -13,12 +14,12 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /**
- * Monday rival report. Vercel Cron calls this with CRON_SECRET.
- * Sends through Resend when RESEND_API_KEY and REPORT_FROM_EMAIL are set
- * (e.g. "Zooptrack <reports@zooptrack.co.in>"); otherwise it only counts
- * what it would send (dry run), so it is safe to deploy before email is set up.
- * Works in 40 s slices that chain themselves, so any number of users fits;
- * each user gets at most one report per week (alert_deliveries).
+ * Rival report, on each user's own schedule (daily or weekly, day + hour IST,
+ * or off; set on /today/report). Called every 30 min by the GitHub ops-health
+ * workflow and daily by Vercel Cron; each run sends only the reports that are
+ * due and not yet sent for that period (alert_deliveries), so late or repeated
+ * runs never double-send. Sends through Resend when RESEND_API_KEY and
+ * REPORT_FROM_EMAIL are set; otherwise only counts (dry run). ?dry=1 forces it.
  */
 export async function GET(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
@@ -31,16 +32,37 @@ export async function GET(request: NextRequest) {
   const appUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.zooptrack.co.in").trim();
   const dryRun = !apiKey || !from || request.nextUrl.searchParams.get("dry") === "1";
   const service = createGlobalServiceClient();
-  const week = isoWeek(new Date());
+  const now = new Date();
 
   const [watch, vault] = await Promise.all([
     service.from("adspy_advertiser_watchlists").select("user_id").eq("platform", "meta").limit(20000),
     service.from("brand_vault_competitors").select("user_id").limit(20000),
   ]);
-  const userIds = Array.from(
+  const candidates = Array.from(
     new Set([...(watch.data ?? []), ...(vault.error ? [] : vault.data ?? [])].map((row) => String((row as { user_id: unknown }).user_id))),
   );
-  const dateLabel = new Intl.DateTimeFormat("en-IN", { weekday: "long", day: "numeric", month: "short", timeZone: "Asia/Kolkata" }).format(new Date());
+
+  // Who is due right now, and which of those were not sent for this period yet.
+  const prefs = await loadReportPrefs(candidates);
+  const dueKey = new Map<string, string>();
+  for (const id of candidates) {
+    const key = dueReportKey(prefs.get(id)!, now);
+    if (key) dueKey.set(id, key);
+  }
+  const dueIds = Array.from(dueKey.keys());
+  const sentAlready = new Set<string>();
+  for (let i = 0; i < dueIds.length; i += 500) {
+    const { data } = await service
+      .from("alert_deliveries")
+      .select("user_id,alert_key")
+      .in("user_id", dueIds.slice(i, i + 500))
+      .like("alert_key", "report:%");
+    for (const row of (data ?? []) as Array<{ user_id: string; alert_key: string }>) {
+      if (dueKey.get(String(row.user_id)) === row.alert_key) sentAlready.add(String(row.user_id));
+    }
+  }
+  const userIds = dueIds.filter((id) => !sentAlready.has(id));
+  const dateLabel = new Intl.DateTimeFormat("en-IN", { weekday: "long", day: "numeric", month: "short", timeZone: "Asia/Kolkata" }).format(now);
 
   return runCronSlices(request.url, async (offset, deadlineAt) => {
     let sent = 0;
@@ -51,13 +73,8 @@ export async function GET(request: NextRequest) {
       offset,
       deadlineAt,
       work: async (userId) => {
+        const deliveryKey = dueKey.get(userId)!;
         try {
-          const deliveryKey = `weekly-report:${week}`;
-          const { data: done } = await service.from("alert_deliveries").select("alert_key").eq("user_id", userId).eq("alert_key", deliveryKey).maybeSingle();
-          if (done) {
-            skipped += 1;
-            return;
-          }
           const { data: owner } = await service.auth.admin.getUserById(userId);
           const to = owner?.user?.email ?? null;
           // Only accounts with a running trial or plan get the report.
@@ -67,7 +84,9 @@ export async function GET(request: NextRequest) {
           }
           const today = await getToday(userId);
           if (!today.moves.length) {
+            // Nothing to report this period: record it so later runs skip this user.
             skipped += 1;
+            if (!dryRun) await service.from("alert_deliveries").upsert({ user_id: userId, alert_key: deliveryKey });
             return;
           }
           if (dryRun) {
@@ -90,14 +109,14 @@ export async function GET(request: NextRequest) {
             await service.from("alert_deliveries").upsert({ user_id: userId, alert_key: deliveryKey });
           } else {
             failed += 1;
-            console.warn("[Weekly report] send failed", response.status, await response.text().catch(() => ""));
+            console.warn("[Report] send failed", response.status, await response.text().catch(() => ""));
           }
         } catch (error) {
           failed += 1;
-          console.error("[Weekly report] user failed", error instanceof Error ? error.message : error);
+          console.error("[Report] user failed", error instanceof Error ? error.message : error);
         }
       },
     });
-    return { success: true, dryRun, users: userIds.length, sent, skipped, failed, nextOffset };
+    return { success: true, dryRun, candidates: candidates.length, due: userIds.length, sent, skipped, failed, nextOffset };
   });
 }

@@ -7,9 +7,9 @@ import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase
 import { entitlementFor, isAdminEmail, razorpayPlanEnv, TRIAL_DAYS, type Entitlement, type PaidPlanKey, type SubscriptionRow } from "./plans";
 
 const RAZORPAY_API = "https://api.razorpay.com/v1";
-const COLUMNS = "user_id,plan,status,trial_ends_at,current_period_end,pending_plan,razorpay_subscription_id";
+const COLUMNS = "user_id,plan,status,trial_ends_at,current_period_end,pending_plan,razorpay_subscription_id,previous_subscription_id";
 
-export type BillingRow = SubscriptionRow & { user_id: string; pending_plan: string | null; razorpay_subscription_id: string | null };
+export type BillingRow = SubscriptionRow & { user_id: string; pending_plan: string | null; razorpay_subscription_id: string | null; previous_subscription_id?: string | null };
 
 function missingTable(message: string) {
   return /42P01|PGRST205|does not exist|schema cache/i.test(message);
@@ -74,13 +74,22 @@ export async function createSubscription(userId: string, plan: PaidPlanKey, emai
   });
   const client = createGlobalServiceClient();
   const current = await getBillingRow(userId);
-  // Switching plans: keep the old subscription id so it is cancelled once the new one is live.
-  const previous = current?.status === "active" || current?.status === "past_due" ? current.razorpay_subscription_id : null;
+  // Which subscription is really paying right now:
+  // - a switch is already pending (an earlier checkout was opened but not paid):
+  //   the paying one is still previous_subscription_id; never lose it;
+  // - otherwise, if the account is live, the current subscription id.
+  const pendingSwitch = Boolean(current?.pending_plan);
+  const live = current?.status === "active" || current?.status === "past_due";
+  const previous = pendingSwitch ? current?.previous_subscription_id ?? null : live ? current?.razorpay_subscription_id ?? null : null;
+  // An earlier checkout that was never paid: cancel it so it cannot be paid later
+  // (no orphan subscriptions, no surprise second charge).
+  const abandoned = pendingSwitch && current?.razorpay_subscription_id && current.razorpay_subscription_id !== previous ? current.razorpay_subscription_id : null;
   const { error } = await client
     .from("billing_subscriptions")
     .update({ pending_plan: plan, razorpay_subscription_id: sub.id, razorpay_plan_id: planId, previous_subscription_id: previous, updated_at: new Date().toISOString() })
     .eq("user_id", userId);
   if (error) throw new Error(error.message);
+  if (abandoned) await cancelUnpaid(abandoned);
   return { id: sub.id, shortUrl: sub.short_url ?? null };
 }
 
@@ -138,14 +147,57 @@ export async function applySubscriptionState(
     update.pending_plan = null;
   }
   const cancelOld = next.status === "active" && row.previous_subscription_id && row.previous_subscription_id !== subscriptionId ? row.previous_subscription_id : null;
-  if (cancelOld) update.previous_subscription_id = null;
   const { error } = await client.from("billing_subscriptions").update(update).eq("user_id", row.user_id);
   if (error) throw new Error(error.message);
-  if (cancelOld) {
-    // The new plan is live: stop billing the old one now.
-    await razorpay(`/subscriptions/${encodeURIComponent(cancelOld)}/cancel`, { method: "POST", body: { cancel_at_cycle_end: 0 } }).catch((reason) =>
-      console.warn("[billing] could not cancel previous subscription", cancelOld, reason instanceof Error ? reason.message : reason),
-    );
-  }
+  // The new plan is live: stop billing the old one now. previous_subscription_id is
+  // cleared only once Razorpay confirms; otherwise ops-health retries every 30 min.
+  if (cancelOld) await cancelPreviousSubscription(row.user_id, cancelOld);
   return true;
+}
+
+async function cancelPreviousSubscription(userId: string, subscriptionId: string): Promise<boolean> {
+  try {
+    await razorpay(`/subscriptions/${encodeURIComponent(subscriptionId)}/cancel`, { method: "POST", body: { cancel_at_cycle_end: 0 } });
+  } catch (reason) {
+    const message = reason instanceof Error ? reason.message : String(reason);
+    // Already cancelled/completed at Razorpay counts as done.
+    if (!/cancel|complete|expired/i.test(message)) {
+      console.warn("[billing] could not cancel previous subscription; will retry", subscriptionId, message);
+      return false;
+    }
+  }
+  await createGlobalServiceClient()
+    .from("billing_subscriptions")
+    .update({ previous_subscription_id: null, updated_at: new Date().toISOString() })
+    .eq("user_id", userId)
+    .eq("previous_subscription_id", subscriptionId);
+  return true;
+}
+
+/** Cancel a subscription that was created at checkout but never paid. Best effort. */
+async function cancelUnpaid(subscriptionId: string): Promise<void> {
+  await razorpay(`/subscriptions/${encodeURIComponent(subscriptionId)}/cancel`, { method: "POST", body: { cancel_at_cycle_end: 0 } }).catch((reason) =>
+    console.warn("[billing] could not cancel unpaid checkout", subscriptionId, reason instanceof Error ? reason.message : reason),
+  );
+}
+
+/**
+ * Safety net for plan switches: any live account that still has an old
+ * subscription recorded gets it cancelled (called by ops-health every 30 min).
+ * Returns how many old subscriptions are still not cancelled.
+ */
+export async function reconcilePlanSwitches(): Promise<number> {
+  if (!razorpayConfigured()) return 0;
+  const { data } = await createGlobalServiceClient()
+    .from("billing_subscriptions")
+    .select("user_id,status,razorpay_subscription_id,previous_subscription_id,pending_plan")
+    .not("previous_subscription_id", "is", null)
+    .is("pending_plan", null)
+    .limit(50);
+  let left = 0;
+  for (const row of (data ?? []) as Array<{ user_id: string; status: string; razorpay_subscription_id: string | null; previous_subscription_id: string }>) {
+    if (row.status !== "active" || row.previous_subscription_id === row.razorpay_subscription_id) continue;
+    if (!(await cancelPreviousSubscription(row.user_id, row.previous_subscription_id))) left += 1;
+  }
+  return left;
 }

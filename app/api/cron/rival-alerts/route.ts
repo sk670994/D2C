@@ -7,6 +7,7 @@ import { sendEmail } from "@/lib/email/send";
 import { alertKey, alertsToSend, alertSubject, isoWeek } from "@/lib/today/alerts";
 import { getToday } from "@/lib/today/load";
 import { renderReportEmail } from "@/lib/today/report-email";
+import { loadReportPrefs } from "@/lib/today/report-prefs-store";
 
 export const runtime = "nodejs";
 export const preferredRegion = "syd1";
@@ -32,6 +33,10 @@ export async function GET(request: NextRequest) {
   const { data: watchRows } = await service.from("adspy_advertiser_watchlists").select("user_id").eq("platform", "meta").limit(20000);
   const userIds: string[] = Array.from(new Set<string>((watchRows ?? []).map((r: { user_id: unknown }) => String(r.user_id))));
 
+  // Users who switched instant alerts off on /today/report.
+  const prefs = await loadReportPrefs(userIds);
+  const alertsOff = new Set(userIds.filter((id) => prefs.get(id)?.alerts === false));
+
   return runCronSlices(request.url, async (offset, deadlineAt) => {
     let sent = 0;
     let skipped = 0;
@@ -45,7 +50,7 @@ export async function GET(request: NextRequest) {
           const { data: userData } = await service.auth.admin.getUserById(userId);
           const email = userData?.user?.email ?? null;
           const entitlement = await getEntitlement(userId, email);
-          if (!entitlement.alerts || !email) {
+          if (!entitlement.alerts || !email || alertsOff.has(userId)) {
             skipped += 1;
             return;
           }
