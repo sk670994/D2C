@@ -13,13 +13,14 @@ export type ReportPrefs = {
   frequency: ReportFrequency;
   /** 1 = Monday … 7 = Sunday (weekly only). */
   weekday: number;
-  /** Hour of day in IST, 0–23. */
+  /** Time of day in IST: hour 0–23 and minute 0–59 (the picker offers 15-minute steps). */
   hour: number;
+  minute: number;
   /** Instant email when a rival makes a big move or changes an offer/price. */
   alerts: boolean;
 };
 
-export const DEFAULT_REPORT_PREFS: ReportPrefs = { frequency: "weekly", weekday: 1, hour: 9, alerts: true };
+export const DEFAULT_REPORT_PREFS: ReportPrefs = { frequency: "weekly", weekday: 1, hour: 9, minute: 0, alerts: true };
 
 export const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
 
@@ -29,10 +30,12 @@ export function normalizePrefs(input: unknown): ReportPrefs {
   const frequency = raw.frequency === "daily" || raw.frequency === "weekly" || raw.frequency === "off" ? raw.frequency : DEFAULT_REPORT_PREFS.frequency;
   const weekday = Number(raw.weekday);
   const hour = Number(raw.hour);
+  const minute = raw.minute === undefined || raw.minute === null ? 0 : Number(raw.minute);
   return {
     frequency,
     weekday: Number.isInteger(weekday) && weekday >= 1 && weekday <= 7 ? weekday : DEFAULT_REPORT_PREFS.weekday,
     hour: Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : DEFAULT_REPORT_PREFS.hour,
+    minute: Number.isInteger(minute) && minute >= 0 && minute <= 59 ? minute : DEFAULT_REPORT_PREFS.minute,
     alerts: typeof raw.alerts === "boolean" ? raw.alerts : DEFAULT_REPORT_PREFS.alerts,
   };
 }
@@ -40,12 +43,13 @@ export function normalizePrefs(input: unknown): ReportPrefs {
 const IST_OFFSET_MS = 330 * 60_000;
 
 /** Wall-clock parts in India (no DST, so a fixed offset is exact). */
-export function istParts(now: Date): { date: string; weekday: number; hour: number; istDate: Date } {
+export function istParts(now: Date): { date: string; weekday: number; hour: number; minute: number; istDate: Date } {
   const istDate = new Date(now.getTime() + IST_OFFSET_MS);
   return {
     date: istDate.toISOString().slice(0, 10),
     weekday: istDate.getUTCDay() || 7,
     hour: istDate.getUTCHours(),
+    minute: istDate.getUTCMinutes(),
     istDate,
   };
 }
@@ -58,21 +62,28 @@ export function istParts(now: Date): { date: string; weekday: number; hour: numb
 export function dueReportKey(prefs: ReportPrefs, now: Date): string | null {
   if (prefs.frequency === "off") return null;
   const ist = istParts(now);
+  const nowMin = ist.hour * 60 + ist.minute;
+  const atMin = prefs.hour * 60 + prefs.minute;
   if (prefs.frequency === "daily") {
-    return ist.hour >= prefs.hour ? `report:d:${ist.date}` : null;
+    return nowMin >= atMin ? `report:d:${ist.date}` : null;
   }
-  const reached = ist.weekday > prefs.weekday || (ist.weekday === prefs.weekday && ist.hour >= prefs.hour);
+  const reached = ist.weekday > prefs.weekday || (ist.weekday === prefs.weekday && nowMin >= atMin);
   return reached ? `report:w:${isoWeek(ist.istDate)}` : null;
 }
 
-export function hourLabel(hour: number): string {
+export function timeLabel(hour: number, minute = 0): string {
   const h = hour % 12 === 0 ? 12 : hour % 12;
-  return `${h}:00 ${hour < 12 ? "AM" : "PM"}`;
+  return `${h}:${String(minute).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`;
+}
+
+/** Kept for callers that only know the hour. */
+export function hourLabel(hour: number): string {
+  return timeLabel(hour, 0);
 }
 
 /** "Every Monday, 9:00 AM IST" / "Every day, 8:00 AM IST" / "Off". */
 export function describePrefs(prefs: ReportPrefs): string {
   if (prefs.frequency === "off") return "Off";
   const when = prefs.frequency === "daily" ? "Every day" : `Every ${WEEKDAYS[prefs.weekday - 1]}`;
-  return `${when}, ${hourLabel(prefs.hour)} IST`;
+  return `${when}, ${timeLabel(prefs.hour, prefs.minute)} IST`;
 }
