@@ -17,6 +17,8 @@ const coreLinks = [
   ["/faq", "FAQ"],
   ["/contact", "Contact"],
   ["/privacy", "Privacy"],
+  ["/refund-policy", "Cancellation & refunds"],
+  ["/shipping-policy", "Shipping & delivery"],
   ["/terms", "Terms"],
 ] as const;
 

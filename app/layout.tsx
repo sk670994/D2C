@@ -74,6 +74,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <ul className="footer-list">
                   <li><a href="/privacy">Privacy</a></li>
                   <li><a href="/terms">Terms</a></li>
+                  <li><a href="/refund-policy">Refunds</a></li>
+                  <li><a href="/shipping-policy">Delivery</a></li>
                   <li><a href="/cookies">Cookies</a></li>
                 </ul>
               </div>
