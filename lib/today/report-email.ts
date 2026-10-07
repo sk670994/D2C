@@ -1,5 +1,5 @@
 /**
- * The Monday rival report as email-safe HTML (tables + inline styles, no
+ * The rival report as email-safe HTML (tables + inline styles, no
  * external CSS). Pure; the same content as the Today page.
  */
 import type { Move } from "./insights";
