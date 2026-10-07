@@ -299,7 +299,7 @@ export function ZooptrackPricing() {
             <motion.article key={key} className={`${styles.priceCard} ${key === "growth" ? styles.featured : ""}`} whileHover={{ y: -14, rotateX: 6 }}>
               <span>{plan.name.toUpperCase()}</span>
               <strong>{key === "trial" ? "₹0" : formatInr(plan.priceInr)}</strong>
-              <small>{key === "trial" ? `${TRIAL_DAYS} days · no card` : "/ month + GST"}</small>
+              <small>{key === "trial" ? `${TRIAL_DAYS} days · no card` : "/ month"}</small>
               <div>{plan.features.slice(0, 4).map((f) => <p key={f}>✓ {f}</p>)}</div>
               <Button href={key === "trial" ? "/login" : "/login?next=/today/billing"} secondary={key !== "growth"}>{i === 0 ? "Start free trial" : key === "growth" ? "Start with Growth" : "Get started"}</Button>
             </motion.article>

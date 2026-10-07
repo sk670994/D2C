@@ -142,7 +142,7 @@ export function BillingView() {
       <header className="zd-col" style={{ gap: 10 }}>
         <div className="zd-eyebrow">Plan & billing</div>
         <h1 className="zd-h1">{e.label}.</h1>
-        <p className="zd-lede">Prices in INR, billed monthly by Razorpay (UPI AutoPay or card). GST invoice by email. Cancel any time; you keep access to the end of the month you paid for.</p>
+        <p className="zd-lede">Prices in INR, billed monthly by Razorpay (UPI AutoPay or card). Payment receipt by email. Cancel any time; you keep access to the end of the month you paid for.</p>
       </header>
 
       <section className="zd-card" aria-label="Usage" style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 24 }}>
@@ -208,7 +208,7 @@ export function BillingView() {
                 <span className="zd-num" style={{ fontSize: 40 }}>
                   {inr(plan.priceInr)}
                 </span>
-                <span className="zd-muted"> / month + GST</span>
+                <span className="zd-muted"> / month</span>
               </div>
               <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
                 {plan.features.map((f) => (

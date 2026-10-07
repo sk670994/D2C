@@ -21,7 +21,7 @@ const sections = [
   {
     title: "Payments",
     body:
-      "New accounts get a 7-day free trial. Paid plans are billed monthly in advance through Razorpay, in INR plus GST. You can cancel any time from Plan & billing and keep access until the end of the period you paid for. Fees already paid are not refunded, except where the law requires it."
+      "New accounts get a 7-day free trial. Paid plans are billed monthly in advance through Razorpay, in INR. Prices shown are the full amount you pay. You can cancel any time from Plan & billing and keep access until the end of the period you paid for. Fees already paid are not refunded, except where the law requires it."
   },
   {
     title: "Acceptable Use",
