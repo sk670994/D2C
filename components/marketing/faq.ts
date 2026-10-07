@@ -22,7 +22,7 @@ export const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "What does it cost? Can I cancel?",
-    a: "Start with a 7-day free trial, no card. Then Starter ₹1,999, Growth ₹4,999 or Agency ₹12,999 a month plus GST, paid by UPI AutoPay or card. Cancel any time; you keep access to the end of the month you paid for.",
+    a: "Start with a 7-day free trial, no card. Then Starter ₹1,999, Growth ₹4,999 or Agency ₹12,999 a month, paid by UPI AutoPay or card. Cancel any time; you keep access to the end of the month you paid for.",
   },
   {
     q: "Can my team use one account?",
