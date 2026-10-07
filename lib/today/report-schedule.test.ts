@@ -33,6 +33,11 @@ describe("dueReportKey", () => {
     expect(dueReportKey(daily, mondayIst(7))).toBe("report:d:2026-10-05");
     expect(dueReportKey(daily, mondayIst(23))).toBe("report:d:2026-10-05");
   });
+  it("respects minutes: 7:30 is not due at 7:29, due at 7:30", () => {
+    const daily = { ...weekly, frequency: "daily" as const, hour: 7, minute: 30 };
+    expect(dueReportKey(daily, mondayIst(7, 29))).toBe(null);
+    expect(dueReportKey(daily, mondayIst(7, 30))).toBe("report:d:2026-10-05");
+  });
   it("off never sends", () => {
     expect(dueReportKey({ ...weekly, frequency: "off" }, mondayIst(12))).toBe(null);
   });
@@ -44,10 +49,11 @@ describe("normalizePrefs", () => {
     expect(normalizePrefs(null)).toEqual(DEFAULT_REPORT_PREFS);
   });
   it("keeps valid input", () => {
-    expect(normalizePrefs({ frequency: "daily", weekday: 3, hour: 0, alerts: false })).toEqual({ frequency: "daily", weekday: 3, hour: 0, alerts: false });
+    expect(normalizePrefs({ frequency: "daily", weekday: 3, hour: 0, minute: 45, alerts: false })).toEqual({ frequency: "daily", weekday: 3, hour: 0, minute: 45, alerts: false });
   });
   it("describes", () => {
     expect(describePrefs(DEFAULT_REPORT_PREFS)).toBe("Every Monday, 9:00 AM IST");
     expect(describePrefs({ ...DEFAULT_REPORT_PREFS, frequency: "daily", hour: 18 })).toBe("Every day, 6:00 PM IST");
+    expect(describePrefs({ ...DEFAULT_REPORT_PREFS, frequency: "daily", hour: 7, minute: 45 })).toBe("Every day, 7:45 AM IST");
   });
 });

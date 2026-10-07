@@ -33,6 +33,6 @@ describe("report email", () => {
 
   it("writes a subject from the top move", () => {
     expect(reportSubject({ headline: "", moves: [move, move] })).toBe("Mamaearth: 79 new ads in 7 days, led by “Up to 35% OFF” (and 1 more move)");
-    expect(reportSubject({ headline: "", moves: [] })).toBe("Your Monday rival report");
+    expect(reportSubject({ headline: "", moves: [] })).toBe("Your rival report");
   });
 });

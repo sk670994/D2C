@@ -2,7 +2,10 @@
 
 import { useState } from "react";
 
-import { describePrefs, hourLabel, WEEKDAYS, type ReportFrequency, type ReportPrefs } from "@/lib/today/report-schedule";
+import { describePrefs, timeLabel, WEEKDAYS, type ReportFrequency, type ReportPrefs } from "@/lib/today/report-schedule";
+
+/** Every 15 minutes of the day, as "h:m" values. */
+const TIMES = Array.from({ length: 96 }, (_, i) => ({ hour: Math.floor(i / 4), minute: (i % 4) * 15 }));
 
 const FREQUENCIES: Array<{ value: ReportFrequency; label: string }> = [
   { value: "daily", label: "Daily" },
@@ -15,6 +18,19 @@ export function ReportScheduleCard({ initial }: { initial: ReportPrefs }) {
   const [prefs, setPrefs] = useState<ReportPrefs>(initial);
   const [saved, setSaved] = useState<ReportPrefs>(initial);
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [send, setSend] = useState<{ state: "idle" | "sending" | "sent" | "error"; message?: string }>({ state: "idle" });
+
+  async function sendNow() {
+    setSend({ state: "sending" });
+    try {
+      const res = await fetch("/api/today/report-send-now", { method: "POST" });
+      const json = (await res.json().catch(() => ({}))) as { success?: boolean; to?: string; error?: string };
+      if (!res.ok || !json.success) throw new Error(json.error || "The email could not be sent.");
+      setSend({ state: "sent", message: `Sent to ${json.to}. It should arrive within a minute.` });
+    } catch (err) {
+      setSend({ state: "error", message: err instanceof Error ? err.message : "The email could not be sent." });
+    }
+  }
   const dirty = JSON.stringify(prefs) !== JSON.stringify(saved);
 
   const update = (patch: Partial<ReportPrefs>) => {
@@ -76,9 +92,20 @@ export function ReportScheduleCard({ initial }: { initial: ReportPrefs }) {
           )}
           <label className="zd-col" style={{ gap: 4 }}>
             <span className="zd-muted">Time (IST)</span>
-            <select className="zd-select" value={prefs.hour} onChange={(e) => update({ hour: Number(e.target.value) })}>
-              {Array.from({ length: 24 }, (_, h) => (
-                <option key={h} value={h}>{hourLabel(h)}</option>
+            <select
+              className="zd-select"
+              value={`${prefs.hour}:${prefs.minute}`}
+              onChange={(e) => {
+                const [h, m] = e.target.value.split(":").map(Number);
+                update({ hour: h, minute: m });
+              }}
+            >
+              {/* Keep a saved time that is not on the 15-minute grid selectable. */}
+              {prefs.minute % 15 !== 0 ? <option value={`${prefs.hour}:${prefs.minute}`}>{timeLabel(prefs.hour, prefs.minute)}</option> : null}
+              {TIMES.map((t) => (
+                <option key={`${t.hour}:${t.minute}`} value={`${t.hour}:${t.minute}`}>
+                  {timeLabel(t.hour, t.minute)}
+                </option>
               ))}
             </select>
           </label>
@@ -96,6 +123,15 @@ export function ReportScheduleCard({ initial }: { initial: ReportPrefs }) {
         </button>
         <span role="status" className={state === "error" ? "zd-error" : "zd-muted"}>
           {state === "saved" ? "Saved." : state === "error" ? "Could not save. Try again." : ""}
+        </span>
+      </div>
+
+      <div className="zd-row zd-divider" style={{ gap: 12, flexWrap: "wrap" }}>
+        <button type="button" className="zd-btn" disabled={send.state === "sending"} onClick={() => void sendNow()}>
+          {send.state === "sending" ? "Sending…" : "Send it now"}
+        </button>
+        <span role="status" className={send.state === "error" ? "zd-error" : "zd-muted"} style={{ flex: 1, minWidth: 200 }}>
+          {send.message ?? "Emails you today's report right away. Your schedule stays as it is."}
         </span>
       </div>
     </section>

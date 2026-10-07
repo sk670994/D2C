@@ -1,5 +1,5 @@
 /**
- * The Monday rival report as email-safe HTML (tables + inline styles, no
+ * The rival report as email-safe HTML (tables + inline styles, no
  * external CSS). Pure; the same content as the Today page.
  */
 import type { Move } from "./insights";
@@ -25,7 +25,7 @@ const KIND_COLOR: Record<Move["kind"], string> = { big: "#8A3A0B", changed: "#6B
 
 export function reportSubject(input: Pick<ReportInput, "moves" | "headline">): string {
   const top = input.moves[0];
-  if (!top) return "Your Monday rival report";
+  if (!top) return "Your rival report";
   const rest = input.moves.length - 1;
   return `${top.brand}: ${top.title.replace(/\.$/, "")}${rest > 0 ? ` (and ${rest} more ${rest === 1 ? "move" : "moves"})` : ""}`;
 }
