@@ -1,8 +1,34 @@
+import type { CSSProperties } from "react";
 import Link from "next/link";
-import { ZooptrackLogo } from "@/components/brand/ZooptrackLogo";
-import styles from "./SeoPage.module.css";
+
+import { findIndustry } from "@/lib/seo/industries";
 import { seoPath, type SeoEntry } from "@/lib/seo/site";
 
-export function SeoHub({ label, title, copy, entries }: { label: string; title: string; copy: string; entries: SeoEntry[] }) {
-  return <main className={`${styles.hub} zt-scope`}><header className={styles.hubHeader}><Link href="/" aria-label="Zooptrack home"><ZooptrackLogo height={30} tone="blue" /></Link><nav><Link href="/brand">Brands</Link><Link href="/guides">Guides</Link><Link href="/tools">Tools</Link><Link href="/industries">Industries</Link><Link href="/research">Research</Link></nav></header><div className={styles.hubWrap}><p className={styles.label}>{label}</p><h1>{title}</h1><p>{copy}</p><div className={styles.hubGrid}>{entries.map((entry) => <Link key={entry.slug} href={seoPath(entry)}><strong>{entry.h1}</strong><span>{entry.description}</span></Link>)}</div></div></main>;
+import { Shell } from "./SeoChrome";
+import t from "./Themes.module.css";
+
+/** Index page for a section: a plain, scannable list (industries show their colour). */
+export function SeoHub({ title, copy, entries }: { label?: string; title: string; copy: string; entries: SeoEntry[] }) {
+  const path = entries[0] ? seoPath(entries[0]).replace(/\/[^/]+$/, "") || "/" : "/";
+  return (
+    <Shell theme="hub" path={path}>
+      <header className={t.hubHead}>
+        <h1>{title}</h1>
+        <p className={t.lede}>{copy}</p>
+      </header>
+      <ul className={t.hubList}>
+        {entries.map((entry) => {
+          const hue = entry.section === "industry" ? findIndustry(entry.slug)?.hue : undefined;
+          return (
+            <li key={entry.slug}>
+              <Link href={seoPath(entry)}>
+                <strong>{hue ? <i style={{ "--dot": hue } as CSSProperties} /> : null}{entry.h1}</strong>
+                <span>{entry.description}</span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </Shell>
+  );
 }

@@ -7,22 +7,21 @@ import { getBrandStats, getLongestRunning } from "@/lib/seo/market";
 import { breadcrumbSchema, faqSchema, ORG_ID, SITE_URL } from "@/lib/seo/schema";
 import type { SeoEntry } from "@/lib/seo/site";
 
-import { Crumbs, Faqs, FooterCta, RelatedLinks, SeoTopbar } from "./SeoChrome";
 import { LongAds } from "./MarketBits";
-import styles from "./SeoPage.module.css";
-import m from "./Market.module.css";
+import { Crumbs, Faqs, FooterCta, RelatedLinks, Shell, updatedLabel } from "./SeoChrome";
+import t from "./Themes.module.css";
 
-/** A guide: a real article with a table of contents, not a template card. */
+/** A guide set as a field manual: contents on the left, a long serif read on the right. */
 export async function GuideView({ entry }: { entry: SeoEntry }) {
   const guide = GUIDES[entry.slug];
   if (!guide) return null;
+  const path = `/guides/${entry.slug}`;
   // Real examples beat described ones: the longest-running live ads right now.
   const sample = await getBrandStats(INDUSTRIES.flatMap((i) => i.brands.slice(0, 1)));
   const examples = await getLongestRunning(sample, 6);
-  const path = `/guides/${entry.slug}`;
 
   return (
-    <main className={`${styles.page} zt-scope`}>
+    <Shell theme="guide" path={path}>
       <JsonLd
         graph={[
           { "@type": "Article", headline: entry.h1, description: entry.description, url: `${SITE_URL}${path}`, inLanguage: "en-IN", author: { "@id": ORG_ID }, publisher: { "@id": ORG_ID }, timeRequired: `PT${guide.minutes}M` },
@@ -30,49 +29,51 @@ export async function GuideView({ entry }: { entry: SeoEntry }) {
           faqSchema(entry.faqs),
         ]}
       />
-      <SeoTopbar path={path} />
       <Crumbs items={[{ name: "Home", href: "/" }, { name: "Guides", href: "/guides" }, { name: entry.h1 }]} />
 
-      <div className={m.guide}>
-        <nav className={m.toc} aria-label="On this page">
-          <span>On this page</span>
-          {guide.sections.map((s) => (
-            <a key={s.id} href={`#${s.id}`}>{s.h2}</a>
-          ))}
-          <span style={{ marginTop: 14 }}>See it with real data</span>
-          <Link href="/brand">Brand ad pages</Link>
-          <Link href="/industries">Industry dashboards</Link>
+      <div className={t.manual}>
+        <nav className={t.toc} aria-label="Contents">
+          <span className={t.label}>Contents</span>
+          <ol>
+            {guide.sections.map((s) => (
+              <li key={s.id}><a href={`#${s.id}`}>{s.h2}</a></li>
+            ))}
+            {examples.length ? <li><a href="#examples">Real examples</a></li> : null}
+          </ol>
+          <span className={t.label}>See it with live data</span>
+          <p><Link href="/brand">Brand ad pages</Link></p>
+          <p><Link href="/industries">Industry dashboards</Link></p>
         </nav>
 
-        <article className={m.guideBody}>
-          <span className={styles.eyebrow}>D2C RESEARCH GUIDE</span>
+        <article className={t.manualBody}>
           <h1>{entry.h1}</h1>
-          <p className={m.meta}>{guide.minutes} min read · For {entry.audience.toLowerCase()}</p>
-          <div className={m.tldr}>
-            <strong>In short</strong>
-            <ul>{guide.tldr.map((t) => <li key={t}>{t}</li>)}</ul>
+          <p className={t.byline}>A {guide.minutes}-minute read for {entry.audience.toLowerCase()}. Updated {updatedLabel()}.</p>
+          <div className={t.short}>
+            <h2>The short version</h2>
+            <ul>{guide.tldr.map((x) => <li key={x}>{x}</li>)}</ul>
           </div>
           {guide.sections.map((s) => (
             <section key={s.id} id={s.id}>
               <h2>{s.h2}</h2>
               {s.paras.map((p) => <p key={p.slice(0, 40)}>{p}</p>)}
-              {s.list ? (s.ordered ? <ol>{s.list.map((li) => <li key={li}>{li}</li>)}</ol> : <ul>{s.list.map((li) => <li key={li}>{li}</li>)}</ul>) : null}
+              {s.list ? (s.ordered ? <ol className={t.steps}>{s.list.map((li) => <li key={li}>{li}</li>)}</ol> : <ul>{s.list.map((li) => <li key={li}>{li}</li>)}</ul>) : null}
             </section>
           ))}
-          {examples.length ? (
-            <section id="examples">
-              <h2>Real examples: Indian D2C ads running longest today</h2>
-              <p>Pulled live from the brands Zooptrack tracks. Each has stayed live for months, which is the strongest public sign that an ad works. Click one to see that brand&apos;s full ad library.</p>
-              <LongAds ads={examples} />
-            </section>
-          ) : null}
-          <div className={styles.callout}><strong>Keep in mind</strong><p>{entry.caveat}</p></div>
+          <p className={t.caveat}>{entry.caveat}</p>
         </article>
       </div>
 
+      {examples.length ? (
+        <section id="examples" className={`${t.wrap} ${t.section}`}>
+          <h2 className={t.h2}>Real examples: Indian D2C ads running longest today</h2>
+          <p className={t.sub}>Pulled live from the brands Zooptrack tracks. Each has stayed live for months, the strongest public sign that an ad works. Open one to see that brand&apos;s full library.</p>
+          <LongAds ads={examples} />
+        </section>
+      ) : null}
+
       <Faqs faqs={entry.faqs} />
-      <RelatedLinks hrefs={guide.next} title="Read next." />
+      <RelatedLinks hrefs={guide.next} title="Read next" />
       <FooterCta title="Skip the manual work." copy="Zooptrack collects your rivals' ads every night, keeps the history and tells you what changed." />
-    </main>
+    </Shell>
   );
 }
