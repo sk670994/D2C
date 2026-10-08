@@ -3,7 +3,7 @@ import "server-only";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { getSearchFacets, type FacetBucket, type FacetResult } from "@/lib/ad-intelligence/global/facets";
 import { brandSlug } from "@/lib/ad-intelligence/brand-slug";
-import { isStoredMediaUrl } from "@/lib/ad-intelligence/global/media-store";
+import { fastMediaUrl, isStoredMediaUrl } from "@/lib/ad-intelligence/global/media-store";
 
 /**
  * Live market numbers for the public SEO pages (brand, industry, research).
@@ -166,7 +166,7 @@ export async function getLongestRunning(advertisers: Array<Pick<BrandStat, "page
         advertiser: brand,
         advertiserSlug: brandSlug(brand),
         text: /^started running on\b/i.test(raw) ? "" : raw.slice(0, 140),
-        media,
+        media: fastMediaUrl(media),
         format: (row.creative_type ?? "ad").toLowerCase(),
         days: Math.max(1, Math.floor((now - new Date(String(row.first_seen_at)).getTime()) / DAY_MS)),
       });

@@ -13,7 +13,7 @@ import { Faqs, FooterCta, Shell } from "@/components/seo/SeoChrome";
 import type { CSSProperties } from "react";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { breadcrumbSchema, faqSchema, SITE_URL } from "@/lib/seo/schema";
-import { isStoredMediaUrl } from "@/lib/ad-intelligence/global/media-store";
+import { fastMediaUrl, isStoredMediaUrl } from "@/lib/ad-intelligence/global/media-store";
 import { industryOfBrand } from "@/lib/seo/industries";
 import { getCreativeMix, getLongestRunning, type LongAd, type MixRow } from "@/lib/seo/market";
 
@@ -250,7 +250,7 @@ export default async function BrandPage({ params }: { params: Promise<{ slug: st
                 <div key={ad.id} className={i >= 4 ? t.locked : undefined} aria-hidden={i >= 4}>
                   <span className={t.tile}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={ad.thumbnail_url ?? ad.image_url ?? ""} alt={`${name} ${ad.creative_type ?? ""} ad`} loading="lazy" decoding="async" />
+                    <img src={fastMediaUrl(ad.thumbnail_url ?? ad.image_url)} width={320} height={320} alt={`${name} ${ad.creative_type ?? ""} ad`} loading="lazy" decoding="async" />
                     {ad.is_currently_active ? <span className={t.stamp}>Live</span> : null}
                     <span className={t.tileText}>{hook(ad)}</span>
                   </span>
