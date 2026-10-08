@@ -5,14 +5,11 @@ import { ZooptrackLogo } from "@/components/brand/ZooptrackLogo";
 import { SeoCalculator } from "./SeoCalculator";
 import styles from "./SeoPage.module.css";
 import { findSeoEntry, seoPath, type SeoEntry, type SeoSection } from "@/lib/seo/site";
-import { INDUSTRIES } from "@/lib/seo/industries";
-import { getBrandStats } from "@/lib/seo/market";
 import { GuideView } from "./GuideView";
 import { IndustryView } from "./IndustryView";
 import { ResearchView } from "./ResearchView";
+import { ProductView } from "./ProductView";
 import { RelatedLinks } from "./SeoChrome";
-import { BrandTable } from "./MarketBits";
-import m from "./Market.module.css";
 
 export function seoMetadata(entry: SeoEntry): Metadata {
   const path = seoPath(entry);
@@ -33,40 +30,35 @@ export function SeoJsonLd({ entry }: { entry: SeoEntry }) {
 }
 
 
-const steps: Record<SeoSection, string[]> = {
-  commercial: ["Choose the exact competitors or public ad surface relevant to your question.", "Review the same evidence fields each time: advertiser, creative, copy, format and date.", "Compare new and persistent creative instead of treating one screenshot as a trend.", "Write the next decision and keep the evidence linked to it."],
-  guide: ["Start with one concrete research question instead of browsing without a hypothesis.", "Collect comparable examples and keep the source and date visible.", "Separate what you observed from what you think it might mean.", "Turn the result into a testable brief, question or follow-up."],
-  tool: ["Enter inputs from the same period and business definition.", "Check the arithmetic and the assumptions behind the inputs.", "Compare the result with your own target, guardrail or unit economics.", "Re-run the model whenever the underlying assumptions change."],
-  industry: ["Define the category and the competitor set you actually care about.", "Tag the visible creative and offer dimensions consistently.", "Compare patterns across multiple advertisers or dates.", "Use findings as hypotheses alongside your own customer and campaign data."],
-  research: ["Define the sample, collection window and fields before interpreting the data.", "Publish the methodology alongside any benchmark.", "Keep observed measurements separate from causal or performance claims.", "Update the research when the underlying dataset or scope changes."],
+/** Concrete notes for each calculator: formula, a worked example in rupees, and how to read it. */
+const TOOL_NOTES: Record<string, { formula: string; example: string; read: string[] }> = {
+  "roas-calculator": { formula: "ROAS = revenue from ads ÷ ad spend", example: "₹3,00,000 of revenue from ₹1,00,000 of ad spend is a 3.0x ROAS.", read: ["Compare ROAS with your break-even ROAS, not with another brand's: margins differ.", "Use revenue net of discounts and cancellations, or ROAS will look better than it is.", "For COD-heavy brands, use delivered revenue; RTO orders are not revenue."] },
+  "break-even-roas": { formula: "Break-even ROAS = 1 ÷ contribution margin (before ad spend)", example: "With a 40% contribution margin, break-even ROAS is 1 ÷ 0.40 = 2.5x. Below 2.5x, every order loses money.", read: ["Contribution margin here is after product, shipping, payment and packaging costs, but before ads.", "Your scaling target should sit above break-even to leave room for profit and returns.", "Recalculate whenever you change prices, discounts or shipping costs."] },
+  "cac-calculator": { formula: "CAC = acquisition spend ÷ new customers", example: "₹2,00,000 spent to win 800 new customers is a CAC of ₹250.", read: ["Count only new customers; repeat orders belong in retention, not CAC.", "Compare CAC with first-order contribution and with lifetime value.", "Include agency fees and creative costs if you want the true cost to acquire."] },
+  "contribution-margin": { formula: "Contribution margin = (revenue − variable costs) ÷ revenue", example: "A ₹1,000 order with ₹550 of product, shipping, payment and packaging costs has a 45% contribution margin.", read: ["Variable costs change with each order: product cost, shipping, payment gateway fees, packaging, returns.", "This margin sets your break-even ROAS: 1 ÷ margin.", "A discount comes straight out of contribution, which is why bundles are often cheaper than price cuts."] },
+  "rto-calculator": { formula: "RTO rate = RTO orders ÷ shipped orders", example: "60 orders returned out of 500 shipped is a 12% RTO rate.", read: ["Each RTO costs forward and return shipping with no revenue.", "Track RTO by payment method, pin code and campaign to find where it comes from.", "Prepaid incentives and address checks are the usual levers to bring it down."] },
 };
 
-/** Live proof on product pages: real brands and their current ad counts. */
-async function LiveBrands() {
-  const stats = await getBrandStats(INDUSTRIES.flatMap((i) => i.brands.slice(0, 2)));
-  if (!stats.length) return null;
-  return <section className={styles.toolBlock}><div className={m.panel}><span className={styles.eyebrow}>LIVE IN ZOOPTRACK TODAY</span><h2>Real D2C brands you can research right now</h2><p>Live Meta ad counts for a sample of the brands we collect every night. Open any brand to see its ads.</p><BrandTable stats={stats} limit={12} /><div className={m.chips} style={{ marginTop: 16 }}>{INDUSTRIES.map((i) => <Link key={i.slug} href={`/industries/${i.slug}`}>{i.name}</Link>)}</div></div></section>;
-}
 
 export async function SeoPage({ section, slug }: { section: SeoSection; slug: string }) {
-  const entry = findSeoEntry(section, slug);
-  if (!entry) notFound();
+  const found = findSeoEntry(section, slug);
+  if (!found) notFound();
+  const entry = found as SeoEntry;
   if (section === "guide") return <GuideView entry={entry} />;
   if (section === "industry") return <IndustryView entry={entry} />;
   if (section === "research") return <ResearchView entry={entry} />;
-  return <main className={styles.page}><SeoJsonLd entry={entry} />
+  if (section === "commercial") return <ProductView entry={entry} />;
+  return <main className={`${styles.page} zt-scope`}><SeoJsonLd entry={entry} />
     <header className={styles.topbar}><Link href="/" aria-label="Zooptrack home"><ZooptrackLogo height={30} tone="blue" priority /></Link><nav aria-label="SEO navigation"><Link href="/brand">Brands</Link><Link href="/guides">Guides</Link><Link href="/tools">Tools</Link><Link href="/industries">Industries</Link><Link href="/research">Research</Link><Link className={styles.cta} href={`/login?next=${encodeURIComponent(seoPath(entry))}`}>Try Zooptrack free</Link></nav></header>
-    <section className={styles.hero}><div><span className={styles.eyebrow}>{entry.eyebrow}</span><h1>{entry.h1}</h1><p>{entry.intro}</p><div className={styles.heroMeta}><span>For {entry.audience}</span><Link href="/brand">Browse real brand ad pages →</Link></div></div><aside className={styles.signalCard}><span>RESEARCH LENS</span>{entry.focus.map((item, i) => <div key={item}><b>0{i + 1}</b><strong>{item}</strong></div>)}</aside></section>
-    {section === "commercial" ? <LiveBrands /> : null}
+    <section className={styles.hero}><div><span className={styles.eyebrow}>{entry.eyebrow}</span><h1>{entry.h1}</h1><p>{entry.intro}</p><div className={styles.heroMeta}><span>For {entry.audience}</span><Link href="/brand">Browse real brand ad pages →</Link></div></div><aside className={styles.signalCard}><span>WHAT YOU NEED</span>{entry.focus.map((item, i) => <div key={item}><b>0{i + 1}</b><strong>{item}</strong></div>)}</aside></section>
     {entry.calculator ? <section className={styles.toolBlock}><SeoCalculator type={entry.calculator} /><p className={styles.toolNote}>Transparent arithmetic only. Keep your assumptions visible and compare the output with your own operating data.</p></section> : null}
-    <section className={styles.contentGrid}><article className={styles.article}>
-      <div className={styles.section}><span className={styles.eyebrow}>PRACTICAL WORKFLOW</span><h2>Use a defined process.</h2><ol>{steps[entry.section].map((step) => <li key={step}>{step}</li>)}</ol></div>
-      <div className={styles.section}><span className={styles.eyebrow}>WHAT TO INSPECT</span><h2>Focus on the visible signal.</h2><ul>{entry.focus.map((item) => <li key={item}>{item}</li>)}</ul><p style={{marginTop:16}}>The useful question is not only “what is the ad?” but “what decision could change because of what I observed?”</p></div>
-      <div className={styles.section}><span className={styles.eyebrow}>ZOOPTRACK FIT</span><h2>Build memory around the research.</h2><p>Zooptrack is designed for repeatable competitor-ad research around public advertising evidence. The value comes from consistent collection, searchable history and a clear bridge from observation to action.</p></div>
-      <div className={styles.callout}><strong>Evidence boundary</strong><p>{entry.caveat}</p></div>
-    </article><aside className={styles.side}><div className={styles.sideCard}><span className={styles.eyebrow}>START HERE</span><h2>Test one question.</h2><p>Begin with a small, clearly defined scope before expanding the research universe.</p><Link className={styles.primary} href="/brand">Browse brands</Link></div><div className={styles.sideCard}><span className={styles.eyebrow}>WANT HISTORY?</span><h2>Use AdSpy.</h2><p>Public pages explain the research surface. The authenticated workspace is where repeat monitoring and deeper filtering belong.</p><Link className={styles.secondary} href="/login?next=%2Fadspy">Open AdSpy</Link></div></aside></section>
+    {TOOL_NOTES[entry.slug] ? <section className={styles.contentGrid}><article className={styles.article}>
+      <div className={styles.section}><span className={styles.eyebrow}>THE FORMULA</span><h2>{TOOL_NOTES[entry.slug].formula}</h2><p>{TOOL_NOTES[entry.slug].example}</p></div>
+      <div className={styles.section}><span className={styles.eyebrow}>HOW TO READ IT</span><h2>Three things to check</h2><ul>{TOOL_NOTES[entry.slug].read.map((r) => <li key={r}>{r}</li>)}</ul></div>
+      <div className={styles.callout}><strong>Keep in mind</strong><p>{entry.caveat}</p></div>
+    </article><aside className={styles.side}><div className={styles.sideCard}><span className={styles.eyebrow}>NEXT STEP</span><h2>See what rivals are doing.</h2><p>Your numbers tell you what you can afford. Your rivals&apos; ads tell you what the market is testing.</p><Link className={styles.primary} href="/brand">Browse brand ads</Link></div></aside></section> : null}
     <section className={styles.faq}><span className={styles.eyebrow}>FAQ</span><h2>Common questions.</h2><div>{entry.faqs.map((faq) => <details key={faq.q}><summary>{faq.q}</summary><p>{faq.a}</p></details>)}</div></section>
     <RelatedLinks hrefs={entry.related} />
-    <footer className={styles.footerCta}><span className={styles.eyebrow}>ZOOPTRACK / NEXT STEP</span><h2>Turn public ad evidence into a decision loop.</h2><p>Browse real brand pages, then use Zooptrack when you need repeatable monitoring and deeper research.</p><Link className={styles.primary} href="/login">Start the free trial</Link></footer>
+    <footer className={styles.footerCta}><span className={styles.eyebrow}>ZOOPTRACK</span><h2>Know your numbers. Then know your rivals.</h2><p>Zooptrack tracks your competitors&apos; Facebook and Instagram ads every day and tells you what changed.</p><Link className={styles.primary} href="/login">Start the free trial</Link></footer>
   </main>;
 }
