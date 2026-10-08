@@ -9,6 +9,8 @@ export type Industry = {
   name: string;
   /** Short noun used inside sentences, e.g. "skincare brands". */
   noun: string;
+  /** How the ads are named in headings when it differs from the name, e.g. "Car" ("Car ads in India"). */
+  adName?: string;
   /** The category's own colour on its dashboard (bars, tint, highlights). */
   hue: string;
   intro: string;
@@ -34,6 +36,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "beauty",
     name: "Beauty & Ayurveda",
     noun: "beauty and Ayurvedic brands",
+    adName: "Beauty and Ayurveda",
     hue: "#C2185B",
     intro: "Makeup, fragrance and Ayurvedic beauty brands sell on look, ritual and heritage. Creative tends to be visual first, with festive and gifting moments driving bursts of new ads.",
     watch: [
@@ -47,6 +50,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "mens-grooming",
     name: "Men's grooming & wellness",
     noun: "men's grooming and wellness brands",
+    adName: "Men's grooming and wellness",
     hue: "#3D5A80",
     intro: "Men's grooming and wellness brands, from beard care to hair-loss treatment, rely heavily on problem-first hooks, founder or expert faces, and Hindi creative to reach beyond metros.",
     watch: [
@@ -60,6 +64,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "supplements",
     name: "Health & supplements",
     noun: "health, nutrition and fitness brands",
+    adName: "Health and supplement",
     hue: "#2E7D32",
     intro: "Supplement and nutrition brands compete on trust: certifications, experts and visible results. Ads often lean on education and subscription offers rather than one-off discounts.",
     watch: [
@@ -73,6 +78,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "fashion",
     name: "Fashion & ethnic wear",
     noun: "fashion and ethnic-wear brands",
+    adName: "Fashion and ethnic wear",
     hue: "#D1495B",
     intro: "Fashion brands run the highest volume of creative of almost any D2C category, because every drop, colour and season needs new ads. Catalogue and carousel formats dominate.",
     watch: [
@@ -86,6 +92,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "innerwear",
     name: "Innerwear & loungewear",
     noun: "innerwear and loungewear brands",
+    adName: "Innerwear and loungewear",
     hue: "#8E5BD0",
     intro: "Innerwear brands sell comfort and fit, often with multi-pack offers. Comfort claims, fabric close-ups and size inclusivity are the recurring creative themes.",
     watch: [
@@ -99,6 +106,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "electronics",
     name: "Audio, wearables & gadgets",
     noun: "audio, wearable and gadget brands",
+    adName: "Audio, wearable and gadget",
     hue: "#1F6FD0",
     intro: "Consumer-electronics D2C brands launch fast and price sharply. Ads are built around launches, specs and sale events on marketplaces as well as their own sites.",
     watch: [
@@ -110,8 +118,9 @@ export const INDUSTRIES: Industry[] = [
   },
   {
     slug: "home-sleep",
-    name: "Home, sleep & furniture",
-    noun: "home, sleep and furniture brands",
+    name: "Home & sleep",
+    noun: "home and sleep brands",
+    adName: "Home and sleep",
     hue: "#4F5DB3",
     intro: "Mattress, furniture and home-decor brands sell high-ticket products with long consideration. Trials, warranties and EMI offers do much of the work in their ads.",
     watch: [
@@ -119,12 +128,13 @@ export const INDUSTRIES: Industry[] = [
       { title: "Comparison creative", body: "Side-by-side tests against 'ordinary' mattresses or furniture are common and often long-running." },
       { title: "Sale calendars", body: "Big festive and end-of-season sales drive most new creative. Watch when each rival starts its push." },
     ],
-    brands: ["Wakefit", "Sleepyhead", "The Sleep Company", "Duroflex", "Pepperfry", "Urban Ladder", "Chumbak", "Nestasia"],
+    brands: ["Wakefit", "Sleepyhead", "The Sleep Company", "Duroflex", "Chumbak", "Nestasia"],
   },
   {
     slug: "jewellery-accessories",
     name: "Jewellery, eyewear & travel",
     noun: "jewellery, eyewear and travel-accessory brands",
+    adName: "Jewellery, eyewear and travel",
     hue: "#A87908",
     intro: "Jewellery, eyewear and luggage brands sell style and gifting. Creative is product-close and visual, with gifting occasions and try-on or warranty offers as recurring hooks.",
     watch: [
@@ -151,6 +161,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "food-beverage",
     name: "Food & beverage",
     noun: "food and beverage brands",
+    adName: "Food and beverage",
     hue: "#D9731A",
     intro: "Food and beverage D2C brands, from snacks and coffee to dairy and meat, sell taste, health and convenience. Ads often focus on new flavours, clean labels and subscription or first-order offers.",
     watch: [
@@ -164,6 +175,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "mother-baby",
     name: "Mother & baby",
     noun: "mother and baby brands",
+    adName: "Mother and baby",
     hue: "#2F9E8F",
     intro: "Mother and baby brands sell safety and trust to anxious first-time parents. Ads lean on certifications, gentle ingredients and real-parent stories.",
     watch: [
@@ -177,6 +189,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "womens-wellness",
     name: "Women's wellness & hygiene",
     noun: "women's wellness and hygiene brands",
+    adName: "Women's wellness and hygiene",
     hue: "#A8154F",
     intro: "Period-care and intimate-hygiene brands balance education with product. Ads often break taboos with direct, conversational hooks and lean on subscriptions and trial packs.",
     watch: [
@@ -203,6 +216,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "kitchen-appliances",
     name: "Kitchen & home appliances",
     noun: "kitchen and home-appliance brands",
+    adName: "Kitchen and appliance",
     hue: "#00808C",
     intro: "Fan, purifier, cookware and appliance brands sell on energy savings, durability and demos. Ads are demo-heavy and often tied to seasonal demand like summer or monsoon.",
     watch: [
@@ -212,7 +226,123 @@ export const INDUSTRIES: Industry[] = [
     ],
     brands: ["Atomberg", "Wonderchef", "Borosil", "Milton", "Agaro", "Kent RO", "Livpure"],
   },
+  {
+    slug: "furniture",
+    name: "Furniture",
+    noun: "furniture brands",
+    hue: "#8B5E34",
+    intro: "Furniture is a high-ticket, long-consideration buy. Online furniture brands sell with room shots, financing and fast delivery promises, and big sale events drive most of the year's ad volume.",
+    watch: [
+      { title: "Room-set creative", body: "Full-room shots sell a lifestyle; single-product shots sell a price. Watch which rivals use which, and for what." },
+      { title: "Financing and delivery", body: "No-cost EMI, free assembly and delivery in days are the levers. Note when a rival adds or drops one." },
+      { title: "Sale-event spikes", body: "Festive and end-of-season sales bring the biggest discounts. Track who starts first." },
+    ],
+    brands: ["Pepperfry", "Urban Ladder", "Godrej Interio", "Durian", "Nilkamal", "Royaloak", "IKEA", "HomeTown"],
+  },
+  {
+    slug: "cars",
+    name: "Cars",
+    noun: "car brands",
+    adName: "Car",
+    hue: "#3B4A5C",
+    intro: "Car makers advertise launches, festive booking offers and finance schemes. Meta ads drive test-drive and booking leads, with spikes around launches and the festive quarter.",
+    watch: [
+      { title: "Launch bursts", body: "A new model or facelift shows up as a burst of new ads. Watch how long launch creative keeps running." },
+      { title: "Festive booking offers", body: "Dussehra and Diwali bring cash discounts, exchange bonuses and finance offers. Compare them across brands." },
+      { title: "Lead forms vs site traffic", body: "Test-drive forms and dealer-locator ads show what each brand is optimising for." },
+    ],
+    brands: ["Maruti Suzuki", "Tata Motors", "Mahindra", "Hyundai India", "Kia India", "Toyota India", "MG Motor India", "Honda Cars India"],
+  },
+  {
+    slug: "two-wheelers",
+    name: "Bikes, scooters & EVs",
+    noun: "two-wheeler brands",
+    adName: "Bike, scooter and EV",
+    hue: "#B03A2E",
+    intro: "Two-wheeler brands sell mileage, style and, increasingly, electric. EV makers lean on running-cost savings and subsidies, while petrol brands push festive offers and finance.",
+    watch: [
+      { title: "Electric vs petrol", body: "EV brands lead with savings per km and subsidies; petrol brands with mileage and reliability. Watch how the messages shift." },
+      { title: "Festive and harvest season", body: "Navratri, Dussehra and Diwali drive bookings, and rural harvest season matters too. Track when rivals ramp up." },
+      { title: "Regional language", body: "Two-wheelers sell far beyond metros. Language mix shows which states each brand is targeting." },
+    ],
+    brands: ["Hero MotoCorp", "TVS Motor", "Bajaj Auto", "Royal Enfield", "Ola Electric", "Ather Energy", "Yamaha Motor India", "Honda Motorcycle"],
+  },
+  {
+    slug: "mobiles",
+    name: "Mobile phones",
+    noun: "smartphone brands",
+    adName: "Mobile phone",
+    hue: "#5B3FD1",
+    intro: "Smartphone brands fight over launches, specs and sale-day prices. Ad volume spikes around launches and big marketplace sales.",
+    watch: [
+      { title: "Launch calendars", body: "Each launch shows up as a cluster of new ads. Map rivals' launch rhythm to plan your own." },
+      { title: "Spec-led hooks", body: "Camera, battery, processor: see which spec each brand leads with in the same price band." },
+      { title: "Sale-day pricing", body: "Bank offers and exchange bonuses dominate sale ads. The offer mix shows how aggressive the market is." },
+    ],
+    brands: ["Samsung India", "Xiaomi India", "OnePlus", "Realme", "vivo India", "OPPO India", "iQOO", "Nothing", "Motorola India", "Lava Mobiles"],
+  },
+  {
+    slug: "laptops",
+    name: "Laptops & computers",
+    noun: "laptop brands",
+    adName: "Laptop",
+    hue: "#0E6BA8",
+    intro: "Laptop brands sell to students, professionals and gamers, with peaks at back-to-school, festive sales and new chip launches.",
+    watch: [
+      { title: "Audience split", body: "Student, creator, gamer and business laptops get very different creative. Watch which audience each rival is chasing." },
+      { title: "Back-to-school and festive", body: "June to August and October to November are the big windows. Track when rivals start." },
+      { title: "AI and chip launches", body: "New processors and 'AI PC' claims drive bursts of new ads. Note which rivals lead with them." },
+    ],
+    brands: ["HP India", "Dell India", "Lenovo India", "ASUS India", "Acer India", "MSI India"],
+  },
+  {
+    slug: "air-conditioners",
+    name: "Air conditioners",
+    noun: "AC brands",
+    adName: "AC",
+    hue: "#1C8FBF",
+    intro: "AC brands make most of their year between March and June. Energy savings, cooling speed, inverter tech and EMI offers drive the ads, and the first heatwave triggers the spend.",
+    watch: [
+      { title: "Heatwave timing", body: "Spend jumps with the first heatwave. Watch which rivals start in February and who waits." },
+      { title: "Energy and inverter claims", body: "Star ratings and savings per year are the main hooks. Compare the numbers rivals advertise." },
+      { title: "Installation and EMI", body: "Free installation, extended warranty and no-cost EMI often decide the sale. Track which offers rivals use." },
+    ],
+    brands: ["Voltas", "Blue Star", "Daikin India", "Lloyd", "Godrej Appliances", "Carrier India", "Hitachi India"],
+  },
+  {
+    slug: "refrigerators",
+    name: "Refrigerators & large appliances",
+    noun: "large-appliance brands",
+    adName: "Refrigerator and appliance",
+    hue: "#3F7F6B",
+    intro: "Refrigerator and large-appliance brands sell on capacity, energy savings and long warranties, with heavy activity in summer and the festive quarter.",
+    watch: [
+      { title: "Summer and festive peaks", body: "Fridges sell in summer and during festive sales. Track the two windows separately." },
+      { title: "Feature claims", body: "Convertible modes, inverter compressors and smart features: see which feature each rival leads with." },
+      { title: "Warranty and exchange", body: "Ten-year compressor warranties and exchange offers reduce the risk of a big purchase." },
+    ],
+    brands: ["LG Electronics", "Whirlpool India", "Haier India", "Bosch Home India", "Panasonic India", "Godrej Appliances India"],
+  },
+  {
+    slug: "water-heaters",
+    name: "Geysers & heaters",
+    noun: "geyser and heater brands",
+    adName: "Geyser and heater",
+    hue: "#C0392B",
+    intro: "Geyser and room-heater brands make their year in winter. Ads lean on safety, energy savings and quick heating, and start with the first cold week in North India.",
+    watch: [
+      { title: "First cold week", body: "Ads ramp up with the first cold snap in the north. Watch who starts early." },
+      { title: "Safety claims", body: "Shock protection, auto cut-off and ISI marks are the trust signals. Note which ones rivals lead with." },
+      { title: "Installation offers", body: "Free installation and extended warranties are common. Compare them across brands." },
+    ],
+    brands: ["Havells", "Bajaj Electricals", "Crompton", "A. O. Smith India", "Racold", "V-Guard", "Orient Electric", "Usha International"],
+  },
 ];
+
+/** "Car" for headings like "Car ads in India". */
+export function adNameOf(i: Industry): string {
+  return i.adName ?? i.name;
+}
 
 export function findIndustry(slug: string): Industry | null {
   return INDUSTRIES.find((i) => i.slug === slug) ?? null;

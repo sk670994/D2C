@@ -1,4 +1,5 @@
-import { INDUSTRIES } from "./industries";
+import { adNameOf, INDUSTRIES } from "./industries";
+import { SEASONS } from "./seasons";
 import { SEO_REDIRECTS } from "./redirects";
 
 export { SEO_REDIRECTS };
@@ -45,9 +46,9 @@ const guideData: Seed[] = [
 
 const industryData: Seed[] = INDUSTRIES.map((i) => ({
   slug: i.slug,
-  title: `${i.name} Brands' Facebook & Instagram Ads in India`,
+  title: `${adNameOf(i)} Ads in India: Live Facebook & Instagram Ad Tracker`,
   description: `Live Meta ad data for ${i.brands.length} Indian ${i.noun}: active ads, new launches, video vs image mix, languages and the ads running longest.`,
-  h1: `${i.name} ads in India, tracked live`,
+  h1: `${adNameOf(i)} ads in India`,
   intro: i.intro,
   audience: `Founders, growth teams and agencies in ${i.name.toLowerCase()}`,
   focus: i.watch.map((w) => w.title),
@@ -103,5 +104,8 @@ export function titleForHref(href: string): string {
   if (path === "/brand") return "Browse brand ad pages";
   if (path === "/pricing") return "Zooptrack pricing";
   if (path === "/industries") return "All D2C industries";
+  if (path === "/seasons") return "Festival and season ad calendars";
+  const season = SEASONS.find((s) => `/seasons/${s.slug}` === path);
+  if (season) return `${season.name} ads in India`;
   return path.replace(/^\//, "").replace(/[-/]+/g, " ");
 }

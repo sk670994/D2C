@@ -175,6 +175,7 @@
 /* =========================================================
    INDUSTRY: the category's colour; the ranking is the hero
    ========================================================= */
+.industry .btn { color: #fff; }
 .industry { --accent: var(--cat, #2a9d8f); --bg: color-mix(in srgb, var(--cat, #2a9d8f) 7%, #f6f7f8); }
 .catHero { width: min(1200px, calc(100% - 40px)); margin: 0 auto; padding: 40px 0 0; display: grid; grid-template-columns: .9fr 1.1fr; gap: 56px; align-items: start; }
 .catHero h1 { margin: 0 0 18px; font-size: clamp(40px, 5.4vw, 76px); line-height: .95; font-weight: 800; font-stretch: 115%; letter-spacing: -0.025em; }
@@ -268,6 +269,19 @@
 .calc :global(.seo-calculator-result strong) { font: 800 clamp(48px, 6vw, 80px)/1 var(--f-display); font-stretch: 112%; color: var(--marigold); margin-top: 8px; }
 .readList { margin-top: 24px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; margin: 0; padding: 0; list-style: none; }
 .readList li { border-top: 3px solid var(--ink); padding-top: 14px; color: var(--soft); }
+
+/* =========================================================
+   SEASON: the year as a calendar of ads
+   ========================================================= */
+.seasonHero { width: min(1200px, calc(100% - 40px)); margin: 0 auto; padding: 40px 0 0; }
+.seasonHero h1 { margin: 0 0 18px; font-size: clamp(44px, 7.4vw, 112px); line-height: .9; font-weight: 800; font-stretch: 122%; letter-spacing: -0.03em; color: var(--cat); max-width: 14ch; }
+.seasonHero .sentence { max-width: 60ch; }
+.calendar { display: grid; grid-template-columns: repeat(52, minmax(0, 1fr)); gap: 3px; height: 220px; align-items: end; padding-bottom: 22px; border-bottom: 1.5px solid var(--fg); position: relative; }
+.calendar span { position: relative; height: 100%; display: flex; align-items: flex-end; }
+.calendar b { display: block; width: 100%; background: color-mix(in srgb, var(--cat) 55%, #fff); border-radius: 2px 2px 0 0; }
+.calendar .calPeak b { background: var(--cat); }
+.calendar i { position: absolute; bottom: -22px; left: 0; font-style: normal; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+@media (max-width: 600px) { .calendar { gap: 1px; height: 160px; } .calendar i { font-size: 10px; } }
 
 /* =========================================================
    HUB pages
