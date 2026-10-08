@@ -7,6 +7,8 @@ import { Plus_Jakarta_Sans } from "next/font/google";
 import { pageFontVars } from "./page-fonts";
 import { RouteMark } from "./RouteMark";
 import { VersionWatcher } from "@/components/app/VersionWatcher";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { organizationSchema, websiteSchema } from "@/lib/seo/schema";
 
 // Sets the page's type voice before first paint (see html[data-route] in globals.css).
 const routeScript = `document.documentElement.dataset.route=location.pathname.split("/")[1]||"home"`;
@@ -23,6 +25,7 @@ export const metadata: Metadata = {
   description: SITE_DESCRIPTION,
   applicationName: "Zooptrack",
   keywords: ["Meta ad library India", "competitor ads", "Facebook ads spy tool", "Instagram ads", "D2C brands India", "ad intelligence", "AdSpy"],
+  alternates: { types: { "text/plain": "/llms.txt" } },
   openGraph: {
     type: "website",
     siteName: "Zooptrack",
@@ -41,6 +44,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: routeScript }} />
       </head>
       <body>
+        <JsonLd graph={[organizationSchema(), websiteSchema()]} />
         <RouteMark />
         <VersionWatcher />
         {children}

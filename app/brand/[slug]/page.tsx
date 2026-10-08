@@ -8,6 +8,8 @@ import { getSearchFacets, type FacetResult } from "@/lib/ad-intelligence/global/
 import { brandSlug } from "@/lib/ad-intelligence/brand-slug";
 import seed from "@/scripts/adspy-seed-brands.json";
 import styles from "../brand.module.css";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { breadcrumbSchema, faqSchema, SITE_URL } from "@/lib/seo/schema";
 import { isStoredMediaUrl } from "@/lib/ad-intelligence/global/media-store";
 
 // Public, cached teaser page (SEO). Refreshed every 6 hours.
@@ -115,8 +117,24 @@ export default async function BrandPage({ params }: { params: Promise<{ slug: st
   const languages = (facets?.language ?? []).slice(0, 3).map((l) => l.label).join(", ") || "–";
   const others = (seed as { brands: string[] }).brands.filter((b) => norm(b) !== norm(name)).slice(0, 24);
 
+  const path = `/brand/${brandSlug(name)}`;
+  // Facts taken from the page's own numbers, so answer engines quote real data.
+  const facts = total
+    ? [
+        { q: `How many ads is ${name} running on Facebook and Instagram?`, a: `Zooptrack has collected ${total.toLocaleString("en-IN")} ${name} ads from Meta's public Ad Library; ${active.toLocaleString("en-IN")} are active now and ${pct(video, total)} are video. Top languages: ${languages}.` },
+        { q: `Can I see ${name}'s ad spend?`, a: "No. Meta does not publish spend or results for commercial ads in India. Zooptrack shows what is public: every ad, how long it has run, its offer, hook, format and language." },
+      ]
+    : [];
+
   return (
     <main className={styles.page}>
+      <JsonLd
+        graph={[
+          { "@type": "WebPage", url: `${SITE_URL}${path}`, name: `${name} Facebook & Instagram ads`, inLanguage: "en-IN", about: { "@type": "Brand", name } },
+          breadcrumbSchema([{ name: "Home", path: "/" }, { name: "Brand ads", path: "/brand" }, { name, path }]),
+          ...(facts.length ? [faqSchema(facts)] : []),
+        ]}
+      />
       <header className={styles.bar}>
         <BrandLogo />
         <Link className={styles.barCta} href={signup}>

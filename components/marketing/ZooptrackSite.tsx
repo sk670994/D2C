@@ -212,11 +212,11 @@ export function ZooptrackHome() {
     <Shell
       scene="home"
       eyebrow="COMPETITOR AD INTELLIGENCE / INDIAN D2C"
-      title={<>See every ad your rivals run.<br /><em>Know your next move by Monday.</em></>}
+      title={<>See every ad your rivals run.<br /><em>Know your next move first.</em></>}
       copy="Zooptrack reads your competitors' live Facebook and Instagram ads every night, checks its count against Meta's own, and tells you what changed: big pushes, new offers and the ads they keep paying for."
       actions={<><Button href="/login">Start 7-day free trial</Button><Button href="/brand" secondary>See any brand&apos;s ads free</Button></>}
     >
-      <section className={styles.brief} aria-label="Example Monday brief">
+      <section className={styles.brief} aria-label="Example rival brief">
         <div>
           <span className={styles.kicker}>EXAMPLE / MONDAY BRIEF</span>
           <strong>BIG PUSH</strong>
@@ -264,7 +264,7 @@ export function ZooptrackDecisionLoop() {
       scene="conveyor"
       eyebrow="HOW IT WORKS"
       title={<>From a rival&apos;s ad library<br /><em>to your next move.</em></>}
-      copy="Five steps run for you every night. You read the result in two minutes on Monday morning."
+      copy="Five steps run for you every night. You read the result in two minutes, daily or weekly, whenever you choose."
       actions={<Button href="/login">Start 7-day free trial</Button>}
     >
       <section className={styles.narrative}>
@@ -276,7 +276,7 @@ export function ZooptrackDecisionLoop() {
             ["02","ADS","Every night we read every ad they run on Facebook and Instagram in India, live and stopped."],
             ["03","CHECK","We compare our count with Meta's own total and show you the coverage, so you know how complete the data is."],
             ["04","DECODE","AI reads each ad: hook, offer, format, language and angle. Days live show which ads they keep paying for."],
-            ["05","BRIEF","Today and the Monday email tell you what changed and what to do, with the ads as evidence. One click writes a counter-ad brief."],
+            ["05","BRIEF","Today and your email report tell you what changed and what to do, with the ads as evidence. One click writes a counter-ad brief."],
           ].map(([n,t,c]) => <article key={n}><span>{n}</span><div><h3>{t}</h3><p>{c}</p></div></article>)}
         </div>
       </section>
