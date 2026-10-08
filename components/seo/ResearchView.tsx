@@ -76,7 +76,7 @@ export async function ResearchView({ entry }: { entry: SeoEntry }) {
   ];
 
   return (
-    <main className={styles.page}>
+    <main className={`${styles.page} zt-scope`}>
       <JsonLd
         graph={[
           { "@type": "Article", headline: entry.h1, description: entry.description, url: `${SITE_URL}${path}`, inLanguage: "en-IN", dateModified: new Date().toISOString(), author: { "@id": ORG_ID }, publisher: { "@id": ORG_ID } },

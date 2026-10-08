@@ -36,7 +36,7 @@ export async function IndustryView({ entry }: { entry: SeoEntry }) {
   const others = INDUSTRIES.filter((i) => i.slug !== industry.slug);
 
   return (
-    <main className={styles.page}>
+    <main className={`${styles.page} zt-scope`}>
       <JsonLd
         graph={[
           { "@type": "WebPage", url: `${SITE_URL}${path}`, name: entry.title, description: entry.description, inLanguage: "en-IN", dateModified: new Date().toISOString() },
@@ -63,9 +63,18 @@ export async function IndustryView({ entry }: { entry: SeoEntry }) {
         <div className={m.kpi}><span>Top language</span><strong>{t.languages[0]?.label ?? "–"}</strong><small>{t.languages[0] ? `${t.languages[0].share}% of ads` : "refreshing"}</small></div>
       </section>
 
+      <section className={m.ads}>
+        <div className={m.panel}>
+          <span className={styles.eyebrow}>LIKELY WINNERS</span>
+          <h2>The {industry.name.toLowerCase()} ads running longest right now</h2>
+          <p>Brands switch off losing ads within days, so ads that stay live for months are usually working. These are still running today.</p>
+          <LongAds ads={longest} />
+        </div>
+      </section>
+
       <section className={m.twoCol}>
         <div className={m.panel}>
-          <span className={styles.eyebrow}>WHO IS PUSHING HARDEST</span>
+          <span className={styles.eyebrow}>RANKING</span>
           <h2>{industry.name} brands ranked by active ads</h2>
           {stats.length ? <BrandTable stats={stats} /> : <p className={m.empty}>Numbers are refreshing. Check back shortly.</p>}
           {busiest && busiest.launched30d ? (
@@ -90,14 +99,6 @@ export async function IndustryView({ entry }: { entry: SeoEntry }) {
         </div>
       </section>
 
-      <section className={m.ads}>
-        <div className={m.panel}>
-          <span className={styles.eyebrow}>LIKELY WINNERS</span>
-          <h2>The {industry.name.toLowerCase()} ads running longest right now</h2>
-          <p>Brands switch off losing ads within days, so ads that stay live for months are usually working. These are still running today.</p>
-          <LongAds ads={longest} />
-        </div>
-      </section>
 
       <section className={m.twoCol}>
         <div className={m.panel}>

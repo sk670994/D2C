@@ -216,3 +216,95 @@ export function totals(stats: BrandStat[]): MarketTotals {
 
 export const share = pct;
 export const fmt = (n: number) => n.toLocaleString("en-IN");
+
+export type MixRow = { label: string; share: number };
+export type CreativeMix = {
+  decoded: number;
+  offerShare: number;
+  hooks: MixRow[];
+  angles: MixRow[];
+  visuals: MixRow[];
+  languages: MixRow[];
+};
+
+const LABELS: Record<string, string> = {
+  offer: "Offer first",
+  claim_with_number: "Claim with a number",
+  question: "Question",
+  social_proof: "Social proof",
+  problem_first: "Problem first",
+  demo: "Product demo",
+  testimonial: "Testimonial",
+  founder_story: "Founder story",
+  launch: "New launch",
+  comparison: "Comparison",
+  statement: "Bold statement",
+  price_value: "Price / value",
+  results: "Results",
+  ingredients: "Ingredients",
+  convenience: "Convenience",
+  premium_status: "Premium / status",
+  trust_safety: "Trust / safety",
+  lifestyle: "Lifestyle",
+  gifting: "Gifting",
+  festive: "Festive",
+  problem_solution: "Problem → solution",
+  ugc_selfie: "UGC selfie",
+  studio_product: "Studio product shot",
+  lifestyle_scene: "Lifestyle scene",
+  before_after: "Before / after",
+  text_graphic: "Text graphic",
+  animation: "Animation",
+  influencer: "Influencer",
+  demo_closeup: "Demo close-up",
+  english: "English",
+  hindi: "Hindi",
+  hinglish: "Hinglish",
+};
+
+export const mixLabel = (v: string) => LABELS[v] ?? v.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+
+function topShares(values: Array<string | null | undefined>, n = 4): MixRow[] {
+  const counts = new Map<string, number>();
+  let total = 0;
+  for (const v of values) {
+    if (!v) continue;
+    total += 1;
+    counts.set(v, (counts.get(v) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([v, c]) => ({ label: mixLabel(v), share: pct(c, total) }));
+}
+
+/**
+ * What a brand's ads are made of, from the AI labels on its most recent
+ * decoded ads (hook, angle, visual style, language, offer). Returns null
+ * when too few ads are decoded to say anything honest.
+ */
+export async function getCreativeMix(pageId: string, minimum = 12): Promise<CreativeMix | null> {
+  try {
+    const { data } = await createGlobalServiceClient()
+      .from("ad_creative_decodes")
+      .select("elements")
+      .eq("advertiser_id", pageId)
+      .eq("status", "done")
+      .order("decoded_at", { ascending: false })
+      .limit(300);
+    const rows = ((data ?? []) as Array<{ elements: Record<string, unknown> | null }>).map((r) => r.elements ?? {});
+    if (rows.length < minimum) return null;
+    const str = (v: unknown) => (typeof v === "string" ? v : null);
+    const offers = rows.filter((r) => typeof r.offerPresent === "boolean");
+    return {
+      decoded: rows.length,
+      offerShare: pct(offers.filter((r) => r.offerPresent === true).length, offers.length),
+      hooks: topShares(rows.map((r) => str(r.hookType))),
+      angles: topShares(rows.map((r) => str(r.angle))),
+      visuals: topShares(rows.map((r) => str(r.visualStyle))),
+      languages: topShares(rows.map((r) => str(r.language)), 3),
+    };
+  } catch {
+    return null;
+  }
+}
