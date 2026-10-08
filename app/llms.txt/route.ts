@@ -2,6 +2,7 @@ import { FOUNDING_OFFER, PAID_PLANS, PLANS, TRIAL_DAYS, formatInr, yearlyPriceIn
 import { FAQ } from "@/components/marketing/faq";
 import { commercialEntries, guideEntries, toolEntries, industryEntries, researchEntries, seoPath } from "@/lib/seo/site";
 import { PRODUCT_SUMMARY, SITE_URL, CONTACT_EMAIL } from "@/lib/seo/schema";
+import { SEASONS } from "@/lib/seo/seasons";
 
 export const revalidate = 86400;
 
@@ -46,6 +47,9 @@ export function GET() {
     "",
     "## Live research (updated daily)",
     ...researchEntries.map((e) => link(seoPath(e), e.title, e.description)),
+    "",
+    "## Festival and season ad calendars (live)",
+    ...SEASONS.map((s) => link(`/seasons/${s.slug}`, `${s.name} ads in India`, `when ${s.short} ads peak, top brands and offers`)),
     "",
     "## Industry dashboards (live Meta ad data)",
     ...industryEntries.map((e) => link(seoPath(e), e.title, e.description)),

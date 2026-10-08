@@ -308,3 +308,124 @@ export async function getCreativeMix(pageId: string, minimum = 12): Promise<Crea
     return null;
   }
 }
+
+export type SeasonData = {
+  matched: number;
+  active: number;
+  brandCount: number;
+  brands: Array<{ name: string; slug: string; count: number; active: number }>;
+  weeks: Array<{ weekStart: string; n: number }>;
+  videoShare: number;
+  offers: Array<{ label: string; share: number }>;
+  ads: LongAd[];
+};
+
+const OFFER_PATTERNS: Array<[string, RegExp]> = [
+  ["% off / discount", /\d{1,2}\s?%\s?(off|discount)|flat\s?₹?\s?\d+\s?off|upto\s?\d+%|up to \d+%/i],
+  ["Free gift", /free\s+(gift|goodies|sample|product)|gift\s+(free|inside)/i],
+  ["Buy X get Y / combo", /buy\s?\d\s?get\s?\d|\bbogo\b|combo|bundle/i],
+  ["Cashback / bank offer", /cashback|cash back|bank offer|hdfc|icici|sbi card/i],
+  ["No-cost EMI", /no[-\s]?cost\s?emi|easy\s?emi|\bemi\b/i],
+  ["Free shipping / COD", /free\s+(shipping|delivery)|cash on delivery|\bcod\b/i],
+];
+
+function weekKey(d: Date): string {
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7));
+  return t.toISOString().slice(0, 10);
+}
+
+/**
+ * Every collected Meta ad from the last year whose copy mentions the season,
+ * summarised: weekly calendar, top advertisers, offer mix and the
+ * longest-running live ads. Fails soft to an empty result.
+ */
+export async function getSeasonData(keywords: string[], limit = 2500): Promise<SeasonData> {
+  const empty: SeasonData = { matched: 0, active: 0, brandCount: 0, brands: [], weeks: [], videoShare: 0, offers: [], ads: [] };
+  const safe = keywords.map((k) => k.replace(/["\\,()%*]/g, "").trim()).filter(Boolean);
+  if (!safe.length) return empty;
+  const filter = safe.flatMap((k) => [`primary_text.ilike."%${k}%"`, `headline.ilike."%${k}%"`]).join(",");
+  const since = new Date(Date.now() - 400 * DAY_MS).toISOString();
+  try {
+    const { data } = await createGlobalServiceClient()
+      .from("ad_intelligence_creatives")
+      .select("id,advertiser_id,advertiser_name,headline,primary_text,thumbnail_url,image_url,creative_type,is_currently_active,first_seen_at")
+      .eq("platform", "meta")
+      .gte("first_seen_at", since)
+      .or(filter)
+      .order("first_seen_at", { ascending: false })
+      .limit(limit);
+    const rows = (data ?? []) as Array<Record<string, string | boolean | null>>;
+    if (!rows.length) return empty;
+
+    const now = Date.now();
+    const byBrand = new Map<string, { name: string; count: number; active: number }>();
+    const weekCounts = new Map<string, number>();
+    const offerHits = new Map<string, number>();
+    let active = 0;
+    let video = 0;
+    for (const r of rows) {
+      const name = String(r.advertiser_name ?? "").trim();
+      if (!name) continue;
+      const b = byBrand.get(name) ?? { name, count: 0, active: 0 };
+      b.count += 1;
+      if (r.is_currently_active) { b.active += 1; active += 1; }
+      byBrand.set(name, b);
+      if (String(r.creative_type ?? "").toLowerCase() === "video") video += 1;
+      if (r.first_seen_at) {
+        const k = weekKey(new Date(String(r.first_seen_at)));
+        weekCounts.set(k, (weekCounts.get(k) ?? 0) + 1);
+      }
+      const text = `${r.headline ?? ""} ${r.primary_text ?? ""}`;
+      for (const [label, re] of OFFER_PATTERNS) if (re.test(text)) offerHits.set(label, (offerHits.get(label) ?? 0) + 1);
+    }
+
+    // 52 weekly buckets ending this week, zero-filled.
+    const weeks: SeasonData["weeks"] = [];
+    const thisWeek = new Date(weekKey(new Date()));
+    for (let i = 51; i >= 0; i--) {
+      const d = new Date(thisWeek.getTime() - i * 7 * DAY_MS);
+      const k = d.toISOString().slice(0, 10);
+      weeks.push({ weekStart: k, n: weekCounts.get(k) ?? 0 });
+    }
+
+    const longest = rows
+      .filter((r) => r.is_currently_active && r.first_seen_at && isStoredMediaUrl(String(r.thumbnail_url || r.image_url || "")))
+      .sort((a, b) => String(a.first_seen_at).localeCompare(String(b.first_seen_at)));
+    const perBrand = new Map<string, number>();
+    const ads: LongAd[] = [];
+    for (const r of longest) {
+      const brand = String(r.advertiser_name);
+      if ((perBrand.get(brand) ?? 0) >= 1) continue;
+      perBrand.set(brand, 1);
+      const raw = String(r.primary_text || r.headline || "").replace(/\s+/g, " ").trim();
+      ads.push({
+        id: String(r.id),
+        advertiser: brand,
+        advertiserSlug: brandSlug(brand),
+        text: /^started running on\b/i.test(raw) ? "" : raw.slice(0, 140),
+        media: fastMediaUrl(String(r.thumbnail_url || r.image_url)),
+        format: String(r.creative_type ?? "ad").toLowerCase(),
+        days: Math.max(1, Math.floor((now - new Date(String(r.first_seen_at)).getTime()) / DAY_MS)),
+      });
+      if (ads.length >= 6) break;
+    }
+
+    const brands = [...byBrand.values()]
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 12)
+      .map((b) => ({ ...b, slug: brandSlug(b.name) }));
+    return {
+      matched: rows.length,
+      active,
+      brandCount: byBrand.size,
+      brands,
+      weeks,
+      videoShare: pct(video, rows.length),
+      offers: OFFER_PATTERNS.map(([label]) => ({ label, share: pct(offerHits.get(label) ?? 0, rows.length) })).sort((a, b) => b.share - a.share),
+      ads,
+    };
+  } catch {
+    return empty;
+  }
+}

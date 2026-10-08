@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { CSSProperties } from "react";
 
 import { JsonLd } from "@/components/seo/JsonLd";
-import { findIndustry, INDUSTRIES } from "@/lib/seo/industries";
+import { adNameOf, findIndustry, INDUSTRIES } from "@/lib/seo/industries";
 import { fmt, getBrandStats, getLongestRunning, totals } from "@/lib/seo/market";
 import { breadcrumbSchema, faqSchema, SITE_URL } from "@/lib/seo/schema";
 import type { SeoEntry } from "@/lib/seo/site";
@@ -20,6 +20,8 @@ export async function IndustryView({ entry }: { entry: SeoEntry }) {
   const sum = totals(stats);
   const longest = await getLongestRunning(stats.slice(0, 12), 6);
   const leader = stats[0];
+  const ad = adNameOf(industry);
+  const adLower = ad.charAt(0) === ad.charAt(0).toUpperCase() && ad.length <= 3 ? ad : ad.toLowerCase();
   const busiest = [...stats].sort((a, b) => b.launched30d - a.launched30d)[0];
 
   const faqs = [
@@ -37,11 +39,13 @@ export async function IndustryView({ entry }: { entry: SeoEntry }) {
           faqSchema(faqs),
         ]}
       />
+      {/* Until we have data for at least 3 brands, keep the page out of Google (thin page). React hoists this into <head>. */}
+      {stats.length < 3 ? <meta name="robots" content="noindex,follow" /> : null}
       <Crumbs items={[{ name: "Home", href: "/" }, { name: "Industries", href: "/industries" }, { name: industry.name }]} />
 
       <section className={t.catHero}>
         <div>
-          <h1>{industry.name} ads in India</h1>
+          <h1>{ad} ads in India</h1>
           <p className={t.lede}>{industry.intro}</p>
           {sum.brands ? (
             <p className={t.sentence}>
@@ -57,7 +61,7 @@ export async function IndustryView({ entry }: { entry: SeoEntry }) {
       </section>
 
       <section className={`${t.wrap} ${t.section}`}>
-        <h2 className={t.h2}>The {industry.name.toLowerCase()} ads running longest</h2>
+        <h2 className={t.h2}>The {adLower} ads running longest</h2>
         <p className={t.sub}>Still live today. Brands switch off losing ads within days, so these have almost certainly earned their place.</p>
         <LongAds ads={longest} eager />
       </section>
@@ -113,7 +117,7 @@ export async function IndustryView({ entry }: { entry: SeoEntry }) {
 
       <Faqs faqs={faqs} />
       <RelatedLinks hrefs={["/research/india-d2c-advertising-report-2026", "/research/d2c-ad-creative-trends-2026", "/guides/how-to-analyze-competitor-ads", "/guides/how-to-find-winning-ad-creatives"]} />
-      <FooterCta title={`Watch your ${industry.name.toLowerCase()} rivals daily.`} copy="Pick the brands you compete with. Get a daily or weekly report of what changed: new launches, offer changes and the ads they keep paying for." />
+      <FooterCta title={`Watch your ${adLower} rivals daily.`} copy="Pick the brands you compete with. Get a daily or weekly report of what changed: new launches, offer changes and the ads they keep paying for." />
     </Shell>
   );
 }

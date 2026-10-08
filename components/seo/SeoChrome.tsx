@@ -39,6 +39,7 @@ export function SeoTopbar({ path, dark }: { path: string; dark?: boolean }) {
       <nav className={t.nav} aria-label="Research">
         <Link href="/brand">Brands</Link>
         <Link href="/industries">Industries</Link>
+        <Link href="/seasons">Seasons</Link>
         <Link href="/research">Research</Link>
         <Link href="/guides">Guides</Link>
         <Link href="/tools">Tools</Link>

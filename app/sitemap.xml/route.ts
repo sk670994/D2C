@@ -1,6 +1,7 @@
 import { brandSlug } from "@/lib/ad-intelligence/brand-slug";
 import seed from "@/scripts/adspy-seed-brands.json";
 import { allSeoEntries, seoPath } from "@/lib/seo/site";
+import { SEASONS } from "@/lib/seo/seasons";
 
 export const revalidate = 86400;
 
@@ -12,6 +13,7 @@ const PAGES: Array<[path: string, priority: number, freq: string]> = [
   ["/guides", 0.8, "weekly"],
   ["/tools", 0.8, "monthly"],
   ["/industries", 0.75, "weekly"],
+  ["/seasons", 0.8, "weekly"],
   ["/research", 0.7, "weekly"],
   ["/pricing", 0.8, "monthly"],
   ["/decision-loop", 0.6, "monthly"],
@@ -58,6 +60,7 @@ export function GET() {
   const urls = [
     ...PAGES.map(([p, pr, f]) => entry(p, pr, f)),
     ...seoRows,
+    ...SEASONS.map((s) => entry(`/seasons/${s.slug}`, 0.8, "daily")),
     ...slugs.map((s) => entry(`/brand/${s}`, 0.7, "daily")),
   ];
 
