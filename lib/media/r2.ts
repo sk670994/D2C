@@ -1,14 +1,26 @@
 /**
- * Cloudflare R2 (S3-compatible) uploads with AWS Signature V4, no SDK.
- * 10 GB storage free per month and no egress fees: ad images live here so
- * Supabase stays within its Free plan.
+ * Object storage for ad images (S3 API, AWS Signature V4, no SDK), so
+ * Supabase stays within its Free plan. Two providers, same code:
  *
- * Env: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET,
- *      R2_PUBLIC_BASE_URL (the bucket's public r2.dev URL or a custom domain)
+ * AWS S3 (private bucket; images are served through our own /m/s3/... route,
+ * which signs the read and lets Vercel's CDN cache it for a year):
+ *   AWS_S3_BUCKET, AWS_S3_REGION (default ap-south-1 = Mumbai),
+ *   AWS_S3_ACCESS_KEY_ID, AWS_S3_SECRET_ACCESS_KEY
+ *   optional AWS_S3_PUBLIC_BASE_URL (default https://www.zooptrack.co.in/m/s3)
+ *
+ * Cloudflare R2 (public bucket):
+ *   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET,
+ *   R2_PUBLIC_BASE_URL (the bucket's public r2.dev URL or a custom domain)
+ *
+ * R2 wins if both are set. Function names keep the "R2" prefix for history.
  */
 import { createHash, createHmac } from "node:crypto";
 
 export type R2Config = {
+  /** "r2" (default) or "s3" (AWS). */
+  kind?: "r2" | "s3";
+  /** AWS region, e.g. ap-south-1. Unused for R2. */
+  region?: string;
   accountId: string;
   accessKeyId: string;
   secretAccessKey: string;
@@ -26,7 +38,25 @@ export function r2Config(): R2Config | null {
     bucket: env("R2_BUCKET"),
     publicBaseUrl: env("R2_PUBLIC_BASE_URL").replace(/\/+$/, ""),
   };
-  return c.accountId && c.accessKeyId && c.secretAccessKey && c.bucket && c.publicBaseUrl ? c : null;
+  if (c.accountId && c.accessKeyId && c.secretAccessKey && c.bucket && c.publicBaseUrl) return { kind: "r2", ...c };
+  return s3Config();
+}
+
+/** AWS S3 settings, or null when not configured. */
+export function s3Config(): R2Config | null {
+  const bucket = env("AWS_S3_BUCKET");
+  const accessKeyId = env("AWS_S3_ACCESS_KEY_ID");
+  const secretAccessKey = env("AWS_S3_SECRET_ACCESS_KEY");
+  if (!bucket || !accessKeyId || !secretAccessKey) return null;
+  return {
+    kind: "s3",
+    region: env("AWS_S3_REGION") || "ap-south-1",
+    accountId: "",
+    accessKeyId,
+    secretAccessKey,
+    bucket,
+    publicBaseUrl: (env("AWS_S3_PUBLIC_BASE_URL") || "https://www.zooptrack.co.in/m/s3").replace(/\/+$/, ""),
+  };
 }
 
 const sha256hex = (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex");
@@ -74,7 +104,11 @@ export function sigv4(input: {
   };
 }
 
-/** Signed request for one R2 object (path-style: /bucket/key, region "auto"). */
+/**
+ * Signed request for one object.
+ * R2: path-style https://<account>.r2.cloudflarestorage.com/<bucket>/<key>, region "auto".
+ * S3: virtual-hosted https://<bucket>.s3.<region>.amazonaws.com/<key>.
+ */
 export function signR2Request(input: {
   config: R2Config;
   method: "PUT" | "HEAD" | "DELETE" | "GET";
@@ -85,8 +119,10 @@ export function signR2Request(input: {
   now?: Date;
 }): { url: string; headers: Record<string, string> } {
   const { config } = input;
-  const host = `${config.accountId}.r2.cloudflarestorage.com`;
-  const path = `/${config.bucket}/${encodePath(input.key)}`;
+  const s3 = config.kind === "s3";
+  const region = s3 ? config.region || "ap-south-1" : "auto";
+  const host = s3 ? `${config.bucket}.s3.${region}.amazonaws.com` : `${config.accountId}.r2.cloudflarestorage.com`;
+  const path = s3 ? `/${encodePath(input.key)}` : `/${config.bucket}/${encodePath(input.key)}`;
   const payloadHash = sha256hex(input.body ?? new Uint8Array());
   const extra: Record<string, string> = { ...(input.extraHeaders ?? {}) };
   if (input.contentType) extra["content-type"] = input.contentType;
@@ -94,7 +130,7 @@ export function signR2Request(input: {
     method: input.method,
     host,
     path,
-    region: "auto",
+    region,
     service: "s3",
     headers: extra,
     payloadHash,
@@ -145,8 +181,27 @@ export async function putR2Object(
     signal: AbortSignal.timeout(20_000),
   });
   if (!response.ok) {
-    console.warn("[r2] upload failed", response.status, (await response.text().catch(() => "")).slice(0, 200));
+    console.warn(`[${config.kind ?? "r2"}] upload failed`, response.status, (await response.text().catch(() => "")).slice(0, 200));
     return null;
   }
   return r2PublicUrl(config, key);
+}
+
+/**
+ * Read one object from a private AWS bucket (used by the /m/s3/... route).
+ * Returns null for anything other than a 200.
+ */
+export async function getS3Object(
+  key: string,
+  options: { config?: R2Config | null; fetchImpl?: typeof fetch } = {},
+): Promise<Response | null> {
+  const config = options.config ?? s3Config();
+  if (!config || config.kind !== "s3") return null;
+  const signed = signR2Request({ config, method: "GET", key });
+  const response = await (options.fetchImpl ?? fetch)(signed.url, {
+    headers: signed.headers,
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+  }).catch(() => null);
+  return response && response.ok && response.body ? response : null;
 }
