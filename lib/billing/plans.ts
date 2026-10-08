@@ -31,7 +31,7 @@ export const PLANS: Record<PlanKey, Plan> = {
     audience: `${TRIAL_DAYS} days, no card`,
     rivals: 5,
     alerts: true,
-    features: ["5 rivals", "Today + Monday report", "AI ad decoding", "Big-move alerts"],
+    features: ["5 rivals", "Today + email report", "AI ad decoding", "Big-move alerts"],
   },
   starter: {
     key: "starter",
@@ -40,7 +40,7 @@ export const PLANS: Record<PlanKey, Plan> = {
     audience: "Founders watching a few rivals",
     rivals: 5,
     alerts: false,
-    features: ["5 rivals", "Today: rival moves with evidence", "Monday report by email", "AI ad decoding"],
+    features: ["5 rivals", "Today: rival moves with evidence", "Daily or weekly email report", "AI ad decoding"],
   },
   growth: {
     key: "growth",

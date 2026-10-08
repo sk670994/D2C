@@ -20,6 +20,8 @@ const PAGES: Array<[path: string, priority: number, freq: string]> = [
   ["/sitemap", 0.3, "monthly"],
   ["/privacy", 0.2, "yearly"],
   ["/terms", 0.2, "yearly"],
+  ["/refund-policy", 0.2, "yearly"],
+  ["/shipping-policy", 0.2, "yearly"],
   ["/cookies", 0.2, "yearly"],
 ];
 
