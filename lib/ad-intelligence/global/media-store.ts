@@ -26,6 +26,39 @@ const CONCURRENCY = 6;
 
 let bucketReady: Promise<boolean> | null = null;
 
+/**
+ * Supabase Free = 1 GB storage. Stop storing new images once the bucket
+ * reaches this budget (default 700 MB) so we never cross the limit; the
+ * daily prune job (scripts/ops/slim-media.ts) frees space again.
+ */
+export function mediaBudgetBytes(): number {
+  const mbValue = Number(process.env.ADSPY_MEDIA_BUDGET_MB);
+  return (Number.isFinite(mbValue) && mbValue > 0 ? mbValue : 700) * 1024 * 1024;
+}
+
+const USAGE_TTL_MS = 10 * 60_000;
+let usage: { bytes: number; at: number } | null = null;
+let addedSinceCheck = 0;
+
+/** Bucket size in bytes (cached 10 min). null when the size is unknown. */
+async function bucketBytes(): Promise<number | null> {
+  if (usage && Date.now() - usage.at < USAGE_TTL_MS) return usage.bytes + addedSinceCheck;
+  const { data, error } = await createGlobalServiceClient().rpc("adspy_media_bucket_bytes");
+  if (error || data === null || data === undefined) return usage ? usage.bytes + addedSinceCheck : null;
+  usage = { bytes: Number(data), at: Date.now() };
+  addedSinceCheck = 0;
+  return usage.bytes;
+}
+
+/** True while there is room in the Supabase bucket (always true for R2). */
+export async function hasMediaRoom(): Promise<boolean> {
+  if (mediaTarget() === "r2") return true;
+  const bytes = await bucketBytes();
+  // Unknown size (function not installed yet): keep storing, as before.
+  if (bytes === null) return true;
+  return bytes < mediaBudgetBytes();
+}
+
 export function mediaStoreEnabled(): boolean {
   if (process.env.ADSPY_STORE_MEDIA === "0") return false;
   return (
@@ -119,6 +152,7 @@ async function rehost(url: string, key: string): Promise<string | null> {
       .storage.from(BUCKET)
       .upload(path, bytes, { contentType, upsert: true, cacheControl: "31536000" });
     if (error) return null;
+    addedSinceCheck += bytes.byteLength;
     return `${storagePrefix()}${path}`;
   } catch {
     return null;
@@ -131,6 +165,10 @@ async function rehost(url: string, key: string): Promise<string | null> {
 export async function persistAdMedia(ads: CompetitorAd[]): Promise<number> {
   if (!mediaStoreEnabled() || !ads.length) return 0;
   if (mediaTarget() === "supabase" && !(await ensureBucket())) return 0;
+  if (!(await hasMediaRoom())) {
+    console.warn("[AdSpy media] storage budget reached; skipping new images until the daily prune frees space");
+    return 0;
+  }
 
   let stored = 0;
   const jobs: Array<() => Promise<void>> = [];
@@ -147,6 +185,7 @@ export async function persistAdMedia(ads: CompetitorAd[]): Promise<number> {
     const source = ad.imageUrl || ad.thumbnailUrl;
     if (!source) continue;
     jobs.push(async () => {
+      if (!(await hasMediaRoom())) return;
       const next = await rehost(source, base);
       if (next) {
         ad.thumbnailUrl = next;
