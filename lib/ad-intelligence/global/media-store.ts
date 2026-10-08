@@ -167,3 +167,13 @@ export async function persistAdMedia(ads: CompetitorAd[]): Promise<number> {
   );
   return stored;
 }
+
+/**
+ * Same image, served from our own domain through the CDN (app/m/[...path]).
+ * Supabase-stored images become /m/<key>; anything else (R2, Meta) is returned unchanged.
+ */
+export function fastMediaUrl(value?: string | null): string {
+  if (!value) return "";
+  const prefix = storagePrefix();
+  return prefix.length > 30 && value.startsWith(prefix) ? `/m/${value.slice(prefix.length)}` : value;
+}

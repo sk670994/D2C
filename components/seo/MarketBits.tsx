@@ -58,7 +58,7 @@ export function AdTile({ ad, eager, showBrand = true }: { ad: LongAd; eager?: bo
   return (
     <Link className={t.tile} href={`/brand/${ad.advertiserSlug}`}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={ad.media} alt={`${ad.advertiser} ${ad.format} ad, live for ${ad.days} days`} loading={eager ? "eager" : "lazy"} decoding="async" />
+      <img src={ad.media} alt={`${ad.advertiser} ${ad.format} ad, live for ${ad.days} days`} width={320} height={400} loading={eager ? "eager" : "lazy"} decoding="async" />
       <span className={t.stamp}>{fmt(ad.days)} days live</span>
       {showBrand ? <span className={t.tileBrand}>{ad.advertiser}</span> : null}
       {ad.text ? <span className={t.tileText}>{ad.text}</span> : null}
