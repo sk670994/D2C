@@ -142,7 +142,7 @@ export function BillingView() {
       <header className="zd-col" style={{ gap: 10 }}>
         <div className="zd-eyebrow">Plan & billing</div>
         <h1 className="zd-h1">{e.label}.</h1>
-        <p className="zd-lede">Prices in INR, billed monthly by Razorpay (UPI AutoPay or card). Payment receipt by email. Cancel any time; you keep access to the end of the month you paid for.</p>
+        <p className="zd-lede">Prices in INR, billed monthly by Razorpay (UPI AutoPay or card). Payment receipt by email. Cancel any time; you keep access to the end of the month you paid for. Want yearly billing (2 months free)? Write to hello.zooptrack@gmail.com.</p>
       </header>
 
       <section className="zd-card" aria-label="Usage" style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 24 }}>

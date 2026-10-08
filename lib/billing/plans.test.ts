@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canWatchMore, entitlementFor, isAdminEmail, isPaidPlan, statusFromRazorpay } from "./plans";
+import { canWatchMore, entitlementFor, isAdminEmail, isPaidPlan, statusFromRazorpay, PLANS, yearlyPriceInr } from "./plans";
 
 const now = Date.parse("2026-10-01T00:00:00Z");
 const days = (n: number) => new Date(now + n * 86_400_000).toISOString();
@@ -71,5 +71,12 @@ describe("statusFromRazorpay", () => {
     expect(statusFromRazorpay("payment.captured", {})).toBeNull();
     expect(isPaidPlan("growth")).toBe(true);
     expect(isPaidPlan("trial")).toBe(false);
+  });
+});
+
+describe("launch pricing", () => {
+  it("is ₹999 / ₹2,999 / ₹7,999 a month and 10x that a year", () => {
+    expect([PLANS.starter.priceInr, PLANS.growth.priceInr, PLANS.agency.priceInr]).toEqual([999, 2999, 7999]);
+    expect(yearlyPriceInr("growth")).toBe(29990);
   });
 });

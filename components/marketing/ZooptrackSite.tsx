@@ -7,7 +7,7 @@ import styles from "./ZooptrackSite.module.css";
 import { ZooptrackLogo } from "@/components/brand/ZooptrackLogo";
 import { FAQ } from "./faq";
 import { ProductStory } from "./ProductStory";
-import { formatInr, PLANS, TRIAL_DAYS } from "@/lib/billing/plans";
+import { formatInr, FOUNDING_OFFER, PLANS, TRIAL_DAYS, yearlyPriceInr } from "@/lib/billing/plans";
 
 type Scene = "home" | "radar" | "conveyor" | "ledger" | "unfold" | "cockpit" | "archive";
 
@@ -292,6 +292,9 @@ export function ZooptrackPricing() {
       title={<>Simple plans.<br /><em>Cancel any time.</em></>}
       copy="Start with a 7-day free trial. Plans differ by how many rivals you watch and whether you get big-move alerts."
     >
+      <p role="note" style={{ maxWidth: 760, margin: "0 auto 18px", textAlign: "center", fontWeight: 700 }}>
+        Founding price: our first {FOUNDING_OFFER.spots} customers keep this price for {FOUNDING_OFFER.lockMonths} months.
+      </p>
       <section className={styles.pricingWrap}>
         {(["trial", "starter", "growth", "agency"] as const).map((key, i) => {
           const plan = PLANS[key];
@@ -299,7 +302,7 @@ export function ZooptrackPricing() {
             <motion.article key={key} className={`${styles.priceCard} ${key === "growth" ? styles.featured : ""}`} whileHover={{ y: -14, rotateX: 6 }}>
               <span>{plan.name.toUpperCase()}</span>
               <strong>{key === "trial" ? "₹0" : formatInr(plan.priceInr)}</strong>
-              <small>{key === "trial" ? `${TRIAL_DAYS} days · no card` : "/ month"}</small>
+              <small>{key === "trial" ? `${TRIAL_DAYS} days · no card` : `/ month · or ${formatInr(yearlyPriceInr(key))}/year (2 months free)`}</small>
               <div>{plan.features.slice(0, 4).map((f) => <p key={f}>✓ {f}</p>)}</div>
               <Button href={key === "trial" ? "/login" : "/login?next=/today/billing"} secondary={key !== "growth"}>{i === 0 ? "Start free trial" : key === "growth" ? "Start with Growth" : "Get started"}</Button>
             </motion.article>
