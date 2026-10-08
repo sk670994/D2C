@@ -9,7 +9,7 @@ Until this runs, everyone gets the 7-day-trial allowance and nothing breaks.
 ## 2. Razorpay (payments)
 1. Sign up at razorpay.com and complete KYC (business PAN, bank account, GST if you have it).
 2. Settings → API Keys → generate. Subscriptions → Plans → create 3 monthly plans:
-   Starter ₹1,999, Growth ₹4,999, Agency ₹12,999. Copy each `plan_...` id.
+   Starter ₹999, Growth ₹2,999, Agency ₹7,999 (monthly). Copy each `plan_...` id.
 3. Settings → Webhooks → Add:
    - URL: `https://www.zooptrack.co.in/api/billing/webhook`
    - Secret: any long random string

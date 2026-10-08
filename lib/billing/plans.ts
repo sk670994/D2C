@@ -36,7 +36,7 @@ export const PLANS: Record<PlanKey, Plan> = {
   starter: {
     key: "starter",
     name: "Starter",
-    priceInr: 1999,
+    priceInr: 999,
     audience: "Founders watching a few rivals",
     rivals: 5,
     alerts: false,
@@ -45,7 +45,7 @@ export const PLANS: Record<PlanKey, Plan> = {
   growth: {
     key: "growth",
     name: "Growth",
-    priceInr: 4999,
+    priceInr: 2999,
     audience: "Brand and growth teams",
     rivals: 15,
     alerts: true,
@@ -54,7 +54,7 @@ export const PLANS: Record<PlanKey, Plan> = {
   agency: {
     key: "agency",
     name: "Agency",
-    priceInr: 12999,
+    priceInr: 7999,
     audience: "Agencies running many brands",
     rivals: 50,
     alerts: true,
@@ -63,6 +63,15 @@ export const PLANS: Record<PlanKey, Plan> = {
 };
 
 export const PAID_PLANS: PaidPlanKey[] = ["starter", "growth", "agency"];
+
+/** Yearly billing: pay for 10 months, get 12 (about 17% off). */
+export const YEARLY_MONTHS_CHARGED = 10;
+export function yearlyPriceInr(plan: PaidPlanKey): number {
+  return PLANS[plan].priceInr * YEARLY_MONTHS_CHARGED;
+}
+
+/** Launch offer: the first customers keep their price for a year. */
+export const FOUNDING_OFFER = { spots: 20, lockMonths: 12 } as const;
 
 export function isPaidPlan(value: unknown): value is PaidPlanKey {
   return typeof value === "string" && (PAID_PLANS as string[]).includes(value);

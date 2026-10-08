@@ -1,4 +1,4 @@
-import { PAID_PLANS, PLANS, TRIAL_DAYS, formatInr } from "@/lib/billing/plans";
+import { FOUNDING_OFFER, PAID_PLANS, PLANS, TRIAL_DAYS, formatInr, yearlyPriceInr } from "@/lib/billing/plans";
 import { FAQ } from "@/components/marketing/faq";
 import { commercialEntries, guideEntries, toolEntries, industryEntries, researchEntries, seoPath } from "@/lib/seo/site";
 import { PRODUCT_SUMMARY, SITE_URL, CONTACT_EMAIL } from "@/lib/seo/schema";
@@ -33,7 +33,8 @@ export function GET() {
     "",
     "## Pricing (INR, per month)",
     `- Free trial: ${TRIAL_DAYS} days, no card, ${PLANS.trial.rivals} rivals.`,
-    ...PAID_PLANS.map((k) => `- ${PLANS[k].name}: ${formatInr(PLANS[k].priceInr)} a month, ${PLANS[k].rivals} rivals. ${PLANS[k].audience}.`),
+    ...PAID_PLANS.map((k) => `- ${PLANS[k].name}: ${formatInr(PLANS[k].priceInr)} a month or ${formatInr(yearlyPriceInr(k))} a year, ${PLANS[k].rivals} rivals. ${PLANS[k].audience}.`),
+    `- Founding offer: the first ${FOUNDING_OFFER.spots} customers keep their price for ${FOUNDING_OFFER.lockMonths} months.`,
     "- Cancel any time; access continues to the end of the paid month.",
     "",
     "## Key pages",

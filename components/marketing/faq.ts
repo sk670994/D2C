@@ -1,4 +1,4 @@
-import { PAID_PLANS, PLANS, TRIAL_DAYS, formatInr } from "@/lib/billing/plans";
+import { FOUNDING_OFFER, PAID_PLANS, PLANS, TRIAL_DAYS, formatInr } from "@/lib/billing/plans";
 
 const PRICE_LINE = PAID_PLANS.map((k) => `${PLANS[k].name} ${formatInr(PLANS[k].priceInr)}`).join(", ");
 
@@ -26,7 +26,7 @@ export const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "What does it cost? Can I cancel?",
-    a: `Start with a ${TRIAL_DAYS}-day free trial, no card. Then ${PRICE_LINE} a month, paid by UPI AutoPay or card. Cancel any time; you keep access to the end of the month you paid for.`,
+    a: `Start with a ${TRIAL_DAYS}-day free trial, no card. Then ${PRICE_LINE} a month, paid by UPI AutoPay or card. Pay yearly and get 2 months free. Our first ${FOUNDING_OFFER.spots} customers keep their price for ${FOUNDING_OFFER.lockMonths} months. Cancel any time; you keep access to the end of the month you paid for.`,
   },
   {
     q: "Is it legal to track competitors' ads?",
