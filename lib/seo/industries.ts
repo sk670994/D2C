@@ -9,6 +9,8 @@ export type Industry = {
   name: string;
   /** Short noun used inside sentences, e.g. "skincare brands". */
   noun: string;
+  /** The category's own colour on its dashboard (bars, tint, highlights). */
+  hue: string;
   intro: string;
   watch: Array<{ title: string; body: string }>;
   brands: string[];
@@ -19,6 +21,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "skincare",
     name: "Skincare",
     noun: "skincare brands",
+    hue: "#2A9D8F",
     intro: "Indian skincare is one of the most crowded D2C categories on Meta. Brands compete on ingredients, routines and proof, and many test dozens of creatives at once.",
     watch: [
       { title: "Ingredient-led hooks", body: "Niacinamide, vitamin C or retinol in the first line. Watch which actives a rival keeps leading with week after week." },
@@ -31,6 +34,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "beauty",
     name: "Beauty & Ayurveda",
     noun: "beauty and Ayurvedic brands",
+    hue: "#C2185B",
     intro: "Makeup, fragrance and Ayurvedic beauty brands sell on look, ritual and heritage. Creative tends to be visual first, with festive and gifting moments driving bursts of new ads.",
     watch: [
       { title: "Festive bursts", body: "Count new launches in the weeks before Diwali, Raksha Bandhan and wedding season. A sudden jump usually means a seasonal push." },
@@ -43,6 +47,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "mens-grooming",
     name: "Men's grooming & wellness",
     noun: "men's grooming and wellness brands",
+    hue: "#3D5A80",
     intro: "Men's grooming and wellness brands, from beard care to hair-loss treatment, rely heavily on problem-first hooks, founder or expert faces, and Hindi creative to reach beyond metros.",
     watch: [
       { title: "Problem-first hooks", body: "Hair fall, beard patchiness, confidence. The first three seconds name the problem; watch how rivals phrase it." },
@@ -55,6 +60,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "supplements",
     name: "Health & supplements",
     noun: "health, nutrition and fitness brands",
+    hue: "#2E7D32",
     intro: "Supplement and nutrition brands compete on trust: certifications, experts and visible results. Ads often lean on education and subscription offers rather than one-off discounts.",
     watch: [
       { title: "Education-led video", body: "Explainers on ingredients and benefits. Long-running videos here usually anchor the brand's whole funnel." },
@@ -67,6 +73,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "fashion",
     name: "Fashion & ethnic wear",
     noun: "fashion and ethnic-wear brands",
+    hue: "#D1495B",
     intro: "Fashion brands run the highest volume of creative of almost any D2C category, because every drop, colour and season needs new ads. Catalogue and carousel formats dominate.",
     watch: [
       { title: "Drop cadence", body: "New ads per week is a proxy for how often a rival launches collections. Spikes mark new drops or sales." },
@@ -79,6 +86,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "innerwear",
     name: "Innerwear & loungewear",
     noun: "innerwear and loungewear brands",
+    hue: "#8E5BD0",
     intro: "Innerwear brands sell comfort and fit, often with multi-pack offers. Comfort claims, fabric close-ups and size inclusivity are the recurring creative themes.",
     watch: [
       { title: "Multi-pack offers", body: "Packs of 3 or 5 are the default discount mechanic. Note pack size and price-per-piece changes." },
@@ -91,6 +99,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "electronics",
     name: "Audio, wearables & gadgets",
     noun: "audio, wearable and gadget brands",
+    hue: "#1F6FD0",
     intro: "Consumer-electronics D2C brands launch fast and price sharply. Ads are built around launches, specs and sale events on marketplaces as well as their own sites.",
     watch: [
       { title: "Launch spikes", body: "A cluster of new ads usually means a new product. Track how long launch creative stays live." },
@@ -103,6 +112,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "home-sleep",
     name: "Home, sleep & furniture",
     noun: "home, sleep and furniture brands",
+    hue: "#4F5DB3",
     intro: "Mattress, furniture and home-decor brands sell high-ticket products with long consideration. Trials, warranties and EMI offers do much of the work in their ads.",
     watch: [
       { title: "Risk-reversal offers", body: "100-night trials, long warranties and no-cost EMI. These are the levers rivals pull instead of deep discounts." },
@@ -115,6 +125,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "jewellery-accessories",
     name: "Jewellery, eyewear & travel",
     noun: "jewellery, eyewear and travel-accessory brands",
+    hue: "#A87908",
     intro: "Jewellery, eyewear and luggage brands sell style and gifting. Creative is product-close and visual, with gifting occasions and try-on or warranty offers as recurring hooks.",
     watch: [
       { title: "Gifting moments", body: "Valentine's, Raksha Bandhan and Diwali drive bursts of gifting creative. Count new ads per week around them." },
@@ -127,6 +138,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "footwear",
     name: "Footwear",
     noun: "footwear brands",
+    hue: "#8A5A44",
     intro: "Footwear D2C brands compete on comfort, style and price. Product demos and comfort claims are the standard creative, with sale events driving bursts of new ads.",
     watch: [
       { title: "Comfort proof", body: "Flex tests, all-day wear stories and material close-ups. Long-running versions show what actually convinces buyers." },
@@ -139,6 +151,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "food-beverage",
     name: "Food & beverage",
     noun: "food and beverage brands",
+    hue: "#D9731A",
     intro: "Food and beverage D2C brands, from snacks and coffee to dairy and meat, sell taste, health and convenience. Ads often focus on new flavours, clean labels and subscription or first-order offers.",
     watch: [
       { title: "New flavours and SKUs", body: "Launch creative for new flavours shows up as bursts of new ads. Track which launches keep running." },
@@ -151,6 +164,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "mother-baby",
     name: "Mother & baby",
     noun: "mother and baby brands",
+    hue: "#2F9E8F",
     intro: "Mother and baby brands sell safety and trust to anxious first-time parents. Ads lean on certifications, gentle ingredients and real-parent stories.",
     watch: [
       { title: "Safety and certification", body: "Dermatologically tested, toxin-free, paediatrician-approved. Track the trust signal each rival leads with." },
@@ -163,6 +177,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "womens-wellness",
     name: "Women's wellness & hygiene",
     noun: "women's wellness and hygiene brands",
+    hue: "#A8154F",
     intro: "Period-care and intimate-hygiene brands balance education with product. Ads often break taboos with direct, conversational hooks and lean on subscriptions and trial packs.",
     watch: [
       { title: "Education hooks", body: "Myth-busting and 'what no one tells you' openers. These often anchor long-running campaigns." },
@@ -175,6 +190,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "pet-care",
     name: "Pet care",
     noun: "pet-care brands",
+    hue: "#5F7F2E",
     intro: "Pet food, treats and accessories brands sell to devoted pet parents. Cute-first creative, ingredient transparency and first-order offers are the recurring patterns.",
     watch: [
       { title: "Pet-first video", body: "Short videos of pets reacting to food or toys. The long-running ones are usually the brand's best performers." },
@@ -187,6 +203,7 @@ export const INDUSTRIES: Industry[] = [
     slug: "kitchen-appliances",
     name: "Kitchen & home appliances",
     noun: "kitchen and home-appliance brands",
+    hue: "#00808C",
     intro: "Fan, purifier, cookware and appliance brands sell on energy savings, durability and demos. Ads are demo-heavy and often tied to seasonal demand like summer or monsoon.",
     watch: [
       { title: "Demo creative", body: "Product-in-use videos and comparisons. These tend to run long when they work." },

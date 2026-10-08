@@ -1,15 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ZooptrackLogo } from "@/components/brand/ZooptrackLogo";
-import { SeoCalculator } from "./SeoCalculator";
-import styles from "./SeoPage.module.css";
+
 import { findSeoEntry, seoPath, type SeoEntry, type SeoSection } from "@/lib/seo/site";
+
 import { GuideView } from "./GuideView";
 import { IndustryView } from "./IndustryView";
-import { ResearchView } from "./ResearchView";
 import { ProductView } from "./ProductView";
-import { RelatedLinks } from "./SeoChrome";
+import { ResearchView } from "./ResearchView";
+import { SeoCalculator } from "./SeoCalculator";
+import { Crumbs, Faqs, FooterCta, RelatedLinks, Shell } from "./SeoChrome";
+import t from "./Themes.module.css";
 
 export function seoMetadata(entry: SeoEntry): Metadata {
   const path = seoPath(entry);
@@ -40,6 +41,36 @@ const TOOL_NOTES: Record<string, { formula: string; example: string; read: strin
 };
 
 
+/** A calculator page: the tool first and the answer large, then how to read it. */
+function ToolView({ entry }: { entry: SeoEntry }) {
+  const path = seoPath(entry);
+  const notes = TOOL_NOTES[entry.slug];
+  return (
+    <Shell theme="tool" path={path}>
+      <Crumbs items={[{ name: "Home", href: "/" }, { name: "Tools", href: "/tools" }, { name: entry.h1 }]} />
+      <section className={t.toolHero}>
+        <div>
+          <h1>{entry.h1}</h1>
+          <p className={t.lede}>{entry.intro}</p>
+          {notes ? <p className={t.formula}>{notes.formula}</p> : null}
+          {notes ? <p className={t.note} style={{ marginTop: 14 }}>{notes.example}</p> : null}
+        </div>
+        <div className={t.calc}>{entry.calculator ? <SeoCalculator type={entry.calculator} /> : null}</div>
+      </section>
+      {notes ? (
+        <section className={`${t.wrap} ${t.section}`}>
+          <h2 className={t.h2}>How to read the result</h2>
+          <ul className={t.readList}>{notes.read.map((r) => <li key={r}>{r}</li>)}</ul>
+          <p className={t.note} style={{ marginTop: 28 }}>{entry.caveat} Your numbers tell you what you can afford; your rivals&apos; ads tell you what the market is testing. <Link href="/brand">See what Indian D2C brands are running.</Link></p>
+        </section>
+      ) : null}
+      <Faqs faqs={entry.faqs} />
+      <RelatedLinks hrefs={entry.related} />
+      <FooterCta title="Know your numbers. Then know your rivals." copy="Zooptrack tracks your competitors' Facebook and Instagram ads every day and tells you what changed." />
+    </Shell>
+  );
+}
+
 export async function SeoPage({ section, slug }: { section: SeoSection; slug: string }) {
   const found = findSeoEntry(section, slug);
   if (!found) notFound();
@@ -47,18 +78,6 @@ export async function SeoPage({ section, slug }: { section: SeoSection; slug: st
   if (section === "guide") return <GuideView entry={entry} />;
   if (section === "industry") return <IndustryView entry={entry} />;
   if (section === "research") return <ResearchView entry={entry} />;
-  if (section === "commercial") return <ProductView entry={entry} />;
-  return <main className={`${styles.page} zt-scope`}><SeoJsonLd entry={entry} />
-    <header className={styles.topbar}><Link href="/" aria-label="Zooptrack home"><ZooptrackLogo height={30} tone="blue" priority /></Link><nav aria-label="SEO navigation"><Link href="/brand">Brands</Link><Link href="/guides">Guides</Link><Link href="/tools">Tools</Link><Link href="/industries">Industries</Link><Link href="/research">Research</Link><Link className={styles.cta} href={`/login?next=${encodeURIComponent(seoPath(entry))}`}>Try Zooptrack free</Link></nav></header>
-    <section className={styles.hero}><div><span className={styles.eyebrow}>{entry.eyebrow}</span><h1>{entry.h1}</h1><p>{entry.intro}</p><div className={styles.heroMeta}><span>For {entry.audience}</span><Link href="/brand">Browse real brand ad pages →</Link></div></div><aside className={styles.signalCard}><span>WHAT YOU NEED</span>{entry.focus.map((item, i) => <div key={item}><b>0{i + 1}</b><strong>{item}</strong></div>)}</aside></section>
-    {entry.calculator ? <section className={styles.toolBlock}><SeoCalculator type={entry.calculator} /><p className={styles.toolNote}>Transparent arithmetic only. Keep your assumptions visible and compare the output with your own operating data.</p></section> : null}
-    {TOOL_NOTES[entry.slug] ? <section className={styles.contentGrid}><article className={styles.article}>
-      <div className={styles.section}><span className={styles.eyebrow}>THE FORMULA</span><h2>{TOOL_NOTES[entry.slug].formula}</h2><p>{TOOL_NOTES[entry.slug].example}</p></div>
-      <div className={styles.section}><span className={styles.eyebrow}>HOW TO READ IT</span><h2>Three things to check</h2><ul>{TOOL_NOTES[entry.slug].read.map((r) => <li key={r}>{r}</li>)}</ul></div>
-      <div className={styles.callout}><strong>Keep in mind</strong><p>{entry.caveat}</p></div>
-    </article><aside className={styles.side}><div className={styles.sideCard}><span className={styles.eyebrow}>NEXT STEP</span><h2>See what rivals are doing.</h2><p>Your numbers tell you what you can afford. Your rivals&apos; ads tell you what the market is testing.</p><Link className={styles.primary} href="/brand">Browse brand ads</Link></div></aside></section> : null}
-    <section className={styles.faq}><span className={styles.eyebrow}>FAQ</span><h2>Common questions.</h2><div>{entry.faqs.map((faq) => <details key={faq.q}><summary>{faq.q}</summary><p>{faq.a}</p></details>)}</div></section>
-    <RelatedLinks hrefs={entry.related} />
-    <footer className={styles.footerCta}><span className={styles.eyebrow}>ZOOPTRACK</span><h2>Know your numbers. Then know your rivals.</h2><p>Zooptrack tracks your competitors&apos; Facebook and Instagram ads every day and tells you what changed.</p><Link className={styles.primary} href="/login">Start the free trial</Link></footer>
-  </main>;
+  if (section === "commercial") return <><SeoJsonLd entry={entry} /><ProductView entry={entry} /></>;
+  return <><SeoJsonLd entry={entry} /><ToolView entry={entry} /></>;
 }

@@ -1,26 +1,49 @@
+import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 
 import { ZooptrackLogo } from "@/components/brand/ZooptrackLogo";
 import { liveHref, titleForHref } from "@/lib/seo/site";
 
-import styles from "./SeoPage.module.css";
-import m from "./Market.module.css";
+import t from "./Themes.module.css";
 
-/** Shared header, breadcrumbs, related links and closing CTA for SEO pages. */
-export function SeoTopbar({ path }: { path: string }) {
+export type Theme = "product" | "brand" | "industry" | "research" | "guide" | "tool" | "hub";
+
+const THEME_CLASS: Record<Theme, string> = {
+  product: t.product,
+  brand: "",
+  industry: t.industry,
+  research: t.research,
+  guide: t.guide,
+  tool: t.tool,
+  hub: "",
+};
+
+/** Page frame for every public research page: theme surface + top bar. */
+export function Shell({ theme, path, style, children, dark }: { theme: Theme; path: string; style?: CSSProperties; children: ReactNode; dark?: boolean }) {
   return (
-    <header className={styles.topbar}>
-      <Link href="/" aria-label="Zooptrack home">
-        <ZooptrackLogo height={30} tone="blue" priority />
+    <main className={`${t.root} ${THEME_CLASS[theme]}`} style={style}>
+      <div className={dark ? t.darkTop : undefined}>
+        <SeoTopbar path={path} dark={dark} />
+      </div>
+      {children}
+    </main>
+  );
+}
+
+export function SeoTopbar({ path, dark }: { path: string; dark?: boolean }) {
+  return (
+    <header className={t.top}>
+      <Link href="/" aria-label="Zooptrack home" className={t.logo}>
+        <ZooptrackLogo height={28} tone={dark ? "white" : "blue"} priority />
       </Link>
-      <nav aria-label="Research navigation">
+      <nav className={t.nav} aria-label="Research">
         <Link href="/brand">Brands</Link>
         <Link href="/industries">Industries</Link>
         <Link href="/research">Research</Link>
         <Link href="/guides">Guides</Link>
         <Link href="/tools">Tools</Link>
-        <Link className={styles.cta} href={`/login?next=${encodeURIComponent(path)}`}>
-          Try Zooptrack free
+        <Link className={t.cta} href={`/login?next=${encodeURIComponent(path)}`}>
+          Try it free
         </Link>
       </nav>
     </header>
@@ -29,7 +52,7 @@ export function SeoTopbar({ path }: { path: string }) {
 
 export function Crumbs({ items }: { items: Array<{ name: string; href?: string }> }) {
   return (
-    <nav className={m.crumbs} aria-label="Breadcrumb">
+    <nav className={t.crumbs} aria-label="Breadcrumb">
       {items.map((it, i) => (
         <span key={it.name}>
           {it.href ? <Link href={it.href}>{it.name}</Link> : it.name}
@@ -40,46 +63,42 @@ export function Crumbs({ items }: { items: Array<{ name: string; href?: string }
   );
 }
 
-export function RelatedLinks({ hrefs, title = "Go one layer deeper." }: { hrefs: string[]; title?: string }) {
+export function RelatedLinks({ hrefs, title = "Keep reading" }: { hrefs: string[]; title?: string }) {
   const unique = [...new Set(hrefs.map(liveHref))];
   if (!unique.length) return null;
   return (
-    <section className={styles.related}>
-      <div>
-        <span className={styles.eyebrow}>KEEP RESEARCHING</span>
-        <h2>{title}</h2>
-      </div>
-      <div className={styles.relatedGrid}>
+    <section className={`${t.wrap} ${t.related}`}>
+      <h2 className={t.h2}>{title}</h2>
+      <ul className={t.relatedList}>
         {unique.map((href) => (
-          <Link key={href} href={href}>
-            <span>{titleForHref(href)}</span>
-            <b>→</b>
-          </Link>
+          <li key={href}>
+            <Link href={href}>{titleForHref(href)}</Link>
+          </li>
         ))}
-      </div>
+      </ul>
     </section>
   );
 }
 
 export function FooterCta({ title, copy }: { title: string; copy: string }) {
   return (
-    <footer className={styles.footerCta}>
-      <span className={styles.eyebrow}>ZOOPTRACK / NEXT STEP</span>
+    <footer className={t.foot}>
       <h2>{title}</h2>
-      <p>{copy}</p>
-      <Link className={styles.primary} href="/login">
-        Start the free trial
-      </Link>
+      <div>
+        <p>{copy}</p>
+        <Link className={t.btn} href="/login">
+          Start the 7-day free trial
+        </Link>
+      </div>
     </footer>
   );
 }
 
-export function Faqs({ faqs }: { faqs: Array<{ q: string; a: string }> }) {
+export function Faqs({ faqs, title = "Questions people ask" }: { faqs: Array<{ q: string; a: string }>; title?: string }) {
   if (!faqs.length) return null;
   return (
-    <section className={styles.faq}>
-      <span className={styles.eyebrow}>FAQ</span>
-      <h2>Common questions.</h2>
+    <section className={`${t.wrap} ${t.faq}`}>
+      <h2 className={t.h2}>{title}</h2>
       <div>
         {faqs.map((f) => (
           <details key={f.q}>

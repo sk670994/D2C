@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { CSSProperties } from "react";
 
 import { JsonLd } from "@/components/seo/JsonLd";
 import { INDUSTRIES, type Industry } from "@/lib/seo/industries";
@@ -6,10 +7,9 @@ import { fmt, getBrandStats, getLongestRunning, share, totals, type BrandStat, t
 import { breadcrumbSchema, faqSchema, ORG_ID, SITE_URL } from "@/lib/seo/schema";
 import type { SeoEntry } from "@/lib/seo/site";
 
-import { Crumbs, Faqs, FooterCta, RelatedLinks, SeoTopbar, updatedLabel } from "./SeoChrome";
+import { Crumbs, Faqs, FooterCta, RelatedLinks, Shell, updatedLabel } from "./SeoChrome";
 import { BrandTable, LongAds } from "./MarketBits";
-import styles from "./SeoPage.module.css";
-import m from "./Market.module.css";
+import t from "./Themes.module.css";
 
 type CategoryRow = { industry: Industry; stats: BrandStat[]; t: MarketTotals; hindi: number };
 
@@ -31,9 +31,8 @@ const pickMin = <T,>(rows: T[], f: (r: T) => number) => rows.reduce<T | null>((b
 
 function Method({ brands }: { brands: number }) {
   return (
-    <div className={m.method}>
-      <strong>Methodology</strong>
-      Zooptrack collects every public ad from {brands} Indian D2C brands in Meta&apos;s Ad Library (country: India) every night, across {INDUSTRIES.length} categories. Counts include active and stopped ads we have collected; &quot;active&quot; means live on the day this page was built; &quot;new in 30 days&quot; counts ads first seen in the last 30 days. Format comes from Meta&apos;s ad data; language is detected from ad text. Meta does not publish spend, reach or results for commercial ads in India, so nothing here estimates spend. Updated daily; last update {updatedLabel()}.
+    <div className={t.method}>
+      <strong>How we measure.</strong> Zooptrack collects every public ad from {brands} Indian D2C brands in Meta&apos;s Ad Library (India) every night, across {INDUSTRIES.length} categories. Counts include live and stopped ads we have collected. Live means running on the day this page was built; new in 30 days counts ads first seen in the last 30 days. Format comes from Meta&apos;s ad data; language is detected from ad text. Meta does not publish spend, reach or results for commercial ads in India, so nothing here estimates spend. Rebuilt daily; this version: {updatedLabel()}.
     </div>
   );
 }
@@ -75,8 +74,12 @@ export async function ResearchView({ entry }: { entry: SeoEntry }) {
     ...entry.faqs,
   ];
 
+  const today = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" });
+  const sortedByActive = [...categories].sort((a, b) => b.t.active - a.t.active);
+  const sortedByVideo = [...categories].sort((a, b) => b.t.videoShare - a.t.videoShare);
+
   return (
-    <main className={`${styles.page} zt-scope`}>
+    <Shell theme="research" path={path}>
       <JsonLd
         graph={[
           { "@type": "Article", headline: entry.h1, description: entry.description, url: `${SITE_URL}${path}`, inLanguage: "en-IN", dateModified: new Date().toISOString(), author: { "@id": ORG_ID }, publisher: { "@id": ORG_ID } },
@@ -85,90 +88,95 @@ export async function ResearchView({ entry }: { entry: SeoEntry }) {
           faqSchema(faqs),
         ]}
       />
-      <SeoTopbar path={path} />
       <Crumbs items={[{ name: "Home", href: "/" }, { name: "Research", href: "/research" }, { name: entry.h1 }]} />
 
-      <article className={m.report}>
-        <span className={styles.eyebrow}>ZOOPTRACK RESEARCH · UPDATED {updatedLabel().toUpperCase()}</span>
+      <header className={t.paperHead}>
         <h1>{entry.h1}</h1>
-        <p>{entry.intro}</p>
+        <div className={t.dateline}>
+          <strong>{today}</strong>
+          Rebuilt every day from {fmt(overall.brands)} brands and {fmt(overall.total)} collected ads.
+        </div>
+      </header>
 
-        <span className={styles.eyebrow}>KEY FINDINGS</span>
-        <ol className={m.findings}>{facts.map((f) => <li key={f}>{f}</li>)}</ol>
+      <article className={t.wrap}>
+        <p className={t.paperIntro}>{entry.intro}</p>
+
+        <h2 className={t.h2} style={{ marginTop: 56 }}>Key findings</h2>
+        <ol className={t.findings}>{facts.map((f) => <li key={f}>{f}</li>)}</ol>
 
         {isCreative ? (
           <>
-            <section className={m.reportSection}>
-              <span className={styles.eyebrow}>FORMAT MIX BY CATEGORY</span>
-              <h2>Video, image or carousel?</h2>
-              <div className={m.panel}>
-                <div className={m.tableScroll}>
-                  <table className={m.table}>
-                    <thead><tr><th>Category</th><th className={m.num}>Video</th><th className={m.num}>Image</th><th className={m.num}>Carousel</th><th>Top language</th></tr></thead>
-                    <tbody>
-                      {[...categories].sort((a, b) => b.t.videoShare - a.t.videoShare).map((c) => (
-                        <tr key={c.industry.slug}>
-                          <td><Link href={`/industries/${c.industry.slug}`}>{c.industry.name}</Link></td>
-                          <td className={m.num}>{c.t.videoShare}%</td>
-                          <td className={m.num}>{c.t.imageShare}%</td>
-                          <td className={m.num}>{c.t.carouselShare}%</td>
-                          <td>{c.t.languages[0] ? `${c.t.languages[0].label} (${c.t.languages[0].share}%)` : "–"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+            <section className={t.paperSection}>
+              <h2 className={t.h2}>Video, image or carousel, by category</h2>
+              <p className={t.sub}>Share of each category&apos;s collected ads, most video-heavy first.</p>
+              <div className={t.scroll}>
+                <table className={t.table}>
+                  <thead><tr><th>Category</th><th className={t.num}>Video</th><th className={t.num}>Image</th><th className={t.num}>Carousel</th><th>Top language</th></tr></thead>
+                  <tbody>
+                    {sortedByVideo.map((c) => (
+                      <tr key={c.industry.slug}>
+                        <td><Link href={`/industries/${c.industry.slug}`}>{c.industry.name}</Link></td>
+                        <td className={t.num}>{c.t.videoShare}%</td>
+                        <td className={t.num}>{c.t.imageShare}%</td>
+                        <td className={t.num}>{c.t.carouselShare}%</td>
+                        <td>{c.t.languages[0] ? `${c.t.languages[0].label} (${c.t.languages[0].share}%)` : "Not enough text"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </section>
-            <section className={m.reportSection}>
-              <span className={styles.eyebrow}>LIKELY WINNERS</span>
-              <h2>The longest-running D2C ads still live</h2>
-              <p>Brands switch off losing ads quickly. These ads have stayed live the longest across every category we track, which makes them the best public evidence of what works.</p>
-              <LongAds ads={longest} />
+            <section className={t.paperSection}>
+              <h2 className={t.h2}>The longest-running D2C ads still live</h2>
+              <p className={t.sub}>Brands switch off losing ads quickly. These have stayed live the longest across every category we track: the best public evidence of what works.</p>
+              <LongAds ads={longest} eager />
             </section>
           </>
         ) : (
           <>
-            <section className={m.reportSection}>
-              <span className={styles.eyebrow}>BY CATEGORY</span>
-              <h2>Ad activity across {categories.length} D2C categories</h2>
-              <div className={m.panel}>
-                <div className={m.tableScroll}>
-                  <table className={m.table}>
-                    <thead><tr><th>Category</th><th className={m.num}>Brands</th><th className={m.num}>Active ads</th><th className={m.num}>New (30 days)</th><th className={m.num}>Video</th></tr></thead>
-                    <tbody>
-                      {[...categories].sort((a, b) => b.t.active - a.t.active).map((c) => (
-                        <tr key={c.industry.slug}>
-                          <td><Link href={`/industries/${c.industry.slug}`}>{c.industry.name}</Link></td>
-                          <td className={m.num}>{c.t.brands}</td>
-                          <td className={m.num}>{fmt(c.t.active)}</td>
-                          <td className={m.num}>{fmt(c.t.launched30d)}</td>
-                          <td className={m.num}>{c.t.videoShare}%</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+            <section className={t.paperSection}>
+              <h2 className={t.h2}>Ad activity in {categories.length} D2C categories</h2>
+              <p className={t.sub}>Sorted by ads live today.</p>
+              <div className={t.catChart} role="list" aria-label="Live ads by category">
+                {sortedByActive.map((c) => (
+                  <Link role="listitem" key={c.industry.slug} href={`/industries/${c.industry.slug}`} style={{ "--dot": c.industry.hue } as CSSProperties}>
+                    <span>{c.industry.name}</span>
+                    <i style={{ width: `${Math.max(2, (c.t.active / Math.max(1, ...sortedByActive.map((c) => c.t.active))) * 100)}%` }} />
+                    <b>{fmt(c.t.active)}</b>
+                  </Link>
+                ))}
+              </div>
+              <div className={t.scroll}>
+                <table className={t.table}>
+                  <thead><tr><th>Category</th><th className={t.num}>Brands</th><th className={t.num}>Live now</th><th className={t.num}>New in 30 days</th><th className={t.num}>Video</th></tr></thead>
+                  <tbody>
+                    {sortedByActive.map((c) => (
+                      <tr key={c.industry.slug}>
+                        <td><Link href={`/industries/${c.industry.slug}`}>{c.industry.name}</Link></td>
+                        <td className={t.num}>{c.t.brands}</td>
+                        <td className={t.num}>{fmt(c.t.active)}</td>
+                        <td className={t.num}>{fmt(c.t.launched30d)}</td>
+                        <td className={t.num}>{c.t.videoShare}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </section>
-            <section className={m.reportSection}>
-              <span className={styles.eyebrow}>MOST ACTIVE ADVERTISERS</span>
-              <h2>The 15 D2C brands with the most live ads</h2>
-              <div className={m.panel}>
-                <BrandTable stats={all} limit={15} />
-              </div>
+            <section className={t.paperSection}>
+              <h2 className={t.h2}>The 15 brands with the most live ads</h2>
+              <p className={t.sub}>Across every category we track.</p>
+              <BrandTable stats={all} limit={15} />
             </section>
           </>
         )}
 
-        <section className={m.reportSection}>
-          <Method brands={overall.brands} />
-        </section>
+        <Method brands={overall.brands} />
       </article>
 
       <Faqs faqs={faqs} />
       <RelatedLinks hrefs={entry.related} />
-      <FooterCta title="Get this for your own competitors." copy="Zooptrack tracks the brands you choose every day and tells you what changed, with the ads as evidence." />
-    </main>
+      <FooterCta title="Get this for your own competitors." copy="Zooptrack tracks the brands you choose every day and tells you what changed, with the ads as proof." />
+    </Shell>
   );
 }
