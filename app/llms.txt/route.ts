@@ -1,6 +1,6 @@
 import { PAID_PLANS, PLANS, TRIAL_DAYS, formatInr } from "@/lib/billing/plans";
 import { FAQ } from "@/components/marketing/faq";
-import { commercialEntries, guideEntries, toolEntries, seoPath } from "@/lib/seo/site";
+import { commercialEntries, guideEntries, toolEntries, industryEntries, researchEntries, seoPath } from "@/lib/seo/site";
 import { PRODUCT_SUMMARY, SITE_URL, CONTACT_EMAIL } from "@/lib/seo/schema";
 
 export const revalidate = 86400;
@@ -42,6 +42,12 @@ export function GET() {
     link("/brand", "Brand ad pages", "free public pages showing Indian D2C brands' Meta ads"),
     link("/faq", "FAQ", "data source, freshness, limits, pricing"),
     link("/contact", "Contact", CONTACT_EMAIL),
+    "",
+    "## Live research (updated daily)",
+    ...researchEntries.map((e) => link(seoPath(e), e.title, e.description)),
+    "",
+    "## Industry dashboards (live Meta ad data)",
+    ...industryEntries.map((e) => link(seoPath(e), e.title, e.description)),
     "",
     "## Guides and tools",
     ...[...commercialEntries, ...guideEntries, ...toolEntries].map((e) => link(seoPath(e), e.title, e.description)),

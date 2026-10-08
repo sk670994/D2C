@@ -11,6 +11,8 @@ import styles from "../brand.module.css";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { breadcrumbSchema, faqSchema, SITE_URL } from "@/lib/seo/schema";
 import { isStoredMediaUrl } from "@/lib/ad-intelligence/global/media-store";
+import { industryOfBrand } from "@/lib/seo/industries";
+import { getLongestRunning, type LongAd } from "@/lib/seo/market";
 
 // Public, cached teaser page (SEO). Refreshed every 6 hours.
 export const revalidate = 21600;
@@ -115,7 +117,20 @@ export default async function BrandPage({ params }: { params: Promise<{ slug: st
   const active = facets?.status.find((b) => b.value === "active")?.count ?? 0;
   const video = facets?.format.find((b) => b.value === "video")?.count ?? 0;
   const languages = (facets?.language ?? []).slice(0, 3).map((l) => l.label).join(", ") || "–";
-  const others = (seed as { brands: string[] }).brands.filter((b) => norm(b) !== norm(name)).slice(0, 24);
+  const industry = industryOfBrand(name) ?? industryOfBrand(nameFromSlug(slug));
+  const peers = (industry?.brands ?? (seed as { brands: string[] }).brands).filter((b) => norm(b) !== norm(name)).slice(0, 24);
+  const longest: LongAd[] = advertiser ? await getLongestRunning([{ pageId: advertiser.pageId, name: advertiser.name }], 3) : [];
+  const launched30d = facets?.momentum.launched30d ?? 0;
+  // A short, data-written summary: unique per brand and true on the day it renders.
+  const summary = total
+    ? [
+        `${name} has ${active.toLocaleString("en-IN")} ads live on Facebook and Instagram in India right now, out of ${total.toLocaleString("en-IN")} we have collected.`,
+        `${pct(video, total)} of its ads are video${languages !== "–" ? `, and it advertises mostly in ${languages}` : ""}.`,
+        launched30d ? `It launched ${launched30d.toLocaleString("en-IN")} new ads in the last 30 days.` : `It has not launched new ads in the last 30 days.`,
+        longest[0] ? `Its longest-running live ad has been running for ${longest[0].days.toLocaleString("en-IN")} days, a strong sign that it works.` : "",
+        industry ? `${name} is one of the ${industry.brands.length} ${industry.noun} we track.` : "",
+      ].filter(Boolean).join(" ")
+    : "";
 
   const path = `/brand/${brandSlug(name)}`;
   // Facts taken from the page's own numbers, so answer engines quote real data.
@@ -180,6 +195,33 @@ export default async function BrandPage({ params }: { params: Promise<{ slug: st
           )}
         </section>
 
+        {summary ? (
+          <>
+            <h2 className={styles.h2}>{name} advertising at a glance</h2>
+            <p className={styles.lede}>{summary}</p>
+          </>
+        ) : null}
+
+        {longest.length > 0 && (
+          <>
+            <h2 className={styles.h2}>{name}&apos;s longest-running live ads</h2>
+            <p className={styles.note}>Brands switch off losing ads quickly. Ads that stay live this long are usually the ones that work.</p>
+            <div className={styles.grid}>
+              {longest.map((ad) => (
+                <article key={ad.id} className={styles.card}>
+                  <div className={styles.media} style={{ backgroundImage: `url("${ad.media.replace(/"/g, "%22")}")` }}>
+                    <span className={styles.badge}>● Live {ad.days.toLocaleString("en-IN")} days</span>
+                  </div>
+                  <div className={styles.body}>
+                    <p className={styles.hook}>{ad.text}</p>
+                    <span className={styles.meta}>{ad.format}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </>
+        )}
+
         {ads.length > 0 && (
           <>
             <h2 className={styles.h2}>Recent {name} ads</h2>
@@ -219,9 +261,14 @@ export default async function BrandPage({ params }: { params: Promise<{ slug: st
           </p>
         )}
 
-        <h2 className={styles.h2}>Other D2C brands</h2>
+        <h2 className={styles.h2}>{industry ? `More ${industry.noun}` : "Other D2C brands"}</h2>
+        {industry ? (
+          <p className={styles.note}>
+            Compare {name} with its category: <Link href={`/industries/${industry.slug}`}>{industry.name} ads in India, tracked live</Link> · <Link href="/brand">All brands</Link>
+          </p>
+        ) : null}
         <ul className={styles.list}>
-          {others.map((b) => (
+          {peers.map((b) => (
             <li key={b}>
               <Link href={`/brand/${brandSlug(b)}`}>{b}</Link>
             </li>

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
 import { SeoHub } from "@/components/seo/SeoHub";
 import { industryEntries } from "@/lib/seo/site";
-export const metadata: Metadata = { title: "D2C Industry Ad Research", description: "Category-focused competitor advertising research for beauty, skincare, fashion and supplements.", alternates: { canonical: "/industries" } };
-export default function IndustriesPage() { return <SeoHub label="D2C INDUSTRY RESEARCH" title="Research competitor advertising by category." copy="Use category-specific questions instead of a generic list of ads." entries={industryEntries} />; }
+export const metadata: Metadata = { title: "D2C Industry Ad Research", description: "Live Meta ad dashboards for 15 Indian D2C categories: active ads, new launches, format and language mix, and the longest-running ads.", alternates: { canonical: "/industries" } };
+export default function IndustriesPage() { return <SeoHub label="D2C INDUSTRY RESEARCH" title="Live ad data for every D2C category." copy="Each dashboard tracks the leading Indian D2C brands in one category every day: who is pushing hardest, how they advertise and which ads keep running." entries={industryEntries} />; }
