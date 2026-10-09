@@ -15,9 +15,10 @@ const routeScript = `document.documentElement.dataset.route=location.pathname.sp
 
 const uiFont = Plus_Jakarta_Sans({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"], variable: "--zt-font", display: "swap" });
 
-const SITE_TITLE = "Zooptrack — See every D2C brand's ads. Know what to do next.";
+// Kept short for Bing/Google: title under 60 characters, description 120-155.
+const SITE_TITLE = "Zooptrack: Competitor Ad Tracker for Indian D2C Brands";
 const SITE_DESCRIPTION =
-  "Search any Indian D2C brand's live Facebook and Instagram ads. Spot new launches and long-running winners, compare competitors, and get clear next steps.";
+  "Track live Facebook and Instagram ads of any Indian D2C brand. Spot new launches and winning ads, compare rivals and know what to do next.";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://www.zooptrack.co.in"),
