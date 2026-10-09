@@ -1,4 +1,5 @@
 /* eslint-disable @next/next/no-img-element */
+import { fitTitle } from "@/lib/seo/site";
 import type { Metadata } from "next";
 import Link from "next/link";
 
@@ -88,11 +89,11 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const { advertiser, facets } = await load(slug);
   const name = advertiser?.name ?? nameFromSlug(slug);
   const count = facets?.total ? `${facets.total.toLocaleString("en-IN")} ` : "";
-  const title = `${name} Facebook & Instagram ads (${count ? `${count}ads` : "ad library"})`;
+  const title = `${name} Ads on Facebook & Instagram`;
   const description = `See ${count}${name} ads running on Meta in India: hooks, offers, languages and new launches per week. Free competitor ad research for D2C brands.`;
   const url = `/brand/${brandSlug(name)}`;
   return {
-    title,
+    title: fitTitle(title),
     description,
     alternates: { canonical: url },
     openGraph: { type: "website", siteName: "Zooptrack", locale: "en_IN", url, title: `${title} | Zooptrack`, description, images: [{ url: "/opengraph-image", width: 1200, height: 630 }] },

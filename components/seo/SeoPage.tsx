@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { findSeoEntry, seoPath, type SeoEntry, type SeoSection } from "@/lib/seo/site";
+import { findSeoEntry, seoPath, type SeoEntry, type SeoSection, fitTitle } from "@/lib/seo/site";
 
 import { GuideView } from "./GuideView";
 import { IndustryView } from "./IndustryView";
@@ -14,7 +14,7 @@ import t from "./Themes.module.css";
 
 export function seoMetadata(entry: SeoEntry): Metadata {
   const path = seoPath(entry);
-  return { title: entry.title, description: entry.description, alternates: { canonical: path }, robots: { index: true, follow: true }, openGraph: { type: "website", siteName: "Zooptrack", locale: "en_IN", title: entry.title, description: entry.description, url: path }, twitter: { card: "summary_large_image", title: entry.title, description: entry.description } };
+  return { title: fitTitle(entry.title), description: entry.description, alternates: { canonical: path }, robots: { index: true, follow: true }, openGraph: { type: "website", siteName: "Zooptrack", locale: "en_IN", title: entry.title, description: entry.description, url: path }, twitter: { card: "summary_large_image", title: entry.title, description: entry.description } };
 }
 
 export function SeoJsonLd({ entry }: { entry: SeoEntry }) {

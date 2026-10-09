@@ -1,3 +1,4 @@
+import { fitTitle } from "@/lib/seo/site";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
@@ -17,10 +18,10 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const { slug } = await params;
   const season = findSeason(slug);
   if (!season) return {};
-  const title = `${season.name} Ads in India: Live Ad Calendar, Top Brands & Offers`;
+  const title = `${season.name} Ads in India: Top Brands & Offers`;
   const description = `Every ${season.short} ad Indian brands run on Facebook and Instagram, tracked live: when the season peaks, which brands advertise most, their offers and the ads still running.`;
   const path = `/seasons/${season.slug}`;
-  return { title, description, alternates: { canonical: path }, openGraph: { type: "article", siteName: "Zooptrack", locale: "en_IN", url: path, title, description }, twitter: { card: "summary_large_image", title, description } };
+  return { title: fitTitle(title), description, alternates: { canonical: path }, openGraph: { type: "article", siteName: "Zooptrack", locale: "en_IN", url: path, title, description }, twitter: { card: "summary_large_image", title, description } };
 }
 
 export default async function SeasonPage({ params }: { params: Promise<{ slug: string }> }) {
