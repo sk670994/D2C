@@ -45,6 +45,11 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           ADSPY_SYSTEM_USER_ID: ${{ secrets.ADSPY_SYSTEM_USER_ID }}
+          # Ad images go to AWS S3 when these are set (Supabase Free = 1 GB only).
+          AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
+          AWS_S3_REGION: ${{ secrets.AWS_S3_REGION }}
+          AWS_S3_ACCESS_KEY_ID: ${{ secrets.AWS_S3_ACCESS_KEY_ID }}
+          AWS_S3_SECRET_ACCESS_KEY: ${{ secrets.AWS_S3_SECRET_ACCESS_KEY }}
           ADSPY_BROWSER: playwright
           ADSPY_DEEP_MAX_SCROLLS: "360"
           ADSPY_PREFILL_MINUTES: ${{ github.event.inputs.minutes || '300' }}

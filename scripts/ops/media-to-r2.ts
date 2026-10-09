@@ -1,6 +1,6 @@
 /**
- * Move ad images from Supabase Storage (1 GB on the Free plan) to Cloudflare
- * R2 (10 GB free, no egress fees).
+ * Move ad images from Supabase Storage (1 GB on the Free plan) to AWS S3 or
+ * Cloudflare R2 (whichever is configured, see lib/media/r2.ts).
  *
  *   npx tsx scripts/ops/media-to-r2.ts                 # dry run: counts only
  *   npx tsx scripts/ops/media-to-r2.ts --apply         # copy to R2 + repoint ads
@@ -10,8 +10,9 @@
  * it, upload to R2 under a content-hash key (same image -> stored once), point
  * the ad's thumbnail_url / image_url at R2, then (with --delete-old) delete
  * the Supabase copy. Safe to stop and re-run: moved ads no longer match.
- * Reads keys from worker\.env: Supabase keys + R2_ACCOUNT_ID, R2_ACCESS_KEY_ID,
- * R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_PUBLIC_BASE_URL.
+ * Reads keys from worker\.env: Supabase keys + either AWS_S3_BUCKET,
+ * AWS_S3_REGION, AWS_S3_ACCESS_KEY_ID, AWS_S3_SECRET_ACCESS_KEY
+ * or the R2_* set.
  */
 import { createClient } from "@supabase/supabase-js";
 import { existsSync, readFileSync } from "node:fs";
@@ -43,7 +44,7 @@ if (!url || !key) {
   process.exit(1);
 }
 if (!r2) {
-  console.error("Missing R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET / R2_PUBLIC_BASE_URL in worker\\.env");
+  console.error("Missing AWS_S3_BUCKET / AWS_S3_ACCESS_KEY_ID / AWS_S3_SECRET_ACCESS_KEY (or the R2_* keys) in worker\\.env");
   process.exit(1);
 }
 const db = createClient(url, key, { auth: { persistSession: false } });
@@ -77,7 +78,7 @@ async function moveOne(oldUrl: string): Promise<string | null> {
 }
 
 async function main() {
-  console.log(`${APPLY ? "APPLY" : "DRY RUN"} · Supabase ${BUCKET} -> R2 ${r2!.bucket} (${r2!.publicBaseUrl})${DELETE_OLD ? " · deleting old copies" : ""}`);
+  console.log(`${APPLY ? "APPLY" : "DRY RUN"} · Supabase ${BUCKET} -> ${r2!.kind === "s3" ? "AWS S3" : "R2"} ${r2!.bucket} (${r2!.publicBaseUrl})${DELETE_OLD ? " · deleting old copies" : ""}`);
   let lastId = "";
   for (;;) {
     const { data, error } = await db
@@ -133,7 +134,7 @@ async function main() {
     }
     console.log(`Deleted ${removed} old files from Supabase Storage.`);
   }
-  console.log(`Done: ${uploaded} images (${(bytes / 1_048_576).toFixed(1)} MB) now on R2; ${failed} ads failed (re-run to retry).`);
+  console.log(`Done: ${uploaded} images (${(bytes / 1_048_576).toFixed(1)} MB) now on ${r2!.kind === "s3" ? "AWS S3" : "R2"}; ${failed} ads failed (re-run to retry).`);
 }
 
 main().catch((error) => {

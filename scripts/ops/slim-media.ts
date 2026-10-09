@@ -3,6 +3,8 @@
  *
  *   npx tsx scripts/ops/slim-media.ts            # dry run: shows what it would do
  *   npx tsx scripts/ops/slim-media.ts --apply    # do it
+ *   npx tsx scripts/ops/slim-media.ts --apply --stale-days 30 --max-mb 600
+ *     (what the daily "Media prune" GitHub workflow runs)
  *
  * For every ad that points at a stored image:
  *   - stopped more than --stale-days (default 45) days ago -> delete its image,
@@ -10,6 +12,10 @@
  *   - otherwise -> re-encode to one small WebP (640 px, ~30-60 KB), point both
  *     thumbnail and image at it, delete the old full-size copies
  * Files no ad points at any more are deleted too.
+ * --max-mb N: if the bucket would still be above N MB, also clear images of
+ * the longest-stopped ads (then, only if needed, the oldest-seen live ads)
+ * until it fits. The collector stops storing new images at 700 MB
+ * (ADSPY_MEDIA_BUDGET_MB), so this keeps headroom under the 1 GB limit.
  * Gentle on the database: 2 at a time with short pauses. Safe to stop and re-run.
  * Reads keys from worker\.env.
  */
@@ -33,6 +39,8 @@ const args = process.argv.slice(2);
 const APPLY = args.includes("--apply");
 const staleIdx = args.indexOf("--stale-days");
 const STALE_DAYS = staleIdx >= 0 ? Number(args[staleIdx + 1]) || 45 : 45;
+const maxIdx = args.indexOf("--max-mb");
+const MAX_MB = maxIdx >= 0 ? Number(args[maxIdx + 1]) || 0 : 0;
 const BUCKET = "ad-media";
 const url = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/+$/, "");
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -107,6 +115,29 @@ async function main() {
   console.log(`Ads pointing at stored images: ${rows.length}`);
 
   const cutoff = Date.now() - STALE_DAYS * 86_400_000;
+  const isStale = (row: Row) =>
+    row.is_currently_active === false && Boolean(row.last_seen_at) && Date.parse(row.last_seen_at as string) < cutoff;
+
+  // Over budget even after the stale ones go? Clear more, oldest first.
+  const forced = new Set<string>();
+  if (MAX_MB > 0) {
+    const limit = MAX_MB * 1024 * 1024;
+    const sizeOf = (row: Row) =>
+      [...new Set([pathOf(row.thumbnail_url), pathOf(row.image_url)].filter((p): p is string => Boolean(p)))]
+        .reduce((a, p) => a + Math.min(objects.get(p)?.size ?? 0, 60_000), 0);
+    let kept = rows.filter((r) => !isStale(r)).reduce((a, r) => a + sizeOf(r), 0);
+    const seen = (r: Row) => (r.last_seen_at ? Date.parse(r.last_seen_at) : 0);
+    const queue = [
+      ...rows.filter((r) => !isStale(r) && r.is_currently_active === false).sort((a, b) => seen(a) - seen(b)),
+      ...rows.filter((r) => !isStale(r) && r.is_currently_active !== false).sort((a, b) => seen(a) - seen(b)),
+    ];
+    for (const row of queue) {
+      if (kept <= limit) break;
+      forced.add(row.id);
+      kept -= sizeOf(row);
+    }
+    console.log(`Budget ${MAX_MB} MB: clearing ${forced.size} more ads' images (oldest first) to fit.`);
+  }
   const referenced = new Set<string>();
   let dropped = 0;
   let converted = 0;
@@ -116,7 +147,7 @@ async function main() {
 
   const work = async (row: Row) => {
     const paths = [pathOf(row.thumbnail_url), pathOf(row.image_url)].filter((p): p is string => Boolean(p));
-    const stale = row.is_currently_active === false && row.last_seen_at && Date.parse(row.last_seen_at) < cutoff;
+    const stale = isStale(row) || forced.has(row.id);
     if (stale) {
       paths.forEach((p) => toDelete.add(p));
       dropped += 1;
