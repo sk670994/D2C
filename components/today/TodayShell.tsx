@@ -9,7 +9,7 @@ import { ZooptrackLogo } from "@/components/brand/ZooptrackLogo";
 
 import { CommandBar } from "./CommandBar";
 
-type NavKey = "today" | "adspy" | "finder" | "vault" | "report" | "zwirk" | "profit" | "billing";
+type NavKey = "today" | "adspy" | "finder" | "vault" | "report" | "zwirk" | "profit" | "billing" | "founder";
 
 type NavItem = { key: NavKey; href: string; label: string; icon: ReactNode };
 
