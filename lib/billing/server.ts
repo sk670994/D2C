@@ -4,6 +4,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 
+import { isDisposableEmail } from "@/lib/auth/disposable-email";
 import { entitlementFor, isAdminEmail, razorpayPlanEnv, TRIAL_DAYS, type Entitlement, type PaidPlanKey, type SubscriptionRow } from "./plans";
 
 const RAZORPAY_API = "https://api.razorpay.com/v1";
@@ -15,8 +16,12 @@ function missingTable(message: string) {
   return /42P01|PGRST205|does not exist|schema cache/i.test(message);
 }
 
-/** The user's subscription row; creates the free trial on first visit. */
-export async function getBillingRow(userId: string): Promise<BillingRow | null> {
+/**
+ * The user's subscription row; creates the free trial on first visit.
+ * Throwaway email addresses get no free trial (the trial starts already ended),
+ * so they see the plans instead of repeat free trials.
+ */
+export async function getBillingRow(userId: string, email?: string | null): Promise<BillingRow | null> {
   const client = createGlobalServiceClient();
   const { data, error } = await client.from("billing_subscriptions").select(COLUMNS).eq("user_id", userId).maybeSingle();
   if (error) {
@@ -24,7 +29,8 @@ export async function getBillingRow(userId: string): Promise<BillingRow | null> 
     throw new Error(error.message);
   }
   if (data) return data as BillingRow;
-  const trial = { user_id: userId, plan: "trial", status: "trialing", trial_ends_at: new Date(Date.now() + TRIAL_DAYS * 86_400_000).toISOString() };
+  const trialDays = isDisposableEmail(email) ? 0 : TRIAL_DAYS;
+  const trial = { user_id: userId, plan: "trial", status: "trialing", trial_ends_at: new Date(Date.now() + trialDays * 86_400_000).toISOString() };
   const inserted = await client.from("billing_subscriptions").upsert(trial, { onConflict: "user_id", ignoreDuplicates: true }).select(COLUMNS).maybeSingle();
   if (inserted.data) return inserted.data as BillingRow;
   const again = await client.from("billing_subscriptions").select(COLUMNS).eq("user_id", userId).maybeSingle();
@@ -38,7 +44,7 @@ export async function getBillingRow(userId: string): Promise<BillingRow | null> 
 export async function getEntitlement(userId: string, email?: string | null): Promise<Entitlement> {
   const admin = isAdminEmail(email, process.env.ZOOPTRACK_ADMIN_EMAILS);
   if (admin) return entitlementFor(null, Date.now(), { admin: true });
-  const row = await getBillingRow(userId).catch(() => null);
+  const row = await getBillingRow(userId, email).catch(() => null);
   return entitlementFor(row);
 }
 

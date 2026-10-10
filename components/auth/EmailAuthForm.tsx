@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DISPOSABLE_EMAIL_MESSAGE, isDisposableEmail } from "@/lib/auth/disposable-email";
 
 type AuthMode = "signin" | "signup";
 type Step = "email" | "otp";
@@ -49,6 +50,11 @@ export function EmailAuthForm({ nextPath = "/today" }: { nextPath?: string }) {
 
     if (!normalizedEmail) {
       setMessage("Enter your email address.");
+      return;
+    }
+
+    if (isDisposableEmail(normalizedEmail)) {
+      setMessage(DISPOSABLE_EMAIL_MESSAGE);
       return;
     }
 
