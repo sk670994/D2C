@@ -7,7 +7,7 @@ import t from "@/components/seo/Themes.module.css";
 import { SEASONS } from "@/lib/seo/seasons";
 
 export const metadata: Metadata = {
-  title: "Festival and seasonal ads in India: Diwali, Dussehra, summer, monsoon, winter",
+  title: "Festival and Seasonal Ads in India",
   description: "Live calendars of Indian festival and seasonal ads on Facebook and Instagram: when each season peaks, which brands advertise most and what they offer.",
   alternates: { canonical: "/seasons" },
 };
