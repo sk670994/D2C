@@ -50,7 +50,16 @@ const started = Date.now();
 const budgetMs = Math.max(5, Number(process.env.ADSPY_PREFILL_MINUTES) || 50) * 60_000;
 const limit = Number(process.env.ADSPY_PREFILL_LIMIT) || Infinity;
 const userId = (process.env.ADSPY_SYSTEM_USER_ID ?? "").trim();
-const RECENT_MS = 5 * 24 * 60 * 60_000;
+const recentHours = Number(process.env.ADSPY_PREFILL_RECENT_HOURS);
+/** Skip brands collected this recently (default 5 days; 0 forces a fresh scan). */
+const RECENT_MS = (Number.isFinite(recentHours) && recentHours >= 0 ? recentHours : 120) * 60 * 60_000;
+/** Optional: only these seed brands (manual test runs). */
+const only = new Set(
+  (process.env.ADSPY_PREFILL_BRANDS ?? "")
+    .split(",")
+    .map((b) => normalizeAdvertiserName(b.trim()))
+    .filter(Boolean),
+);
 
 const pending: Promise<unknown>[] = [];
 setAdSpyInlineRunner((payload: CollectionEvent) => {
@@ -101,8 +110,9 @@ async function main() {
   const stats = { tracked: 0, collected: 0, skippedRecent: 0, noPage: 0, errors: 0 };
 
   // 1) Tracked / watched brands first — these are what paying users look at.
-  try {
-    const tracked = await refreshTrackedAdSpy({ depth: "deep", minIntervalMs: 12 * 60 * 60_000 });
+  //    (Skipped on a test run limited to a few brands.)
+  if (!only.size) try {
+    const tracked = await refreshTrackedAdSpy({ depth: "deep", minIntervalMs: Math.min(12 * 60 * 60_000, RECENT_MS) });
     await drain();
     stats.tracked = tracked.dispatched;
     console.log(
@@ -124,7 +134,10 @@ async function main() {
   const byName = process.env.ADSPY_PREFILL_BY_NAME === "1";
   const day = Math.floor(Date.now() / 86_400_000);
   const offset = brands.length ? (day * 37) % brands.length : 0;
-  const order = [...brands.slice(offset), ...brands.slice(0, offset)];
+  const order = [...brands.slice(offset), ...brands.slice(0, offset)].filter(
+    (b) => !only.size || only.has(normalizeAdvertiserName(b)),
+  );
+  if (only.size) console.log(`only: ${order.join(", ") || "(no seed brand matched)"}`);
 
   const collect = async (brand: string, page: Page | null) => {
     const result = await startAdSpyCollection({
