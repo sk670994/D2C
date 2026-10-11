@@ -11,6 +11,12 @@ on:
       limit:
         description: "Max seed brands (blank = no limit)"
         default: ""
+      brands:
+        description: "Only these seed brands, comma separated (blank = all)"
+        default: ""
+      recent_hours:
+        description: "Skip brands collected within this many hours (0 = force)"
+        default: "120"
 
 concurrency:
   group: adspy-prefill
@@ -56,4 +62,6 @@ jobs:
           ADSPY_WORKER_BUDGET_MS: "900000"
           ADSPY_PREFILL_MINUTES: ${{ github.event.inputs.minutes || '300' }}
           ADSPY_PREFILL_LIMIT: ${{ github.event.inputs.limit || '' }}
+          ADSPY_PREFILL_BRANDS: ${{ github.event.inputs.brands || '' }}
+          ADSPY_PREFILL_RECENT_HOURS: ${{ github.event.inputs.recent_hours || '120' }}
         run: npx tsx scripts/adspy-prefill.ts
