@@ -46,7 +46,7 @@ const QUICK_MAX_SCROLLS = 14;
 const QUICK_TARGET = 30;
 const QUICK_STABLE_ROUNDS = 3;
 const DEEP_MAX_SCROLLS = 360;
-const DEEP_TARGET = 1200;
+const DEEP_TARGET = 2500;
 const DEEP_STABLE_ROUNDS = 18;
 const NAV_TIMEOUT = 45_000;
 const INITIAL_WAIT = 2_500;
@@ -229,7 +229,11 @@ function isDeadBrowserError(error: unknown): boolean {
 
 function buildLibraryUrl(input: AdSearchInput): string {
   const country = (input.country ?? DEFAULT_COUNTRY).trim().toUpperCase();
-  const activeStatus = input.collectionDepth === "deep" ? "all" : "active";
+  // Live ads only. Ads we stored earlier and no longer see in a complete
+  // live scan are marked stopped afterwards (see markStoppedAds), so the
+  // "live now" numbers match Meta. ADSPY_DEEP_STATUS=all restores the old mode.
+  const activeStatus =
+    input.collectionDepth === "deep" && process.env.ADSPY_DEEP_STATUS === "all" ? "all" : "active";
   const params = new URLSearchParams({
     active_status: activeStatus,
     ad_type: "all",
@@ -610,18 +614,12 @@ async function scrollToRevealMore(page: Page): Promise<{
 
     const primary = scrollables[0];
 
-    if (primary) {
-      const nextTop = Math.min(
-        primary.scrollTop + Math.max(primary.clientHeight * 0.82, 850),
-        primary.scrollHeight - primary.clientHeight,
-      );
-      primary.scrollTop = nextTop;
-    }
-
-    window.scrollBy({
-      top: Math.max(window.innerHeight * 0.92, 820),
-      behavior: "instant",
-    });
+    // Jump to the very bottom. Meta loads the next page (10 ads) only when
+    // the end of the list is on screen; small steps ran out of patience
+    // before reaching it, so every scrape stopped at the first ~30 ads
+    // (prefill logs, 6-10 Oct: collected 30 of 502 for Mamaearth).
+    if (primary) primary.scrollTop = primary.scrollHeight;
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" });
 
     const afterY = window.scrollY;
     const afterHeight = Math.max(
@@ -644,19 +642,31 @@ async function scrollToRevealMore(page: Page): Promise<{
   }));
 }
 
+/** How a scrape ended; used to decide whether unseen ads have stopped. */
+export type MetaScrapeOutcome = {
+  collected: number;
+  metaTotal: number | null;
+  hasNextPage: boolean | null;
+  stoppedBy: "done" | "deadline" | "rate_limited";
+  activeOnly: boolean;
+  /** Meta has no more pages, or we hold at least Meta's own total. */
+  complete: boolean;
+};
+
 async function scrapeOnce(
   input: AdSearchInput,
   onBatch?: (ads: CompetitorAd[]) => Promise<void> | void,
+  report?: (outcome: MetaScrapeOutcome) => void,
 ): Promise<CompetitorAd[]> {
   const run = async () => {
     try {
-      return await scrapeWithBrowser(input, onBatch);
+      return await scrapeWithBrowser(input, onBatch, report);
     } catch (error) {
       // A browser left half-dead by an earlier crash: relaunch once, never loop.
       if (!isDeadBrowserError(error)) throw error;
       console.warn("[MetaProvider] browser was dead; relaunching once", { tmpFreeMb: tmpFreeMb() });
       await resetBrowser();
-      return scrapeWithBrowser(input, onBatch);
+      return scrapeWithBrowser(input, onBatch, report);
     } finally {
       // Serverless: never keep Chromium between jobs (leaks /tmp and memory).
       if (IS_SERVERLESS) await resetBrowser();
@@ -668,6 +678,7 @@ async function scrapeOnce(
 async function scrapeWithBrowser(
   input: AdSearchInput,
   onBatch?: (ads: CompetitorAd[]) => Promise<void> | void,
+  report?: (outcome: MetaScrapeOutcome) => void,
 ): Promise<CompetitorAd[]> {
   const pageUrl = buildLibraryUrl(input);
   const deadlineAt = input.deadlineAt ?? null;
@@ -881,6 +892,19 @@ async function scrapeWithBrowser(
       seconds: Math.round((Date.now() - startedAt) / 1000),
     });
 
+    report?.({
+      collected: collected.size,
+      metaTotal: metaIdentity.totalCount,
+      hasNextPage: state.hasNextPage,
+      stoppedBy,
+      activeOnly: new URL(pageUrl).searchParams.get("active_status") === "active",
+      complete:
+        stoppedBy === "done" &&
+        state.jsonResponses > 0 &&
+        (state.hasNextPage === false ||
+          (metaIdentity.totalCount != null && collected.size >= metaIdentity.totalCount)),
+    });
+
     return dedupeAds(Array.from(collected.values())).sort((a, b) => {
       const active = Number(Boolean(b.isActive)) - Number(Boolean(a.isActive));
       if (active) return active;
@@ -894,6 +918,7 @@ async function scrapeWithBrowser(
 export async function collectMetaAdsInBatches(
   input: AdSearchInput,
   onBatch: (ads: CompetitorAd[]) => Promise<void> | void,
+  report?: (outcome: MetaScrapeOutcome) => void,
 ): Promise<number> {
   const normalized: AdSearchInput = {
     ...input,
@@ -906,7 +931,7 @@ export async function collectMetaAdsInBatches(
 
   if (normalized.query.length < 2) return 0;
 
-  const ads = await scrapeOnce(normalized, onBatch);
+  const ads = await scrapeOnce(normalized, onBatch, report);
   return ads.length;
 }
 

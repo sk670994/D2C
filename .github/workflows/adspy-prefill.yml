@@ -52,6 +52,8 @@ jobs:
           AWS_S3_SECRET_ACCESS_KEY: ${{ secrets.AWS_S3_SECRET_ACCESS_KEY }}
           ADSPY_BROWSER: playwright
           ADSPY_DEEP_MAX_SCROLLS: "360"
+          # Big advertisers (Kapiva ~1,400 live ads) need ~10 min for a complete live scan.
+          ADSPY_WORKER_BUDGET_MS: "900000"
           ADSPY_PREFILL_MINUTES: ${{ github.event.inputs.minutes || '300' }}
           ADSPY_PREFILL_LIMIT: ${{ github.event.inputs.limit || '' }}
         run: npx tsx scripts/adspy-prefill.ts

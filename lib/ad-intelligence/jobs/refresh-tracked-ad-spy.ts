@@ -88,6 +88,8 @@ async function listBrandVaultTargets(): Promise<Target[]> {
 export async function refreshTrackedAdSpy(options: {
   /** "deep" = full history; only for the long-running nightly job, not the 60s Vercel cron. */
   depth?: "quick" | "deep";
+  /** Override the per-brand minimum gap (nightly job: 12 h, so cron drift never skips a night). */
+  minIntervalMs?: number;
 } = {}): Promise<{
   reapedRequests: number;
   recoveredRuns: number;
@@ -148,7 +150,7 @@ export async function refreshTrackedAdSpy(options: {
         mode: "advertiser",
         pageId: target.pageId,
         // A little under the refresh period so a daily cron always qualifies.
-        minIntervalMs: Math.max(1, target.refreshHours - 2) * 60 * 60 * 1000,
+        minIntervalMs: options.minIntervalMs ?? Math.max(1, target.refreshHours - 2) * 60 * 60 * 1000,
         reason: "scheduled",
         // API mode pays per call: nightly = new/live ads only, full read on Sundays.
         depth: options.depth ?? (process.env.ADSPY_COLLECTOR === "searchapi" ? (new Date().getUTCDay() === 0 ? "deep" : "quick") : undefined),

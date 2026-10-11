@@ -1,5 +1,8 @@
 ﻿import "server-only";
 
+import type { MetaScrapeOutcome } from "@/lib/ad-intelligence/providers/deep-meta";
+import { markStoppedAds } from "@/lib/ad-intelligence/global/mark-stopped";
+
 import type { AdPlatform, CompetitorAd } from "@/lib/ad-intelligence/types";
 import type {
   AdSearchMode,
@@ -440,6 +443,8 @@ export async function collectAdIntelligence(
         }
       }
 
+      const scanStartedAt = new Date().toISOString();
+      let outcome: MetaScrapeOutcome | null = null;
       await collectMetaAdsInBatches(
         {
           query: data.query,
@@ -454,7 +459,28 @@ export async function collectAdIntelligence(
         async (batch) => {
           await persist(batch);
         },
+        (o) => {
+          outcome = o;
+        },
       );
+
+      // A complete live-only scan of one page: anything of that page still
+      // flagged live but not seen in this scan has stopped running.
+      const scan = outcome as MetaScrapeOutcome | null;
+      if (scan && scrapePageId && data.mode === "advertiser" && scan.activeOnly && scan.complete) {
+        try {
+          const stopped = await markStoppedAds({ pageId: scrapePageId, platform: data.platform, scanStartedAt });
+          if (stopped > 0) touchedAdvertisers.add(scrapePageId);
+          console.info("[AdSpy collect] live scan complete", {
+            pageId: scrapePageId,
+            live: scan.collected,
+            metaTotal: scan.metaTotal,
+            markedStopped: stopped,
+          });
+        } catch (error) {
+          console.warn("[AdSpy collect] mark stopped failed", error instanceof Error ? error.message : error);
+        }
+      }
 
       // Keep Meta's own count so the app can show "Meta shows N, we have M".
       const observedTotal = metaTotalCount as number | null;
@@ -464,7 +490,7 @@ export async function collectAdIntelligence(
           platform: data.platform,
           country: data.country,
           scope,
-          statusScope: statusScopeForDepth(phase),
+          statusScope: scan?.activeOnly ? "active" : statusScopeForDepth(phase),
           metaTotal: observedTotal,
           collectedAds: state.discoveredAds,
         });
