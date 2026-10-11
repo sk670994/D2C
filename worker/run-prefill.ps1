@@ -83,7 +83,7 @@ if (-not $env:ADSPY_SYSTEM_USER_ID) {
 $env:ADSPY_PREFILL_BRANDS = $Brands
 $env:ADSPY_PREFILL_RECENT_HOURS = "$RecentHours"
 $env:ADSPY_PREFILL_MINUTES = "$Minutes"
-$env:ADSPY_WORKER_BUDGET_MS = "900000"  # big brands need ~10 min for a full live scan
+$env:ADSPY_WORKER_BUDGET_MS = "2400000"  # Kapiva (~1,400 live ads) needs ~30 min
 $env:ADSPY_DEEP_MAX_SCROLLS = "360"
 
 # Keep the PC awake while it runs (display may sleep).
