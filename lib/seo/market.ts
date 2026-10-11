@@ -45,8 +45,15 @@ export type LongAd = {
 const norm = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, "");
 
 /** Brand name -> its Meta page, via the same autocomplete the app uses. */
+/** Checked by hand against the Ad Library (11 Oct): look-alike pages won. */
+const PAGE_OVERRIDES: Record<string, Advertiser> = {
+  thewholetruth: { pageId: "108531977179455", name: "The Whole Truth Foods" },
+};
+
 export async function resolveAdvertiser(name: string): Promise<Advertiser | null> {
   if (name.trim().length < 2) return null;
+  const override = PAGE_OVERRIDES[norm(name)];
+  if (override) return override;
   try {
     const { data } = await createGlobalServiceClient().rpc("adspy_autocomplete_advertisers", {
       p_query: name,
@@ -54,11 +61,33 @@ export async function resolveAdvertiser(name: string): Promise<Advertiser | null
       p_country: COUNTRY,
       p_limit: 8,
     });
-    const rows = ((data ?? []) as Array<{ page_id?: string | number | null; label?: string | null }>)
+    type Row = { page_id?: string | number | null; label?: string | null; verification?: string | null; likes?: number | null; ig_followers?: number | null };
+    const rows = ((data ?? []) as Row[])
       .filter((r) => r.page_id && r.label)
-      .map((r) => ({ pageId: String(r.page_id), name: String(r.label) }));
+      .map((r) => ({
+        pageId: String(r.page_id),
+        name: String(r.label),
+        verified: String(r.verification ?? "").toUpperCase() === "VERIFIED",
+        reach: Number(r.likes ?? 0) + Number(r.ig_followers ?? 0),
+      }));
     const want = norm(name);
-    return rows.find((r) => norm(r.name) === want) ?? rows.find((r) => norm(r.name).startsWith(want)) ?? null;
+    // Brands often have look-alike pages ("The Whole Truth", 0 ads, next to
+    // the real "The Whole Truth Foods"). A verified page wins over an
+    // unverified one; a longer name is only accepted with a generic suffix
+    // ("Foods", "India", "Inc"), so "Plum" never becomes "Plumbing World".
+    const SUFFIX = /^(s|foods?|india|in|inc|official|store|shop|co|company|brand|global|life|beauty|wellness|health|nutrition|ayurveda)?$/;
+    const rank = (r: (typeof rows)[number]) => {
+      const n = norm(r.name);
+      const exact = n === want;
+      if (!n.startsWith(want)) return -1;
+      if (!exact && !SUFFIX.test(n.slice(want.length))) return -0.5; // old prefix fallback, last resort
+      return (r.verified ? 2 : 0) + (exact ? 1 : 0);
+    };
+    const best = rows
+      .map((r) => ({ r, score: rank(r) }))
+      .filter((x) => x.score > -1)
+      .sort((a, b) => b.score - a.score || b.r.reach - a.r.reach)[0]?.r;
+    return best ? { pageId: best.pageId, name: best.name } : null;
   } catch {
     return null;
   }

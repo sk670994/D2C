@@ -102,21 +102,52 @@ async function main() {
 
   // 1) Tracked / watched brands first — these are what paying users look at.
   try {
-    const tracked = await refreshTrackedAdSpy({ depth: "deep" });
+    const tracked = await refreshTrackedAdSpy({ depth: "deep", minIntervalMs: 12 * 60 * 60_000 });
     await drain();
     stats.tracked = tracked.dispatched;
-    console.log(`tracked brands refreshed: ${tracked.dispatched}/${tracked.targets}`);
+    console.log(
+      `tracked brands refreshed: ${tracked.dispatched}/${tracked.targets}`,
+      JSON.stringify({ skipped: tracked.skipped, errors: tracked.errors }),
+    );
   } catch (error) {
     stats.errors += 1;
     console.error("tracked refresh failed:", error instanceof Error ? error.message : error);
   }
 
   // 2) Seed list, rotated daily so every night starts somewhere new.
-  const brands = (seed as { country: string; brands: string[] }).brands;
-  const country = (seed as { country: string }).country || "IN";
+  const seedData = seed as { country: string; brands: string[]; pages?: Record<string, string[]> };
+  const brands = seedData.brands;
+  const country = seedData.country || "IN";
+  // Brand -> Meta Page IDs checked by hand. Wins over name matching and lets
+  // one brand cover several pages (Kapiva runs ads from 3 pages).
+  const pinned = seedData.pages ?? {};
+  const byName = process.env.ADSPY_PREFILL_BY_NAME === "1";
   const day = Math.floor(Date.now() / 86_400_000);
   const offset = brands.length ? (day * 37) % brands.length : 0;
   const order = [...brands.slice(offset), ...brands.slice(0, offset)];
+
+  const collect = async (brand: string, page: Page | null) => {
+    const result = await startAdSpyCollection({
+      userId,
+      query: page?.name ?? brand,
+      country,
+      platform: "meta",
+      mode: "advertiser",
+      pageId: page?.pageId ?? null,
+      minIntervalMs: RECENT_MS,
+      reason: "scheduled",
+      depth: "deep",
+    });
+    if (result.outcome !== "dispatched") {
+      stats.skippedRecent += 1;
+      console.log(`- ${brand}${page ? ` (${page.pageId})` : ""}: ${result.outcome}`);
+      return;
+    }
+    const t0 = Date.now();
+    await drain();
+    stats.collected += 1;
+    console.log(`+ ${brand} (${page?.pageId ?? "by name"}) in ${mins(Date.now() - t0)} min`);
+  };
 
   let attempted = 0;
   for (const brand of order) {
@@ -128,6 +159,15 @@ async function main() {
     attempted += 1;
 
     try {
+      const ids = pinned[brand];
+      if (ids?.length) {
+        for (const pageId of ids) {
+          if (timeLeft() < 4 * 60_000) break;
+          await collect(brand, { pageId, name: brand });
+        }
+        continue;
+      }
+
       const want = normalizeAdvertiserName(brand);
       // Identity boundary: exact name match, or a verified page containing
       // the brand. Never guess a Page ID.
@@ -137,33 +177,17 @@ async function main() {
         page = pick(live, want);
       }
       if (!page) {
-        // No exact page: search Meta by brand name. Every ad is still stored
-        // under its real advertiser Page ID, so data stays correctly attributed.
         stats.noPage += 1;
+        if (!byName) {
+          // A name search is a keyword search: other advertisers' ads, and
+          // never the brand's full list. Add the brand's page to "pages" in
+          // adspy-seed-brands.json instead.
+          console.log(`~ ${brand}: no exact page, skipped (add its Page ID to seed "pages")`);
+          continue;
+        }
         console.log(`~ ${brand}: no exact page, collecting by name`);
       }
-
-      const result = await startAdSpyCollection({
-        userId,
-        query: page?.name ?? brand,
-        country,
-        platform: "meta",
-        mode: "advertiser",
-        pageId: page?.pageId ?? null,
-        minIntervalMs: RECENT_MS,
-        reason: "scheduled",
-        depth: "deep",
-      });
-
-      if (result.outcome !== "dispatched") {
-        stats.skippedRecent += 1;
-        console.log(`- ${brand}: ${result.outcome}`);
-        continue;
-      }
-      const t0 = Date.now();
-      await drain();
-      stats.collected += 1;
-      console.log(`+ ${brand} (${page?.pageId ?? "by name"}) in ${mins(Date.now() - t0)} min`);
+      await collect(brand, page ?? null);
     } catch (error) {
       stats.errors += 1;
       console.error(`! ${brand}:`, error instanceof Error ? error.message : error);

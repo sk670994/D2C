@@ -205,5 +205,9 @@
   "V-Guard",
   "Orient Electric",
   "Usha International"
- ]
+ ],
+ "pages": {
+  "Kapiva": ["1721818904736494", "104968639165111", "116128397752155"],
+  "The Whole Truth": ["108531977179455"]
+ }
 }
