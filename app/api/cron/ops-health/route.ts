@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { escapeHtml, sendEmail } from "@/lib/email/send";
-import { evaluateOps, shouldSendAlert, type OpsSnapshot } from "@/lib/ops/health";
+import { evaluateOps, MIN_COVERAGE, shouldSendAlert, type OpsSnapshot } from "@/lib/ops/health";
 
 export const runtime = "nodejs";
 export const preferredRegion = "syd1";
@@ -61,6 +61,34 @@ export async function GET(request: NextRequest) {
     }
   } catch {
     // freshness is best effort
+  }
+  // Completeness: every page scan this week vs Meta's own live count.
+  try {
+    const weekAgo = new Date(now - 7 * 86_400_000).toISOString();
+    const { data } = await client
+      .from("adspy_source_counts")
+      .select("scope_key,meta_total,collected_ads")
+      .eq("scope_type", "page")
+      .eq("status_scope", "active")
+      .gte("observed_at", weekAgo)
+      .gte("meta_total", 20)
+      .limit(2000);
+    const rows = (data ?? []) as Array<{ scope_key: string; meta_total: number; collected_ads: number }>;
+    const low = rows.filter((r) => Number(r.collected_ads) < MIN_COVERAGE * Number(r.meta_total));
+    const lowCoverage: NonNullable<OpsSnapshot["lowCoverage"]> = [];
+    for (const r of low.slice(0, 50)) {
+      const { data: named } = await client
+        .from("ad_intelligence_creatives")
+        .select("advertiser_name")
+        .eq("advertiser_id", r.scope_key)
+        .limit(1);
+      const name = String((named as Array<{ advertiser_name?: string }> | null)?.[0]?.advertiser_name ?? r.scope_key);
+      lowCoverage.push({ name, pageId: r.scope_key, have: Number(r.collected_ads), meta: Number(r.meta_total) });
+    }
+    snapshot.coverageChecked = rows.length;
+    snapshot.lowCoverage = lowCoverage;
+  } catch {
+    // coverage is best effort
   }
   // Runs the reaper had to kill: the only trace a Vercel timeout leaves in the DB.
   const cut = await client.from("adspy_runs").select("id", { count: "exact", head: true })
