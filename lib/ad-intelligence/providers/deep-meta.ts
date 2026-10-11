@@ -701,7 +701,10 @@ async function scrapeWithBrowser(
     context = await b.newContext({
       locale: "en-IN",
       viewport: { width: 1440, height: 1000 },
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36",
+      // A well-formed UA matching the real engine. The old one ("Chrome/130",
+      // no "KHTML, like Gecko") disagreed with the browser's own client hints,
+      // which looks like a bot; Meta then served the first page and no more.
+      userAgent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${(b.version().match(/\d+/)?.[0] ?? "141")}.0.0.0 Safari/537.36`,
     });
     await context.addInitScript({ content: ESBUILD_NAME_SHIM });
     await context.route("**/*", async (route) => {
@@ -726,6 +729,8 @@ async function scrapeWithBrowser(
       jsonResponses: 0,
       rateLimitedAt: 0,
     };
+    // Diagnostics for the "scrape finished" log: did Meta answer our scrolls?
+    const diag = { graphqlPosts: 0, pageQueries: 0, pageQueryAds: 0, rateLimits: 0, emptySample: "" };
 
     // Meta's own JSON: first page in the HTML, every next page from /api/graphql.
     const absorb = (text: string) => {
@@ -754,10 +759,22 @@ async function scrapeWithBrowser(
 
     page.on("response", (response) => {
       if (!response.url().includes("/api/graphql")) return;
+      const isPost = response.request().method() === "POST";
+      const isPageQuery = isPost && /AdLibrarySearchPaginationQuery/.test(response.request().postData() ?? "");
+      if (isPost) diag.graphqlPosts += 1;
+      if (isPageQuery) diag.pageQueries += 1;
       const task = response
         .text()
         .then((body) => {
-          if (body.length <= 8_000_000) absorb(body);
+          if (body.length > 8_000_000) return;
+          const before = collected.size;
+          const wasLimited = state.rateLimitedAt;
+          absorb(body);
+          if (state.rateLimitedAt !== wasLimited) diag.rateLimits += 1;
+          if (isPageQuery) {
+            diag.pageQueryAds += collected.size - before;
+            if (collected.size === before && !diag.emptySample) diag.emptySample = `${response.status()} ${body.slice(0, 160)}`;
+          }
         })
         .catch(() => undefined)
         .finally(() => {
@@ -841,6 +858,8 @@ async function scrapeWithBrowser(
         })
         .catch(() => null);
       const movement = await scrollToRevealMore(page);
+      // A real wheel event too: some lazy loaders listen for input, not scroll position.
+      if (!quick) await page.mouse.wheel(0, 1600).catch(() => undefined);
       if (!quick) await clickPaginationControls(page);
       const response = await nextResponse;
       if (response) {
@@ -888,6 +907,7 @@ async function scrapeWithBrowser(
       metaTotal: metaIdentity.totalCount,
       hasNextPage: state.hasNextPage,
       stoppedBy,
+      ...diag,
       tmpFreeMb: tmpFreeMb(),
       seconds: Math.round((Date.now() - startedAt) / 1000),
     });
