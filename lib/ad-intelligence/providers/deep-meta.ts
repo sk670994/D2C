@@ -841,6 +841,13 @@ async function scrapeWithBrowser(
         break;
       }
 
+      // Meta refuses every "load more" (cloud IPs): stop instead of hammering
+      // it 100 times, which only keeps the IP blocked longer.
+      if (diag.rateLimits >= 6 && diag.pageQueryAds === 0) {
+        stoppedBy = "rate_limited";
+        break;
+      }
+
       if (state.rateLimitedAt && Date.now() - state.rateLimitedAt < 20_000) {
         // Meta asked us to slow down (error 1675004): back off, then continue.
         if (remaining() < 20_000) {
