@@ -61,17 +61,20 @@ const only = new Set(
     .filter(Boolean),
 );
 
-const pending: Promise<unknown>[] = [];
+// One collection at a time. Starting them all at once (11 tracked brands on
+// 11 Oct) flooded Supabase with writes until every query timed out.
+const pending: CollectionEvent[] = [];
 setAdSpyInlineRunner((payload: CollectionEvent) => {
-  pending.push(
-    collectAdIntelligence(payload).catch((error) => {
-      console.error("  collection failed:", error instanceof Error ? error.message : error);
-    }),
-  );
+  pending.push(payload);
 });
 
 async function drain() {
-  while (pending.length) await pending.shift();
+  while (pending.length) {
+    const payload = pending.shift()!;
+    await collectAdIntelligence(payload).catch((error) => {
+      console.error("  collection failed:", error instanceof Error ? error.message : error);
+    });
+  }
 }
 
 const timeLeft = () => budgetMs - (Date.now() - started);
