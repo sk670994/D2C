@@ -65,3 +65,23 @@ describe("shouldSendAlert", () => {
     expect(shouldSendAlert(new Date(now - 4 * 3_600_000).toISOString(), now)).toBe(true);
   });
 });
+
+describe("coverage", () => {
+  it("flags brands holding under 90% of Meta's live ads", () => {
+    expect(evaluateOps({ ...base, coverageChecked: 10, lowCoverage: [] })).toEqual([]);
+    const one = evaluateOps({ ...base, coverageChecked: 20, lowCoverage: [{ name: "Kapiva", pageId: "1", have: 30, meta: 1439 }] });
+    expect(one.map((i) => i.key)).toEqual(["data_incomplete"]);
+    expect(one[0].severity).toBe("warning");
+    expect(one[0].detail.includes("Kapiva: 30 of 1439")).toBe(true);
+    const many = evaluateOps({
+      ...base,
+      coverageChecked: 10,
+      lowCoverage: [
+        { name: "A", pageId: "1", have: 30, meta: 500 },
+        { name: "B", pageId: "2", have: 30, meta: 300 },
+        { name: "C", pageId: "3", have: 10, meta: 100 },
+      ],
+    });
+    expect(many[0].severity).toBe("critical");
+  });
+});

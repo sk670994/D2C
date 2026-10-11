@@ -21,7 +21,13 @@ export type OpsSnapshot = {
   staleWatchedBrands?: number;
   /** Runs killed mid-way (function timeout / crash), found by the reaper. */
   cutOff24h?: number;
+  /** Completeness: pages scanned in 7 days vs Meta's own live count. */
+  coverageChecked?: number;
+  lowCoverage?: Array<{ name: string; pageId: string; have: number; meta: number }>;
 };
+
+/** A scan holding less than this share of Meta's live ads is incomplete. */
+export const MIN_COVERAGE = 0.9;
 
 export type OpsIssue = { key: string; severity: "critical" | "warning"; title: string; detail: string; fix: string };
 
@@ -61,6 +67,21 @@ export function evaluateOps(s: OpsSnapshot): OpsIssue[] {
       title: "Rival data is going stale",
       detail: `${stale} of ${watched} watched brands were not refreshed in 36 h.`,
       fix: "Check the nightly refresh (Vercel cron /api/cron/refresh-tracked-adspy), the drain logs and the ScrapeCreators credits.",
+    });
+  }
+  const low = s.lowCoverage ?? [];
+  const checked = s.coverageChecked ?? 0;
+  if (low.length > 0) {
+    const share = checked ? low.length / checked : 1;
+    const worst = [...low].sort((a, b) => a.have / a.meta - b.have / b.meta).slice(0, 5);
+    issues.push({
+      key: "data_incomplete",
+      severity: low.length >= 3 || share >= 0.2 ? "critical" : "warning",
+      title: "Brands are missing ads",
+      detail:
+        `${low.length} of ${checked} brands scanned this week hold under ${Math.round(MIN_COVERAGE * 100)}% of Meta's live ads. ` +
+        worst.map((b) => `${b.name}: ${b.have} of ${b.meta}`).join("; ") + ".",
+      fix: "Check the nightly pre-fill log: 'Rate limit exceeded' means Meta is blocking the collector (switch to ScrapeCreators or run worker\\run-prefill.ps1 on the PC).",
     });
   }
   if ((s.cutOff24h ?? 0) >= 3) {

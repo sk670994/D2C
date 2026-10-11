@@ -65,7 +65,12 @@ function isApiSource(source: MetaSourceName): boolean {
 const PER_RUN_PAGES = Number(process.env.META_API_PAGES_PER_RUN) || 30;
 const TOTAL_PAGES = Number(process.env.META_API_MAX_TOTAL_PAGES) || 100;
 /** One SearchApi collection gets this long (the drain route runs up to 300 s). */
-const SEARCHAPI_JOB_BUDGET_MS = Math.min(Number(process.env.SEARCHAPI_JOB_BUDGET_MS) || 100_000, 120_000);
+// Vercel (60-300 s functions): at most 2 min per slice. A long-running
+// worker (GitHub Actions) may read a whole brand in one go.
+const SEARCHAPI_JOB_BUDGET_MS = Math.min(
+  Number(process.env.SEARCHAPI_JOB_BUDGET_MS) || 100_000,
+  process.env.VERCEL ? 120_000 : 15 * 60_000,
+);
 /** Lease must cover one invocation, not 5 of them. */
 const LEASE_SECONDS =
   isApiSource(metaSource())
@@ -102,6 +107,8 @@ export type CollectionEvent = {
   /** API sources: page token to continue a big brand where the last run stopped. */
   apiCursor?: string | null;
   apiPagesSoFar?: number;
+  /** When the first slice of a chained API scan started (for marking stopped ads). */
+  apiScanStartedAt?: string | null;
 };
 
 type State = {
@@ -217,7 +224,7 @@ export async function collectAdIntelligence(
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   // Billed SearchApi calls for this collection (cost tracking).
   let searchApiCalls = 0;
-  let continuation: { cursor: string; pagesSoFar: number; pageId: string | null } | null = null;
+  let continuation: { cursor: string; pagesSoFar: number; pageId: string | null; scanStartedAt: string } | null = null;
 
   const persist = async (
     incoming: CompetitorAd[],
@@ -353,6 +360,9 @@ export async function collectAdIntelligence(
 
       const deadlineAt = Math.min(options.deadlineAt ?? Number.POSITIVE_INFINITY, Date.now() + SEARCHAPI_JOB_BUDGET_MS);
       const pagesSoFar = Number(data.apiPagesSoFar ?? 0);
+      const apiScanStartedAt = data.apiScanStartedAt ?? new Date().toISOString();
+      // Live ads only (as the browser path); stopped ads are marked below.
+      const apiActiveStatus = phase === "deep" && process.env.ADSPY_DEEP_STATUS === "all" ? "all" : "active";
       const outcome = await api.collect(
         {
           query: data.query,
@@ -361,7 +371,7 @@ export async function collectAdIntelligence(
           mode: data.mode,
           collectionDepth: phase,
           advertiserPageId: scrapePageId,
-          activeStatus: phase === "deep" ? "all" : "active",
+          activeStatus: apiActiveStatus,
           deadlineAt,
           startToken: data.apiCursor ?? null,
           maxPages: Math.max(1, Math.min(PER_RUN_PAGES, TOTAL_PAGES - pagesSoFar)),
@@ -380,7 +390,25 @@ export async function collectAdIntelligence(
         (outcome.stoppedBy === "deadline" || outcome.stoppedBy === "max_pages") &&
         pagesSoFar + outcome.calls < TOTAL_PAGES
       ) {
-        continuation = { cursor: outcome.nextToken, pagesSoFar: pagesSoFar + outcome.calls, pageId: scrapePageId };
+        continuation = { cursor: outcome.nextToken, pagesSoFar: pagesSoFar + outcome.calls, pageId: scrapePageId, scanStartedAt: apiScanStartedAt };
+      }
+
+      // Read the page's whole live list (this slice or a chain of them):
+      // whatever of this page is still flagged live but was not seen has stopped.
+      if (
+        phase === "deep" &&
+        apiActiveStatus === "active" &&
+        scrapePageId &&
+        data.mode === "advertiser" &&
+        outcome.stoppedBy === "exhausted"
+      ) {
+        try {
+          const stopped = await markStoppedAds({ pageId: scrapePageId, platform: data.platform, scanStartedAt: apiScanStartedAt });
+          if (stopped > 0) touchedAdvertisers.add(scrapePageId);
+          console.info("[AdSpy collect] live scan complete", { provider, pageId: scrapePageId, metaTotal: outcome.totalResults, markedStopped: stopped });
+        } catch (error) {
+          console.warn("[AdSpy collect] mark stopped failed", error instanceof Error ? error.message : error);
+        }
       }
       console.info("[AdSpy collect] API source", {
         provider,
@@ -573,7 +601,7 @@ export async function collectAdIntelligence(
         // same row comes back instead of a duplicate (unique run_id + key).
         uniqueKey: `cont:${data.requestId}`,
         requestType: "deep",
-        payload: { ...rest, advertiserPageId: continuation.pageId ?? rest.advertiserPageId ?? null, apiCursor: continuation.cursor, apiPagesSoFar: continuation.pagesSoFar },
+        payload: { ...rest, advertiserPageId: continuation.pageId ?? rest.advertiserPageId ?? null, apiCursor: continuation.cursor, apiPagesSoFar: continuation.pagesSoFar, apiScanStartedAt: continuation.scanStartedAt },
         priority: 90,
         maxAttempts: 2,
       });
