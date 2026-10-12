@@ -8,6 +8,10 @@
  *   AWS_S3_ACCESS_KEY_ID, AWS_S3_SECRET_ACCESS_KEY
  *   optional AWS_S3_PUBLIC_BASE_URL (default https://www.zooptrack.co.in/m/s3)
  *
+ * Any other S3-compatible store (e.g. Backblaze B2, 10 GB free, no card):
+ *   same AWS_S3_* keys plus AWS_S3_ENDPOINT, e.g. s3.eu-central-003.backblazeb2.com
+ *   and AWS_S3_REGION = the region in that endpoint (eu-central-003).
+ *
  * Cloudflare R2 (public bucket):
  *   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET,
  *   R2_PUBLIC_BASE_URL (the bucket's public r2.dev URL or a custom domain)
@@ -21,6 +25,8 @@ export type R2Config = {
   kind?: "r2" | "s3";
   /** AWS region, e.g. ap-south-1. Unused for R2. */
   region?: string;
+  /** S3-compatible host instead of AWS (Backblaze B2 etc.), no scheme. */
+  endpoint?: string;
   accountId: string;
   accessKeyId: string;
   secretAccessKey: string;
@@ -51,6 +57,7 @@ export function s3Config(): R2Config | null {
   return {
     kind: "s3",
     region: env("AWS_S3_REGION") || "ap-south-1",
+    endpoint: env("AWS_S3_ENDPOINT").replace(/^https?:\/\//, "").replace(/\/+$/, "") || undefined,
     accountId: "",
     accessKeyId,
     secretAccessKey,
@@ -121,7 +128,9 @@ export function signR2Request(input: {
   const { config } = input;
   const s3 = config.kind === "s3";
   const region = s3 ? config.region || "ap-south-1" : "auto";
-  const host = s3 ? `${config.bucket}.s3.${region}.amazonaws.com` : `${config.accountId}.r2.cloudflarestorage.com`;
+  const host = s3
+    ? `${config.bucket}.${config.endpoint || `s3.${region}.amazonaws.com`}`
+    : `${config.accountId}.r2.cloudflarestorage.com`;
   const path = s3 ? `/${encodePath(input.key)}` : `/${config.bucket}/${encodePath(input.key)}`;
   const payloadHash = sha256hex(input.body ?? new Uint8Array());
   const extra: Record<string, string> = { ...(input.extraHeaders ?? {}) };

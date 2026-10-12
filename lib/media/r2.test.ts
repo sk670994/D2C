@@ -60,3 +60,15 @@ it("reads private S3 objects with a signed GET", async () => {
   const missing = await getS3Object("ads/ab/y.webp", { config: s3, fetchImpl: (async () => new Response("", { status: 404 })) as unknown as typeof fetch });
   expect(missing).toBeNull();
 });
+
+it("signs S3-compatible hosts (Backblaze B2) with their own endpoint", () => {
+  const signed = signR2Request({
+    config: { kind: "s3", region: "eu-central-003", endpoint: "s3.eu-central-003.backblazeb2.com", accountId: "", accessKeyId: "k", secretAccessKey: "s", bucket: "zooptrack-media", publicBaseUrl: "https://www.zooptrack.co.in/m/s3" },
+    method: "PUT",
+    key: "ads/ab/abc.webp",
+    body: new Uint8Array([1, 2, 3]),
+    contentType: "image/webp",
+  });
+  expect(signed.url).toBe("https://zooptrack-media.s3.eu-central-003.backblazeb2.com/ads/ab/abc.webp");
+  expect(signed.headers.Authorization.includes("/eu-central-003/s3/aws4_request")).toBe(true);
+});
