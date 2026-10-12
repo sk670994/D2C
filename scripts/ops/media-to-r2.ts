@@ -78,16 +78,16 @@ async function moveOne(oldUrl: string): Promise<string | null> {
 }
 
 async function main() {
-  console.log(`${APPLY ? "APPLY" : "DRY RUN"} · Supabase ${BUCKET} -> ${r2!.kind === "s3" ? "AWS S3" : "R2"} ${r2!.bucket} (${r2!.publicBaseUrl})${DELETE_OLD ? " · deleting old copies" : ""}`);
+  console.log(`${APPLY ? "APPLY" : "DRY RUN"} · Supabase ${BUCKET} -> ${r2!.kind === "s3" ? (r2!.endpoint ? `S3 (${r2!.endpoint})` : "AWS S3") : "R2"} ${r2!.bucket} (${r2!.publicBaseUrl})${DELETE_OLD ? " · deleting old copies" : ""}`);
   let lastId = "";
   for (;;) {
-    const { data, error } = await db
+    let query = db
       .from("ad_intelligence_creatives")
       .select("id,thumbnail_url,image_url")
-      .or(`thumbnail_url.like."${prefix}%",image_url.like."${prefix}%"`)
-      .gt("id", lastId)
-      .order("id", { ascending: true })
-      .limit(200);
+      .or(`thumbnail_url.like."${prefix}%",image_url.like."${prefix}%"`);
+    // ids are uuids: "" is not a valid one, so only page after the first batch.
+    if (lastId) query = query.gt("id", lastId);
+    const { data, error } = await query.order("id", { ascending: true }).limit(200);
     if (error) throw new Error(error.message);
     const rows = (data ?? []) as Row[];
     if (!rows.length) break;
@@ -134,7 +134,7 @@ async function main() {
     }
     console.log(`Deleted ${removed} old files from Supabase Storage.`);
   }
-  console.log(`Done: ${uploaded} images (${(bytes / 1_048_576).toFixed(1)} MB) now on ${r2!.kind === "s3" ? "AWS S3" : "R2"}; ${failed} ads failed (re-run to retry).`);
+  console.log(`Done: ${uploaded} images (${(bytes / 1_048_576).toFixed(1)} MB) now on ${r2!.kind === "s3" ? (r2!.endpoint ? `S3 (${r2!.endpoint})` : "AWS S3") : "R2"}; ${failed} ads failed (re-run to retry).`);
 }
 
 main().catch((error) => {
