@@ -3,16 +3,15 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { SeasonView } from "@/components/seo/SeasonView";
-import { findSeason, SEASONS } from "@/lib/seo/seasons";
+import { findSeason } from "@/lib/seo/seasons";
 
-export const dynamicParams = false;
+// Rendered on first visit, then cached (ISR): the build never waits on the database.
+export const dynamicParams = true;
 // Live ad counts: rebuilt in the background at most every 6 hours.
 export const revalidate = 21600;
 export const maxDuration = 60;
 
-export function generateStaticParams() {
-  return SEASONS.map((s) => ({ slug: s.slug }));
-}
+export function generateStaticParams() { return []; }
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;

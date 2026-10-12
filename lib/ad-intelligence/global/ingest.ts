@@ -85,7 +85,8 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
   }
 
   if (brandRowsByName.size) {
-    const { error } = await client.from("ad_intelligence_brands").upsert(Array.from(brandRowsByName.values()), { onConflict: "normalized_name" });
+    // Insert new brands only: rewriting the same rows every batch bloated the table.
+    const { error } = await client.from("ad_intelligence_brands").upsert(Array.from(brandRowsByName.values()), { onConflict: "normalized_name", ignoreDuplicates: true });
     if (error) throw new Error(`Brand upsert failed: ${error.message}`);
   }
 
@@ -112,6 +113,15 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
   );
 
   let existingCreativeHistory: Array<{
+    id: string;
+    is_currently_active: boolean | null;
+    advertiser_name: string | null;
+    creative_type: string | null;
+    primary_text: string | null;
+    headline: string | null;
+    description: string | null;
+    call_to_action: string | null;
+    landing_page_url: string | null;
     platform: AdPlatform;
     external_ad_key: string;
     first_seen_at: string | null;
@@ -128,7 +138,7 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
     } = await client
       .from("ad_intelligence_creatives")
       .select(
-        "platform,external_ad_key,first_seen_at,last_seen_at,advertiser_id,image_url,thumbnail_url",
+        "id,is_currently_active,advertiser_name,creative_type,primary_text,headline,description,call_to_action,landing_page_url,platform,external_ad_key,first_seen_at,last_seen_at,advertiser_id,image_url,thumbnail_url",
       )
       .in(
         "external_ad_key",
@@ -175,6 +185,76 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
         ],
       ),
     );
+
+  /*
+   * Unchanged ads: a live ad we already hold with the same text, landing page
+   * and status only needs "seen again" (last_seen_at + today's observation).
+   * Rewriting the full row, its markets, languages and creators every night
+   * multiplied database writes ~6x and timed out the Free plan (12 Oct).
+   */
+  const same = (a: string | null | undefined, b: string | null | undefined) => (a ?? "").trim() === (b ?? "").trim();
+  const unchanged: Array<{ ad: CompetitorAd; id: string }> = [];
+  const changed: CompetitorAd[] = [];
+  for (const ad of ads) {
+    const row = existingCreativeHistory.find((r) => r.platform === ad.platform && r.external_ad_key === buildExternalKey(ad));
+    const live = ad.isActive ?? true;
+    if (
+      row &&
+      live &&
+      row.is_currently_active === true &&
+      same(row.advertiser_name, ad.advertiserName || "Unknown advertiser") &&
+      same(row.creative_type, ad.creativeType ?? "unknown") &&
+      same(row.primary_text, ad.primaryText) &&
+      same(row.headline, ad.headline) &&
+      same(row.description, ad.description) &&
+      same(row.call_to_action, ad.callToAction) &&
+      same(row.landing_page_url, ad.landingPage) &&
+      (row.advertiser_id ?? null) === (ad.advertiserId ?? row.advertiser_id ?? null)
+    ) {
+      unchanged.push({ ad, id: row.id });
+    } else {
+      changed.push(ad);
+    }
+  }
+
+  let seenAgain = 0;
+  if (unchanged.length) {
+    const ids = unchanged.map((u) => u.id);
+    for (let i = 0; i < ids.length; i += 200) {
+      const { error } = await client
+        .from("ad_intelligence_creatives")
+        .update({ last_seen_at: now, updated_at: now })
+        .in("id", ids.slice(i, i + 200));
+      if (error) throw new Error(`Creative seen-again update failed: ${error.message}`);
+    }
+    const seenRows = unchanged.map(({ ad, id }) => {
+      const languages = detectLanguages([ad.headline, ad.primaryText, ad.description, ad.productName, ad.offer].filter(Boolean).join(" "));
+      const geographies = extractGeography(ad);
+      const primaryGeo = geographies[0] ?? null;
+      const country = ad.country?.trim().toUpperCase() ?? primaryGeo?.countryCode ?? null;
+      const region = primaryGeo?.regionName ?? null;
+      const primaryLanguage = languages[0]?.code ?? null;
+      const publisherPlatform = ad.publisherPlatforms?.[0] ?? null;
+      return {
+        creative_id: id,
+        observed_at: now,
+        observation_day: day,
+        observation_key: observationKey({ creativeId: id, country, region, language: primaryLanguage, publisherPlatform, day }),
+        status: "active",
+        country,
+        region,
+        language: primaryLanguage,
+        publisher_platform: publisherPlatform,
+        metadata: { languages, geographies },
+      };
+    });
+    // Once per ad per day: a second scan the same day changes nothing.
+    const { error } = await client.from("ad_intelligence_observations").upsert(seenRows, { onConflict: "observation_key", ignoreDuplicates: true });
+    if (error) throw new Error(`Observation upsert failed: ${error.message}`);
+    seenAgain = unchanged.length;
+  }
+  if (!changed.length) return { insertedOrUpdated: seenAgain, observations: seenAgain, languages: 0, markets: 0 };
+  ads = changed;
 
   /*
    * Ads we already hold keep their stored image: point them at it so the
@@ -444,7 +524,7 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
 
   await upsertAdvertiserIndex(client, ads);
 
-  return { insertedOrUpdated: creativeRows.length, observations: observationRows.length, languages: languageRows.length, markets: marketRows.length };
+  return { insertedOrUpdated: creativeRows.length + seenAgain, observations: observationRows.length + seenAgain, languages: languageRows.length, markets: marketRows.length };
 }
 
 /**
