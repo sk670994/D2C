@@ -139,6 +139,7 @@ async function main() {
   if (!only.size) try {
     const tracked = await refreshTrackedAdSpy({ depth: "deep", minIntervalMs: Math.min(12 * 60 * 60_000, RECENT_MS) });
     await drain();
+    await copyMedia();
     stats.tracked = tracked.dispatched;
     console.log(
       `tracked brands refreshed: ${tracked.dispatched}/${tracked.targets}`,
@@ -147,6 +148,46 @@ async function main() {
   } catch (error) {
     stats.errors += 1;
     console.error("tracked refresh failed:", error instanceof Error ? error.message : error);
+  }
+
+  // 1b) Brands users looked up in the last day. On the site they got a quick
+  //     first look (or were deferred by the credit guard); read them in full now.
+  if (!only.size) try {
+    const since = new Date(Date.now() - 26 * 60 * 60_000).toISOString();
+    const { data, error } = await createGlobalServiceClient()
+      .from("ad_intelligence_collection_jobs")
+      .select("query,country,collection_key,user_id")
+      .eq("platform", "meta")
+      .eq("mode", "advertiser")
+      .gte("last_requested_at", since)
+      .neq("user_id", userId)
+      .order("last_requested_at", { ascending: false })
+      .limit(200);
+    if (error) throw new Error(error.message);
+    let done = 0;
+    for (const row of (data ?? []) as Array<{ query: string; country: string; collection_key: string; user_id: string | null }>) {
+      if (timeLeft() < 4 * 60_000) break;
+      const pageId = /\|page:(\d+)$/.exec(row.collection_key)?.[1] ?? null;
+      const result = await startAdSpyCollection({
+        userId: row.user_id ?? userId,
+        query: row.query,
+        country: row.country || "IN",
+        platform: "meta",
+        mode: "advertiser",
+        pageId,
+        minIntervalMs: 0,
+        reason: "scheduled",
+        depth: "deep",
+      });
+      if (result.outcome !== "dispatched") continue;
+      await drain();
+      await copyMedia();
+      done += 1;
+    }
+    console.log(`user look-ups read in full: ${done}/${(data ?? []).length}`);
+  } catch (error) {
+    stats.errors += 1;
+    console.error("user look-ups failed:", error instanceof Error ? error.message : error);
   }
 
   // 2) Seed list, rotated daily so every night starts somewhere new.

@@ -229,6 +229,8 @@ export async function POST(
       message:
         result.outcome === "recently_collected"
           ? "This advertiser was refreshed a few minutes ago. Showing the latest indexed data."
+          : result.outcome === "deferred"
+            ? "Live look-ups for today are used up. This brand is queued for tonight's full collection; every ad will be here by tomorrow morning."
           : result.outcome === "running_for_another_request"
             ? "A collection for this advertiser is already running. Search again in a minute to see new ads."
             : null,

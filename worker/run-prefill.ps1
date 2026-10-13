@@ -46,6 +46,8 @@ if (-not $env:SUPABASE_SERVICE_ROLE_KEY) {
 # Worker settings for a PC (these win over worker\.env).
 $env:ADSPY_BROWSER = "playwright"
 $env:ADSPY_COLLECTOR = "worker"
+# Always the free browser collector here, never ScrapeCreators credits.
+$env:ADSPY_META_SOURCE = "playwright"
 $env:NODE_ENV = "production"
 # "server-only" is bundled inside Next.js, not installed as a package, so the
 # worker (plain Node) cannot find it. Give Node an empty stand-in, exactly as

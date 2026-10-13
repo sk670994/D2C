@@ -18,7 +18,9 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const result = await refreshTrackedAdSpy();
+    // ADSPY_NIGHTLY_ON_PC=1: the PC collects tracked brands in full each
+    // night for free, so this cron must not spend ScrapeCreators credits.
+    const result = await refreshTrackedAdSpy({ skipDispatch: process.env.ADSPY_NIGHTLY_ON_PC === "1" });
 
     return Response.json({
       success: true,
