@@ -18,6 +18,7 @@ import {
   type DurableRun,
 } from "@/lib/ad-intelligence/durable-run";
 import { dispatchAdSpyCollection, getAdSpyDispatchMode } from "./dispatch-adspy-collection";
+import { apiMinIntervalMs, dailyCreditCap, DEFERRED_MESSAGE, paidMetaSourceActive } from "@/lib/ad-intelligence/credit-guard";
 
 /**
  * The ONE entry point that starts an AdSpy collection.
@@ -74,7 +75,9 @@ export type StartCollectionResult = {
     | "dispatched"
     | "already_running"
     | "recently_collected"
-    | "running_for_another_request";
+    | "running_for_another_request"
+    /** Paid live-fetch budget used up: the PC collects this brand tonight. */
+    | "deferred";
   collectionKey: string;
 };
 
@@ -239,8 +242,12 @@ export async function startAdSpyCollection(input: {
     }
   }
 
+  // Paid source (credits): user searches get a quick first look at most,
+  // within a daily budget; the free PC collector reads the full library.
+  const creditGuarded = paidMetaSourceActive() && (input.reason === "user" || input.reason === "track");
+
   // 4. Respect the minimum interval between collections.
-  const minInterval = Math.max(0, input.minIntervalMs ?? 0);
+  const minInterval = Math.max(0, input.minIntervalMs ?? 0, creditGuarded ? apiMinIntervalMs() : 0);
   const lastActivityAt = Math.max(
     new Date(job.lastRequestedAt).getTime() || 0,
     job.completedAt ? new Date(job.completedAt).getTime() || 0 : 0,
@@ -254,6 +261,25 @@ export async function startAdSpyCollection(input: {
     Date.now() - lastActivityAt < minInterval
   ) {
     return { job, run: ownRun, dispatched: false, outcome: "recently_collected", collectionKey };
+  }
+
+  // 4b. Credit budget: site-wide daily ceiling, then the user's daily allowance.
+  let depth = input.depth ?? defaultCollectionDepth();
+  if (creditGuarded) {
+    if (process.env.ADSPY_API_USER_DEPTH !== "deep") depth = "quick";
+    const { apiCreditsUsedToday, takeUserBrandSlot } = await import("@/lib/ad-intelligence/credit-guard-server");
+    const used = await apiCreditsUsedToday();
+    const allowed = used < dailyCreditCap() && (await takeUserBrandSlot(input.userId));
+    if (!allowed) {
+      console.info("[AdSpy credits] deferred to the night run", { query, pageId, creditsUsedToday: used });
+      job = await updateCollectionJob(job.id, {
+        status: "stale",
+        stage: "stale",
+        errorMessage: DEFERRED_MESSAGE,
+        lastRequestedAt: new Date().toISOString(),
+      });
+      return { job, run: ownRun, dispatched: false, outcome: "deferred", collectionKey };
+    }
   }
 
   // 5. Start a fresh run + request and hand it to the worker.
@@ -287,7 +313,7 @@ export async function startAdSpyCollection(input: {
     platform: job.platform,
     mode: job.mode,
     collectionKey,
-    collectionDepth: input.depth ?? defaultCollectionDepth(),
+    collectionDepth: depth,
     advertiserPageId: pageId,
     runId: run.id,
   };

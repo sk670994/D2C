@@ -2,6 +2,7 @@
 
 import type { MetaScrapeOutcome } from "@/lib/ad-intelligence/providers/deep-meta";
 import { markStoppedAds } from "@/lib/ad-intelligence/global/mark-stopped";
+import { dailyCreditCap, pagesAllowed, quickPages } from "@/lib/ad-intelligence/credit-guard";
 
 import type { AdPlatform, CompetitorAd } from "@/lib/ad-intelligence/types";
 import type {
@@ -353,9 +354,23 @@ export async function collectAdIntelligence(
               resolve: m.resolvePageViaSearchApi,
             }));
 
+      // Credit guard: quick = Meta's first pages only; never past the day's budget.
+      const { apiCreditsUsedToday } = await import("@/lib/ad-intelligence/credit-guard-server");
+      const creditsUsedToday = await apiCreditsUsedToday();
+      const maxPages = pagesAllowed({
+        phase,
+        perRunPages: PER_RUN_PAGES,
+        totalPagesLeft: TOTAL_PAGES - Number(data.apiPagesSoFar ?? 0),
+        creditsUsedToday,
+        dailyCap: dailyCreditCap(),
+        quickPages: quickPages(),
+      });
+
       // Brand name -> one exact Meta page (1 call). Ambiguous names stay a
       // name search, filtered to advertisers carrying that name.
-      if (data.mode === "advertiser" && !scrapePageId) {
+      let resolveCalls = 0;
+      if (data.mode === "advertiser" && !scrapePageId && maxPages > 0) {
+        resolveCalls = 1;
         const page = await api.resolve(data.query, data.country).catch(() => null);
         if (page) {
           scrapePageId = page.pageId;
@@ -365,10 +380,14 @@ export async function collectAdIntelligence(
 
       const deadlineAt = Math.min(options.deadlineAt ?? Number.POSITIVE_INFINITY, Date.now() + SEARCHAPI_JOB_BUDGET_MS);
       const pagesSoFar = Number(data.apiPagesSoFar ?? 0);
+
       const apiScanStartedAt = data.apiScanStartedAt ?? new Date().toISOString();
       // Live ads only (as the browser path); stopped ads are marked below.
       const apiActiveStatus = phase === "deep" && process.env.ADSPY_DEEP_STATUS === "all" ? "all" : "active";
-      const outcome = await api.collect(
+      if (maxPages <= 0) console.info("[AdSpy credits] daily budget used; skipping paid fetch", { query: data.query, creditsUsedToday });
+      const outcome = maxPages <= 0
+        ? { calls: 0, ads: 0, totalResults: null, stoppedBy: "max_pages" as const, ms: 0, nextToken: null }
+        : await api.collect(
         {
           query: data.query,
           country: data.country,
@@ -379,7 +398,7 @@ export async function collectAdIntelligence(
           activeStatus: apiActiveStatus,
           deadlineAt,
           startToken: data.apiCursor ?? null,
-          maxPages: Math.max(1, Math.min(PER_RUN_PAGES, TOTAL_PAGES - pagesSoFar)),
+          maxPages,
           // Quick refresh: stop once pages bring nothing new (saves credits).
           ...(phase === "quick" && scrapePageId ? { isKnown: await knownAdIds(scrapePageId), stopAfterKnownPages: 2 } : {}),
         },
@@ -387,7 +406,7 @@ export async function collectAdIntelligence(
           await persist(batch);
         },
       );
-      searchApiCalls = outcome.calls;
+      searchApiCalls = outcome.calls + resolveCalls;
       // Big brand, time or page budget used up: continue in a fresh run.
       if (
         phase === "deep" &&
