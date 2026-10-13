@@ -255,9 +255,14 @@ export async function collectAdIntelligence(
         offset + CHUNK_SIZE,
       );
 
+      const chunkStarted = Date.now();
       const result = await processAdChunk({
         ads: chunk,
       });
+      const chunkMs = Date.now() - chunkStarted;
+      if (chunkMs > 20_000) {
+        console.warn("[AdSpy persist] slow save", { ads: chunk.length, seconds: Math.round(chunkMs / 1000) });
+      }
 
       state.normalizedAds += chunk.length;
       state.persistedAds += Number(
