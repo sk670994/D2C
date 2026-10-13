@@ -85,6 +85,10 @@ $env:ADSPY_PREFILL_RECENT_HOURS = "$RecentHours"
 $env:ADSPY_PREFILL_MINUTES = "$Minutes"
 $env:ADSPY_WORKER_BUDGET_MS = "2400000"  # Kapiva (~1,400 live ads) needs ~30 min
 $env:ADSPY_DEEP_MAX_SCROLLS = "360"
+# Save ads first, copy images right after each brand (not inside every save).
+$env:ADSPY_STORE_MEDIA = "1"
+$env:ADSPY_DEFER_MEDIA = "1"
+$env:ADSPY_MEDIA_CONCURRENCY = "12"
 
 # Keep the PC awake while it runs (display may sleep).
 Add-Type -Namespace Zt -Name Power -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint esFlags);'

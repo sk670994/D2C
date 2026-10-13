@@ -59,6 +59,10 @@ function observationKey(input: { creativeId: string; country: string | null; reg
 
 function deferMediaCopy(): boolean {
   if (process.env.ADSPY_MEDIA_INLINE === "1") return false;
+  // PC worker: save ads first, copy images in a separate pass afterwards
+  // (scripts/adspy-prefill.ts). Inline copying held each 25-ad save for
+  // minutes and Kapiva took 139 min on 13 Oct.
+  if (process.env.ADSPY_DEFER_MEDIA === "1") return true;
   return process.env.ADSPY_COLLECTOR === "searchapi";
 }
 

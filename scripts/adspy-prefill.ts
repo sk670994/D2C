@@ -22,6 +22,7 @@ import { startAdSpyCollection } from "@/lib/ad-intelligence/jobs/start-collectio
 import { refreshTrackedAdSpy } from "@/lib/ad-intelligence/jobs/refresh-tracked-ad-spy";
 import { normalizeAdvertiserName, searchMetaPages } from "@/lib/ad-intelligence/global/meta-page-search";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
+import { backfillAdMedia } from "@/lib/ad-intelligence/jobs/media-backfill";
 
 type Page = { pageId: string; name: string; verification?: string | null };
 
@@ -78,6 +79,27 @@ async function drain() {
 }
 
 const timeLeft = () => budgetMs - (Date.now() - started);
+
+/**
+ * With ADSPY_DEFER_MEDIA=1 ads are saved with Meta's image links; copy those
+ * images to our storage now, while the links still work. Separate from the
+ * scrape so a slow upload never holds a save (or the run's heartbeat).
+ */
+async function copyMedia() {
+  if (process.env.ADSPY_DEFER_MEDIA !== "1") return;
+  const t0 = Date.now();
+  const deadlineAt = Date.now() + Math.max(0, Math.min(20 * 60_000, timeLeft() - 4 * 60_000));
+  let copied = 0;
+  while (Date.now() < deadlineAt) {
+    const moved = await backfillAdMedia({ limit: 200, deadlineAt }).catch((error) => {
+      console.error("  media copy failed:", error instanceof Error ? error.message : error);
+      return 0;
+    });
+    copied += moved;
+    if (moved < 5) break; // nothing (or only dead links) left
+  }
+  if (copied) console.log(`  images copied: ${copied} in ${mins(Date.now() - t0)} min`);
+}
 const mins = (ms: number) => (ms / 60_000).toFixed(1);
 
 /**
@@ -163,6 +185,7 @@ async function main() {
     await drain();
     stats.collected += 1;
     console.log(`+ ${brand} (${page?.pageId ?? "by name"}) in ${mins(Date.now() - t0)} min`);
+    await copyMedia();
   };
 
   let attempted = 0;

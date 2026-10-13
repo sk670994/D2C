@@ -22,7 +22,7 @@ import { createGlobalServiceClient } from "./supabase";
 const BUCKET = "ad-media";
 const MAX_BYTES = 5 * 1024 * 1024;
 const TIMEOUT_MS = 8_000;
-const CONCURRENCY = 6;
+const CONCURRENCY = Math.max(1, Math.min(24, Number(process.env.ADSPY_MEDIA_CONCURRENCY) || 6));
 
 let bucketReady: Promise<boolean> | null = null;
 
