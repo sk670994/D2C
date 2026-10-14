@@ -35,6 +35,10 @@ function getEnv(
  *   cannot interfere with the global dataset queries.
  */
 const DB_FETCH_TIMEOUT_MS = Number(process.env.DB_FETCH_TIMEOUT_MS) || 25_000;
+const DB_FETCH_RETRIES = Math.max(0, Math.min(6, Number(process.env.DB_FETCH_RETRIES) || 0));
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** 2 s, 5 s, 10 s, 20 s, 30 s ... */
+const retryDelayMs = (attempt: number) => [2_000, 5_000, 10_000, 20_000, 30_000, 30_000][attempt] ?? 30_000;
 
 export function createGlobalServiceClient(): SupabaseClient {
   const url =
@@ -105,16 +109,33 @@ export function createGlobalServiceClient(): SupabaseClient {
       // No database call may hang a function until Vercel kills it (seen:
       // /api/billing and /api/health at 300 s while the DB was unhealthy).
       // Callers that pass their own signal keep it; otherwise cap at 25 s.
-      const signal = init?.signal ?? AbortSignal.timeout(DB_FETCH_TIMEOUT_MS);
-
-      return fetch(
-        request ?? input,
-        {
-          ...init,
-          headers,
-          signal,
-        },
-      );
+      // PC worker (DB_FETCH_RETRIES, set by run-prefill.ps1): ride out a
+      // dropped Wi-Fi / a busy database instead of failing the whole brand
+      // (13-14 Oct: "fetch failed" bursts killed several collections).
+      // Retries only failures where the database did not answer: network
+      // errors and 502/503/504. Vercel keeps the default of no retries.
+      for (let attempt = 0; ; attempt += 1) {
+        const signal = init?.signal ?? AbortSignal.timeout(DB_FETCH_TIMEOUT_MS);
+        try {
+          const response = await fetch(
+            request ?? input,
+            {
+              ...init,
+              headers,
+              signal,
+            },
+          );
+          if (attempt < DB_FETCH_RETRIES && [502, 503, 504].includes(response.status)) {
+            await sleep(retryDelayMs(attempt));
+            continue;
+          }
+          return response;
+        } catch (error) {
+          const network = error instanceof TypeError; // "fetch failed"
+          if (!network || attempt >= DB_FETCH_RETRIES || init?.signal?.aborted) throw error;
+          await sleep(retryDelayMs(attempt));
+        }
+      }
     };
 
   return createClient(
