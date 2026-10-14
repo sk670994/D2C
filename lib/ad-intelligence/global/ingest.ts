@@ -249,7 +249,9 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
         region,
         language: primaryLanguage,
         publisher_platform: publisherPlatform,
-        metadata: { languages, geographies },
+        // Languages/geographies already live in their own tables; a copy on
+        // every daily observation row only grew the database (14 Oct).
+        metadata: {},
       };
     });
     // Once per ad per day: a second scan the same day changes nothing.
@@ -435,7 +437,9 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
       region,
       language: primaryLanguage,
       publisher_platform: publisherPlatform,
-      metadata: { languages, geographies },
+      // Languages/geographies already live in their own tables; a copy on
+        // every daily observation row only grew the database (14 Oct).
+        metadata: {},
     });
 
     for (const geo of geographies) {
