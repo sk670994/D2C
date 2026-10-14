@@ -91,6 +91,8 @@ $env:ADSPY_DEEP_MAX_SCROLLS = "360"
 $env:ADSPY_STORE_MEDIA = "1"
 $env:ADSPY_DEFER_MEDIA = "1"
 $env:ADSPY_MEDIA_CONCURRENCY = "12"
+# Ride out short Wi-Fi drops / database hiccups (network errors and 502-504 only).
+$env:DB_FETCH_RETRIES = "4"
 
 # Keep the PC awake while it runs (display may sleep).
 Add-Type -Namespace Zt -Name Power -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint esFlags);'

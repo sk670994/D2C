@@ -31,22 +31,27 @@ $logDir = Join-Path $env:LOCALAPPDATA "zooptrack\logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
 # Small wrapper: pull the latest code, run the collection, keep a dated log.
-$runner = Join-Path $logDir "nightly-run.ps1"
+$runner = Join-Path $logDir "nightly-run.cmd"
+# A .cmd wrapper: cmd's own ">>" writes plain UTF-8 (PowerShell's "*>>"
+# mixed UTF-8 and UTF-16 and split every line) and it needs no visible
+# window to keep running. The first line is written before anything else,
+# so a run that fails to start still leaves a trace.
 @"
-`$ErrorActionPreference = 'Continue'
-Set-Location '$root'
-`$log = Join-Path '$logDir' ("prefill-" + (Get-Date -Format 'yyyy-MM-dd') + ".log")
-"=== start `$(Get-Date -Format s) ===" | Out-File -FilePath `$log -Append -Encoding utf8
-git checkout main *>> `$log
-git pull --ff-only *>> `$log
-# RecentHours 20: every brand not collected in the last 20 h is read again.
-powershell -ExecutionPolicy Bypass -File worker\run-prefill.ps1 -RecentHours 20 -Minutes $Minutes *>> `$log
-"=== end `$(Get-Date -Format s) ===" | Out-File -FilePath `$log -Append -Encoding utf8
-# Keep 30 days of logs.
-Get-ChildItem '$logDir' -Filter 'prefill-*.log' | Where-Object { `$_.LastWriteTime -lt (Get-Date).AddDays(-30) } | Remove-Item -ErrorAction SilentlyContinue
-"@ | Set-Content -Path $runner -Encoding utf8
+@echo off
+cd /d "$root"
+for /f %%d in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd"') do set D=%%d
+set LOG=$logDir\prefill-%D%.log
+echo === start %DATE% %TIME% ===>> "%LOG%"
+git checkout main >> "%LOG%" 2>&1
+git pull --ff-only >> "%LOG%" 2>&1
+rem RecentHours 20: every brand not collected in the last 20 h is read again.
+powershell -NoProfile -ExecutionPolicy Bypass -File worker\run-prefill.ps1 -RecentHours 20 -Minutes $Minutes >> "%LOG%" 2>&1
+echo === end %DATE% %TIME% exit %ERRORLEVEL% ===>> "%LOG%"
+forfiles /p "$logDir" /m prefill-*.log /d -30 /c "cmd /c del @path" >nul 2>&1
+"@ | Set-Content -Path $runner -Encoding ascii
+Remove-Item (Join-Path $logDir "nightly-run.ps1") -ErrorAction SilentlyContinue
 
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$runner`"" -WorkingDirectory $root
+$action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$runner`"" -WorkingDirectory $root
 $trigger = New-ScheduledTaskTrigger -Daily -At $Time
 $settings = New-ScheduledTaskSettingsSet `
   -WakeToRun `
@@ -62,4 +67,5 @@ Write-Host ""
 Write-Host "Done. '$name' runs every night at $Time." -ForegroundColor Green
 Write-Host "Logs: $logDir"
 Write-Host "Run it now to test:  Start-ScheduledTask -TaskName '$name'"
+Write-Host "Never run long collections inside VS Code: it restarts for updates and kills them."
 Write-Host "Missed nights (PC was off) run as soon as the PC is on again."

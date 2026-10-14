@@ -263,6 +263,10 @@ export async function collectAdIntelligence(
       const chunkMs = Date.now() - chunkStarted;
       if (chunkMs > 20_000) {
         console.warn("[AdSpy persist] slow save", { ads: chunk.length, seconds: Math.round(chunkMs / 1000) });
+        // Worker only: the database is struggling (Disk IO budget). Pause as
+        // long as the save took (max 60 s) so it can recover, instead of
+        // pushing it into timeouts.
+        if (!IS_SERVERLESS) await new Promise((resolve) => setTimeout(resolve, Math.min(60_000, chunkMs)));
       }
 
       state.normalizedAds += chunk.length;
