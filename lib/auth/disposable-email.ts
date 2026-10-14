@@ -8,6 +8,7 @@
  */
 
 export const DISPOSABLE_DOMAINS: ReadonlySet<string> = new Set([
+  "meinvr.com", // slipped through on 14 Oct 2026
   "mailinator.com", "mailinator.net", "mailinator2.com", "notmailinator.com", "binkmail.com", "bobmail.info", "chammy.info",
   "suremail.info", "thisisnotmyrealemail.com", "veryrealemail.com", "zippymail.info", "reallymymail.com",
   "10minutemail.com", "10minutemail.net", "10minutemail.co.uk", "10minutemail.de", "10minemail.com", "20minutemail.com",

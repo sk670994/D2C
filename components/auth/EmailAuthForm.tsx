@@ -73,15 +73,15 @@ export function EmailAuthForm({ nextPath = "/today" }: { nextPath?: string }) {
     setMessage("");
 
     try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.signInWithOtp({
-        email: normalizedEmail,
-        options: {
-          shouldCreateUser: mode === "signup",
-        },
+      // Server-side: checks the email (throwaway domains, no mail server)
+      // before the code is sent and an account is created.
+      const response = await fetch("/api/auth/send-otp", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: normalizedEmail, mode }),
       });
-
-      if (error) throw error;
+      const result = (await response.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!response.ok || !result.ok) throw new Error(result.error || "Unable to send verification code.");
 
       setEmail(normalizedEmail);
       setOtp("");
