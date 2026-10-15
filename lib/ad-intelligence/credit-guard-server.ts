@@ -30,7 +30,7 @@ export async function apiCreditsUsedToday(): Promise<number> {
  * Counts one live brand fetch against the user's daily allowance.
  * Returns false when the allowance is used up (the brand waits for the night run).
  */
-export async function takeUserBrandSlot(userId: string): Promise<boolean> {
+export async function takeUserBrandSlot(userId: string): Promise<boolean | "trial_limit"> {
   let email: string | null = null;
   try {
     const { data } = await createGlobalServiceClient().auth.admin.getUserById(userId);
@@ -41,7 +41,12 @@ export async function takeUserBrandSlot(userId: string): Promise<boolean> {
   const entitlement = await getEntitlement(userId, email).catch(() => null);
   const limit = entitlement ? userBrandLimit(entitlement) : 1;
   if (!Number.isFinite(limit)) return true;
-  if (limit <= 0) return false;
-  const result = await checkSharedRateLimit(`adspy-live:${userId}:${istDayKey()}`, limit, 86_400_000);
+  if (limit <= 0) return entitlement?.plan === "trial" ? "trial_limit" : false;
+  // Free trial: 3 brand look-ups in total for the whole trial (not per day).
+  const result =
+    entitlement?.plan === "trial"
+      ? await checkSharedRateLimit(`adspy-live:${userId}:trial`, limit, 8 * 86_400_000)
+      : await checkSharedRateLimit(`adspy-live:${userId}:${istDayKey()}`, limit, 86_400_000);
+  if (!result.allowed && entitlement?.plan === "trial") return "trial_limit";
   return result.allowed;
 }

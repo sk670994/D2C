@@ -45,7 +45,7 @@ export function apiMinIntervalMs(env: Env = process.env): number {
   return num(env.ADSPY_API_MIN_INTERVAL_HOURS, 12) * 60 * 60_000;
 }
 
-/** New brands one user may fetch live per IST day. */
+/** New brands one user may fetch live: per IST day on paid plans, in total for the whole free trial. */
 export const NEW_BRANDS_PER_DAY: Record<PlanKey, number> = {
   trial: 3,
   starter: 5,
@@ -55,8 +55,8 @@ export const NEW_BRANDS_PER_DAY: Record<PlanKey, number> = {
 
 export function userBrandLimit(entitlement: { plan: PlanKey; admin: boolean; active: boolean }): number {
   if (entitlement.admin) return Number.POSITIVE_INFINITY;
-  // Trial ended / unpaid: one live look a day, the rest waits for the night run.
-  if (!entitlement.active) return 1;
+  // Trial ended / unpaid: no live look-ups.
+  if (!entitlement.active) return 0;
   return NEW_BRANDS_PER_DAY[entitlement.plan] ?? NEW_BRANDS_PER_DAY.trial;
 }
 
@@ -90,3 +90,6 @@ export function pagesAllowed(input: {
 
 export const DEFERRED_MESSAGE =
   "Queued for tonight's full collection. Every ad of this brand will be here by tomorrow morning.";
+
+export const TRIAL_LIMIT_MESSAGE =
+  "Your free trial includes 3 brand look-ups, and you've used them. Choose a plan to look up more brands.";

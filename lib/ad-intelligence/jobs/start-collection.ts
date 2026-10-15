@@ -18,7 +18,7 @@ import {
   type DurableRun,
 } from "@/lib/ad-intelligence/durable-run";
 import { dispatchAdSpyCollection, getAdSpyDispatchMode } from "./dispatch-adspy-collection";
-import { apiMinIntervalMs, dailyCreditCap, DEFERRED_MESSAGE, paidMetaSourceActive } from "@/lib/ad-intelligence/credit-guard";
+import { apiMinIntervalMs, dailyCreditCap, DEFERRED_MESSAGE, paidMetaSourceActive, TRIAL_LIMIT_MESSAGE } from "@/lib/ad-intelligence/credit-guard";
 
 /**
  * The ONE entry point that starts an AdSpy collection.
@@ -77,7 +77,9 @@ export type StartCollectionResult = {
     | "recently_collected"
     | "running_for_another_request"
     /** Paid live-fetch budget used up: the PC collects this brand tonight. */
-    | "deferred";
+    | "deferred"
+    /** Free trial's 3 brand look-ups are used up. */
+    | "trial_limit";
   collectionKey: string;
 };
 
@@ -269,8 +271,13 @@ export async function startAdSpyCollection(input: {
     if (process.env.ADSPY_API_USER_DEPTH !== "deep") depth = "quick";
     const { apiCreditsUsedToday, takeUserBrandSlot } = await import("@/lib/ad-intelligence/credit-guard-server");
     const used = await apiCreditsUsedToday();
-    const allowed = used < dailyCreditCap() && (await takeUserBrandSlot(input.userId));
-    if (!allowed) {
+    const slot = used < dailyCreditCap() ? await takeUserBrandSlot(input.userId) : false;
+    if (slot === "trial_limit") {
+      // Trial look-ups used up: not queued for the night run either.
+      job = await updateCollectionJob(job.id, { status: "stale", stage: "stale", errorMessage: TRIAL_LIMIT_MESSAGE });
+      return { job, run: ownRun, dispatched: false, outcome: "trial_limit", collectionKey };
+    }
+    if (!slot) {
       console.info("[AdSpy credits] deferred to the night run", { query, pageId, creditsUsedToday: used });
       job = await updateCollectionJob(job.id, {
         status: "stale",
