@@ -1,7 +1,9 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import type { CalculatedReport } from "@/lib/types/domain";
 import { generateInsights } from "@/lib/llm/insights";
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
+import { checkSharedRateLimit } from "@/lib/rate-limit";
+import { takeAiCall } from "@/lib/ai/limits-server";
 
 type RequestBody = CalculatedReport & {
   adMetrics?: unknown;
@@ -24,6 +26,22 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
+      );
+    }
+
+    // Burst guard, then the daily AI allowance by plan (shared with ZWIRK).
+    const burst = await checkSharedRateLimit(`insights:${user.id}`, 10, 600_000);
+    if (!burst.allowed) {
+      return NextResponse.json(
+        { error: "Too many insight requests. Try again in a few minutes." },
+        { status: 429, headers: { "Retry-After": String(burst.retryAfterSeconds) } }
+      );
+    }
+    const aiBlock = await takeAiCall(user.id, user.email ?? null);
+    if (aiBlock) {
+      return NextResponse.json(
+        { error: aiBlock.message, code: "ai_daily_limit" },
+        { status: 429, headers: { "Retry-After": String(aiBlock.retryAfterSeconds) } }
       );
     }
 
