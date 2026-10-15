@@ -24,7 +24,7 @@ describe("credit guard", () => {
   it("limits live brands per user by plan", () => {
     expect(userBrandLimit({ plan: "trial", admin: false, active: true })).toBe(3);
     expect(userBrandLimit({ plan: "growth", admin: false, active: true })).toBe(15);
-    expect(userBrandLimit({ plan: "trial", admin: false, active: false })).toBe(1);
+    expect(userBrandLimit({ plan: "trial", admin: false, active: false })).toBe(0);
     expect(userBrandLimit({ plan: "trial", admin: true, active: true })).toBe(Number.POSITIVE_INFINITY);
   });
 
