@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { checkSharedRateLimit } from "@/lib/rate-limit";
+import { takeAiCall } from "@/lib/ai/limits-server";
 import { routeZwirkIntent } from "@/lib/zwirk/reasoning/intent-router";
 import { buildSpecializedZwirkPrompt } from "@/lib/zwirk/prompts/context-prompt";
 import {
@@ -401,6 +402,15 @@ export async function POST(
       return NextResponse.json(
         { error: `You have sent a lot of messages this hour. Try again in ${Math.ceil(zwirkRate.retryAfterSeconds / 60)} min.` },
         { status: 429, headers: { "Retry-After": String(zwirkRate.retryAfterSeconds) } },
+      );
+    }
+
+    // Daily AI allowance by plan (shared with report insights).
+    const aiBlock = await takeAiCall(user.id, user.email ?? null);
+    if (aiBlock) {
+      return NextResponse.json(
+        { error: aiBlock.message, code: "ai_daily_limit" },
+        { status: 429, headers: { "Retry-After": String(aiBlock.retryAfterSeconds) } },
       );
     }
 
