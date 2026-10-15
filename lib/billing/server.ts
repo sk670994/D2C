@@ -5,6 +5,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 
 import { isDisposableEmail } from "@/lib/auth/disposable-email";
+import { checkSignupEmail } from "@/lib/auth/email-check-server";
 import { entitlementFor, isAdminEmail, razorpayPlanEnv, TRIAL_DAYS, type Entitlement, type PaidPlanKey, type SubscriptionRow } from "./plans";
 
 const RAZORPAY_API = "https://api.razorpay.com/v1";
@@ -29,7 +30,11 @@ export async function getBillingRow(userId: string, email?: string | null): Prom
     throw new Error(error.message);
   }
   if (data) return data as BillingRow;
-  const trialDays = isDisposableEmail(email) ? 0 : TRIAL_DAYS;
+  // Throwaway inbox (built-in list, community list or its mail servers): no free trial.
+  const throwaway =
+    isDisposableEmail(email) ||
+    (email ? await checkSignupEmail(email).then((c) => !c.ok && c.reason === "disposable").catch(() => false) : false);
+  const trialDays = throwaway ? 0 : TRIAL_DAYS;
   const trial = { user_id: userId, plan: "trial", status: "trialing", trial_ends_at: new Date(Date.now() + trialDays * 86_400_000).toISOString() };
   const inserted = await client.from("billing_subscriptions").upsert(trial, { onConflict: "user_id", ignoreDuplicates: true }).select(COLUMNS).maybeSingle();
   if (inserted.data) return inserted.data as BillingRow;
