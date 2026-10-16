@@ -24,21 +24,65 @@ import { normalizeAdvertiserName, searchMetaPages } from "@/lib/ad-intelligence/
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { backfillAdMedia } from "@/lib/ad-intelligence/jobs/media-backfill";
 import { pickBrandPage } from "@/lib/ad-intelligence/discovery/pick-page";
+import { PageMemory } from "@/lib/ad-intelligence/worker/page-memory";
 
 type Page = { pageId: string; name: string; verification?: string | null; likes?: number | null; igFollowers?: number | null };
 
-/** 1) our own advertiser index (fast, no browser) */
-async function fromIndex(brand: string, country: string): Promise<Page[]> {
-  const { data, error } = await createGlobalServiceClient().rpc("adspy_autocomplete_advertisers", {
-    p_query: brand,
-    p_platform: "meta",
-    p_country: country,
-    p_limit: 10,
-  });
-  if (error) return [];
-  return ((data ?? []) as Array<{ page_id?: string | number | null; label?: string | null; verification?: string | null }>)
-    .filter((row) => row.page_id && row.label)
-    .map((row) => ({ pageId: String(row.page_id), name: String(row.label), verification: row.verification ?? null }));
+/** 1) our own advertiser index (fast, no browser). failed = could not ask (DB down), not "no page". */
+async function fromIndex(brand: string, country: string): Promise<{ pages: Page[]; failed: boolean }> {
+  try {
+    const { data, error } = await createGlobalServiceClient().rpc("adspy_autocomplete_advertisers", {
+      p_query: brand,
+      p_platform: "meta",
+      p_country: country,
+      p_limit: 10,
+    });
+    if (error) return { pages: [], failed: true };
+    const pages = ((data ?? []) as Array<{ page_id?: string | number | null; label?: string | null; verification?: string | null }>)
+      .filter((row) => row.page_id && row.label)
+      .map((row) => ({ pageId: String(row.page_id), name: String(row.label), verification: row.verification ?? null }));
+    return { pages, failed: false };
+  } catch {
+    return { pages: [], failed: true };
+  }
+}
+
+/** Last page this brand was collected from (DB history), used only when a fresh look-up failed. */
+async function lastKnownPage(brand: string, country: string): Promise<Page | null> {
+  const { data, error } = await createGlobalServiceClient()
+    .from("ad_intelligence_collection_jobs")
+    .select("query,collection_key")
+    .eq("platform", "meta")
+    .eq("mode", "advertiser")
+    .eq("country", country)
+    .ilike("query", brand.replace(/[\\%_]/g, (c) => `\\${c}`))
+    .like("collection_key", "%|page:%")
+    .order("last_requested_at", { ascending: false })
+    .limit(1);
+  if (error) return null;
+  const row = ((data ?? []) as Array<{ query: string; collection_key: string }>)[0];
+  const pageId = row ? /\|page:(\d+)$/.exec(row.collection_key)?.[1] : null;
+  return pageId ? { pageId, name: brand } : null;
+}
+
+/**
+ * Before each brand: is the database answering? If not, wait (it is usually
+ * the free tier's disk budget recovering) instead of hammering it. After
+ * ~15 min of no answer, the run stops; the remaining brands go next night.
+ */
+async function databaseReady(): Promise<boolean> {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const { error } = await createGlobalServiceClient()
+      .from("ad_intelligence_brands")
+      .select("id", { head: true, count: "exact" })
+      .limit(1)
+      .then((r) => r, (e: unknown) => ({ error: e }));
+    if (!error) return true;
+    if (attempt === 3) break;
+    console.warn(`  database not answering (${error instanceof Error ? error.message : (error as { message?: string }).message ?? "error"}); waiting 5 min`);
+    await new Promise((resolve) => setTimeout(resolve, 5 * 60_000));
+  }
+  return false;
 }
 
 /**
@@ -157,7 +201,14 @@ async function patchBrowserForTsx() {
 async function main() {
   if (!userId) throw new Error("Missing ADSPY_SYSTEM_USER_ID.");
   await patchBrowserForTsx();
-  const stats = { tracked: 0, collected: 0, skippedRecent: 0, noPage: 0, errors: 0 };
+  const stats = { tracked: 0, collected: 0, skippedRecent: 0, noPage: 0, lookupFailed: 0, remembered: 0, errors: 0 };
+  const memory = new PageMemory();
+  console.log(`page memory: ${memory.size} brands`);
+  if (!(await databaseReady())) {
+    console.error("! database unavailable for ~15 min at start: nothing collected tonight");
+    console.log("summary", JSON.stringify({ ...stats, errors: 1, minutes: mins(Date.now() - started) }));
+    return;
+  }
 
   // 1) Tracked / watched brands first — these are what paying users look at.
   //    (Skipped on a test run limited to a few brands.)
@@ -268,6 +319,11 @@ async function main() {
       console.log(`time budget reached after ${mins(Date.now() - started)} min`);
       break;
     }
+    if (!(await databaseReady())) {
+      stats.errors += 1;
+      console.error("! database unavailable for ~15 min: stopping; the remaining brands run next night");
+      break;
+    }
     attempted += 1;
 
     try {
@@ -280,16 +336,51 @@ async function main() {
         continue;
       }
 
+      // Page memory first: a page this brand matched before is reused, so a
+      // failed look-up tonight never costs us the brand. Pinned pages win.
+      const key = normalizeAdvertiserName(brand);
+      const known = memory.get(key);
+      if (known) {
+        stats.remembered += 1;
+        await collect(brand, { pageId: known.pageId, name: known.name });
+        continue;
+      }
+
       // Identity boundary: one page with a clear lead, never a guess. Our
       // index first (no browser); Meta's live search adds likes/followers.
       const indexed = await fromIndex(brand, country);
-      let match = pick(indexed, brand);
+      let match = pick(indexed.pages, brand);
+      let liveFailed = false;
+      let live: Page[] = [];
       if (!match.page) {
-        const live = await searchMetaPages(brand, country).catch(() => [] as Page[]);
-        match = pick([...live, ...indexed], brand);
+        live = await searchMetaPages(brand, country).catch(() => {
+          liveFailed = true;
+          return [] as Page[];
+        });
+        match = pick([...live, ...indexed.pages], brand);
       }
-      const page = match.page;
-      if (page && match.reason !== "exact") console.log(`  ${brand} -> ${page.name} (${page.pageId}) [${match.reason}]`);
+      let page = match.page;
+      if (page) {
+        memory.remember(key, { pageId: page.pageId, name: page.name });
+        memory.save();
+        if (match.reason !== "exact") console.log(`  ${brand} -> ${page.name} (${page.pageId}) [${match.reason}]`);
+      }
+      // Nothing came back at all (DB timeout, Meta showed nothing, or the
+      // brand truly has no page). Ambiguous names are NOT handled here: they
+      // list their candidates below. Reuse the page we last collected this
+      // brand from; a failed look-up must never cost us the brand.
+      if (!page && !match.candidates.length) {
+        const failed = indexed.failed || liveFailed;
+        const last = await lastKnownPage(brand, country).catch(() => null);
+        if (last) {
+          console.log(`  ${brand}: ${failed ? "look-up failed" : "no page by name"}, using last collected page ${last.pageId}`);
+          page = last;
+        } else if (failed) {
+          stats.lookupFailed += 1;
+          console.log(`~ ${brand}: page look-up failed (database or Meta did not answer); retry next night`);
+          continue;
+        }
+      }
       if (!page && match.candidates.length) {
         const list = match.candidates
           .map((c) => `${c.name} ${c.pageId}${c.verification ? ` ${c.verification}` : ""}${c.likes ? ` likes ${c.likes}` : ""}`)
@@ -314,6 +405,7 @@ async function main() {
     }
   }
 
+  memory.save();
   // Images left from the last hour: copy them before the links expire.
   await copyMedia(25 * 60_000, true);
 
