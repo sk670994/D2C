@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { TodayShell } from "@/components/today/TodayShell";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { billingSummary, inr, userSummary, weeklySignups, type BillingRow, type UserRow } from "@/lib/admin/stats";
+import { loadOps } from "@/lib/admin/ops-server";
 import { isAdminEmail } from "@/lib/billing/plans";
 import { createClient } from "@/lib/supabase/server";
 
@@ -76,6 +77,8 @@ export default async function FounderPage() {
 
   const now = Date.now();
   let data: Awaited<ReturnType<typeof load>>;
+  // Operations never block the page: every part falls back to "—".
+  const opsPromise = loadOps(now).catch(() => null);
   try {
     data = await load(now);
   } catch (e) {
@@ -97,6 +100,8 @@ export default async function FounderPage() {
   const billingByUser = new Map(data.billing.map((b) => [b.user_id, b]));
   const recent = [...customers].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).slice(0, 15);
   const collectorStale = !data.lastAdAt || now - Date.parse(data.lastAdAt) > 2 * DAY;
+  const ops = await opsPromise;
+  const dash = "—";
 
   return (
     <TodayShell active="founder" email={user.email}>
@@ -176,6 +181,62 @@ export default async function FounderPage() {
               </tbody>
             </table>
           </div>
+        </section>
+
+        <section className="zd-section" aria-label="Operations">
+          <h2 className="zd-h3">Operations</h2>
+          <div className="zd-grid-3">
+            <Stat
+              value={ops?.runs ? `${ops.runs.done} done · ${ops.runs.failed} failed` : dash}
+              label={
+                ops?.runs
+                  ? `Collections in 24 h (${ops.runs.ads.toLocaleString("en-IN")} ads saved${ops.runs.running ? `, ${ops.runs.running} still running` : ""}). ${fmtTime(ops.runs.firstStart)} → ${fmtTime(ops.runs.lastEnd)}`
+                  : "Collections in 24 h"
+              }
+              tone={ops?.runs && (ops.runs.failed > ops.runs.done || ops.runs.total === 0) ? "warn" : undefined}
+            />
+            <Stat
+              value={ops?.coverage ? `${ops.coverage.complete}/${ops.coverage.pages}` : dash}
+              label="Brand pages fully collected (live ads held ≥ Meta's count, last 48 h)"
+              tone={ops?.coverage && ops.coverage.complete < ops.coverage.pages ? "warn" : undefined}
+            />
+            <Stat
+              value={ops?.credits != null ? `${ops.credits}/${ops.creditCap}` : dash}
+              label="ScrapeCreators credits used today (IST)"
+              tone={ops?.credits != null && ops.credits >= ops.creditCap * 0.8 ? "warn" : undefined}
+            />
+            <Stat
+              value={ops?.ai ? ops.ai.calls.toLocaleString("en-IN") : dash}
+              label={ops?.ai ? `AI calls today (ZWIRK + insights) by ${ops.ai.users} users` : "AI calls today (ZWIRK + insights)"}
+            />
+            <Stat
+              value={ops?.trial ? `${ops.trial.calls} searches` : dash}
+              label={ops?.trial ? `Trial look-ups by ${ops.trial.users} trial users · ${ops.trial.atCap} used all 3` : "Trial look-ups (3 per trial)"}
+            />
+            <Stat
+              value={ops?.db ? `${ops.db.mb} MB` : dash}
+              label={
+                ops?.db
+                  ? `Database, ${ops.db.pctOfLimit}% of 500 MB free tier · in-place updates ${ops.db.hotPct ?? dash}% since 16 Oct`
+                  : "Database size: run the founder_db_stats SQL once"
+              }
+              tone={ops?.db && ops.db.pctOfLimit >= 80 ? "warn" : undefined}
+            />
+          </div>
+          {ops?.runs?.topError ? (
+            <p className="zd-muted" style={{ margin: 0, fontSize: 13 }}>
+              Most common failure ({ops.runs.topError.count}×): {ops.runs.topError.message}
+            </p>
+          ) : null}
+          {ops?.coverage?.incomplete.length ? (
+            <ul className="zd-muted" style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
+              {ops.coverage.incomplete.slice(0, 5).map((c) => (
+                <li key={c.pageId}>
+                  {c.name}: {c.collected.toLocaleString("en-IN")} of {c.metaTotal.toLocaleString("en-IN")} live ads ({c.pct}%)
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </section>
 
         <section className="zd-section" aria-label="Data and payments health">
