@@ -171,7 +171,7 @@ async function knownAdIds(pageId: string): Promise<(id: string) => boolean> {
 export async function collectAdIntelligence(
   data: CollectionEvent,
   options: { deadlineAt?: number } = {},
-): Promise<State & { jobId: string }> {
+): Promise<State & { jobId: string; pageId?: string | null }> {
   const job = await getCollectionJob(data.jobId);
 
   if (!job) {
@@ -615,6 +615,7 @@ export async function collectAdIntelligence(
 
       return {
         jobId: data.jobId,
+        pageId: resolvedPageId ?? scrapePageId,
         ...state,
       };
     }
@@ -690,6 +691,7 @@ export async function collectAdIntelligence(
 
     return {
       jobId: data.jobId,
+      pageId: resolvedPageId ?? scrapePageId,
       ...state,
     };
   } catch (error) {

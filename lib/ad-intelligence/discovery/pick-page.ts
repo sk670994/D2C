@@ -19,7 +19,8 @@ export type PageCandidate = {
 export function compactBrand(value: unknown): string {
   return String(value ?? "")
     .toLocaleLowerCase()
-    .normalize("NFKC")
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
     .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
@@ -62,4 +63,52 @@ export function pageChoices<T extends PageCandidate>(query: string, candidates: 
     if (out.length >= limit) break;
   }
   return out;
+}
+
+export type RankedPageCandidate = PageCandidate & { likes?: number | null; igFollowers?: number | null };
+
+/**
+ * Nightly seed matching: pickExactPage first; when that finds nothing or is
+ * ambiguous, rank the plausible pages (same name, or verified and containing
+ * the brand) and accept the top one only with a clear lead:
+ *  - it is verified and no other plausible page is, or
+ *  - verification ties and its audience (likes + IG followers) is >= 10x the
+ *    runner-up's (both known).
+ * Otherwise null, plus the candidates so a human can pin the right Page ID.
+ */
+export function pickBrandPage<T extends RankedPageCandidate>(
+  query: string,
+  candidates: T[],
+): { page: T | null; candidates: T[]; reason: "exact" | "only_plausible" | "clear_lead" | "ambiguous" | "none" } {
+  const exact = pickExactPage(query, candidates);
+  if (exact) return { page: exact, candidates: [exact], reason: "exact" };
+  const q = compactBrand(query);
+  if (q.length < 2) return { page: null, candidates: [], reason: "none" };
+
+  const unique = new Map<string, T>();
+  for (const c of candidates) {
+    const id = String(c.pageId ?? "").trim();
+    const name = compactBrand(c.label);
+    if (!/^\d+$/.test(id) || !name || unique.has(id)) continue;
+    if (name === q || (isVerified(c.verification) && name.includes(q))) unique.set(id, c);
+  }
+  const plausible = Array.from(unique.values());
+  if (!plausible.length) return { page: null, candidates: [], reason: "none" };
+  if (plausible.length === 1) return { page: plausible[0], candidates: plausible, reason: "only_plausible" };
+
+  const audience = (c: T) => {
+    const a = Number(c.likes ?? 0) + Number(c.igFollowers ?? 0);
+    return Number.isFinite(a) && a > 0 ? a : 0;
+  };
+  const ranked = plausible.sort(
+    (a, b) => Number(isVerified(b.verification)) - Number(isVerified(a.verification)) || audience(b) - audience(a),
+  );
+  const [top, second] = ranked;
+  const topVerified = isVerified(top.verification);
+  const secondVerified = isVerified(second.verification);
+  if (topVerified && !secondVerified) return { page: top, candidates: ranked, reason: "clear_lead" };
+  if (topVerified === secondVerified && audience(second) > 0 && audience(top) >= 10 * audience(second)) {
+    return { page: top, candidates: ranked, reason: "clear_lead" };
+  }
+  return { page: null, candidates: ranked.slice(0, 3), reason: "ambiguous" };
 }
