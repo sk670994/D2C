@@ -19,7 +19,8 @@ export type PageCandidate = {
 export function compactBrand(value: unknown): string {
   return String(value ?? "")
     .toLocaleLowerCase()
-    .normalize("NFKC")
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
     .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 

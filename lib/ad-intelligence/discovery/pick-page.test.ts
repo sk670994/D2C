@@ -44,3 +44,14 @@ describe("pageChoices", () => {
     expect(pageChoices("mars", [moon, cafe, cosmetics, { ...cafe }, { pageId: "7", label: "Venus" }]).map((c) => c.pageId)).toEqual(["1", "2", "3"]);
   });
 });
+
+describe("accents", () => {
+  it("matches L'Oréal typed without the accent", () => {
+    const pages = [
+      { pageId: "111", label: "L'Oréal Paris", verification: "BLUE_VERIFIED" },
+      { pageId: "222", label: "Loreal Fan Club", verification: null },
+    ];
+    expect(pickExactPage("L'Oreal Paris", pages)?.pageId).toBe("111");
+    expect(pickExactPage("loreal paris", pages)?.pageId).toBe("111");
+  });
+});

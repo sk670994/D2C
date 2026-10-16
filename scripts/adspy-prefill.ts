@@ -23,6 +23,7 @@ import { refreshTrackedAdSpy } from "@/lib/ad-intelligence/jobs/refresh-tracked-
 import { normalizeAdvertiserName, searchMetaPages } from "@/lib/ad-intelligence/global/meta-page-search";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { backfillAdMedia } from "@/lib/ad-intelligence/jobs/media-backfill";
+import { pickExactPage } from "@/lib/ad-intelligence/discovery/pick-page";
 
 type Page = { pageId: string; name: string; verification?: string | null };
 
@@ -40,11 +41,13 @@ async function fromIndex(brand: string, country: string): Promise<Page[]> {
     .map((row) => ({ pageId: String(row.page_id), name: String(row.label), verification: row.verification ?? null }));
 }
 
-function pick(pages: Page[], want: string): Page | undefined {
-  return (
-    pages.find((p) => normalizeAdvertiserName(p.name) === want) ??
-    pages.find((p) => p.verification?.toUpperCase() === "VERIFIED" && normalizeAdvertiserName(p.name).includes(want))
-  );
+/**
+ * Exactly one page whose name equals the brand (accents ignored: L'Oréal =
+ * Loreal), else exactly one verified page starting with it. Ambiguous = none:
+ * a wrong page is worse than a skipped brand.
+ */
+function pick(pages: Page[], brand: string): Page | undefined {
+  return pickExactPage(brand, pages.map((p) => ({ ...p, label: p.name }))) ?? undefined;
 }
 
 const started = Date.now();
@@ -69,12 +72,22 @@ setAdSpyInlineRunner((payload: CollectionEvent) => {
   pending.push(payload);
 });
 
+/** Page IDs and brand names already read in full tonight: never twice a night. */
+const doneTonight = new Set<string>();
+const nameKey = (name: string) => `name:${normalizeAdvertiserName(name)}`;
+const collectedTonight = (pageId: string | null | undefined, name: string) =>
+  (pageId ? doneTonight.has(`page:${pageId}`) : false) || doneTonight.has(nameKey(name));
+
 async function drain() {
   while (pending.length) {
     const payload = pending.shift()!;
-    await collectAdIntelligence(payload).catch((error) => {
+    const result = await collectAdIntelligence(payload).catch((error) => {
       console.error("  collection failed:", error instanceof Error ? error.message : error);
+      return null;
     });
+    doneTonight.add(nameKey(payload.query));
+    const pageId = result?.pageId ?? payload.advertiserPageId ?? null;
+    if (pageId) doneTonight.add(`page:${pageId}`);
   }
 }
 
@@ -85,10 +98,12 @@ const timeLeft = () => budgetMs - (Date.now() - started);
  * images to our storage now, while the links still work. Separate from the
  * scrape so a slow upload never holds a save (or the run's heartbeat).
  */
-async function copyMedia() {
+let lastMediaCopy = Date.now();
+async function copyMedia(capMs = 20 * 60_000, ignoreBudget = false) {
   if (process.env.ADSPY_DEFER_MEDIA !== "1") return;
+  lastMediaCopy = Date.now();
   const t0 = Date.now();
-  const deadlineAt = Date.now() + Math.max(0, Math.min(20 * 60_000, timeLeft() - 4 * 60_000));
+  const deadlineAt = Date.now() + Math.max(0, ignoreBudget ? capMs : Math.min(capMs, timeLeft() - 4 * 60_000));
   let copied = 0;
   while (Date.now() < deadlineAt) {
     const moved = await backfillAdMedia({ limit: 200, deadlineAt }).catch((error) => {
@@ -101,6 +116,14 @@ async function copyMedia() {
   if (copied) console.log(`  images copied: ${copied} in ${mins(Date.now() - t0)} min`);
 }
 const mins = (ms: number) => (ms / 60_000).toFixed(1);
+
+/**
+ * Copy images every ~hour, not after every brand (that cost up to 20 min per
+ * brand). Meta's image links last well over an hour, so nothing is lost.
+ */
+async function copyMediaIfDue() {
+  if (Date.now() - lastMediaCopy >= 60 * 60_000) await copyMedia();
+}
 
 /**
  * tsx (esbuild keepNames) wraps functions with a `__name` helper. Functions
@@ -139,7 +162,7 @@ async function main() {
   if (!only.size) try {
     const tracked = await refreshTrackedAdSpy({ depth: "deep", minIntervalMs: Math.min(12 * 60 * 60_000, RECENT_MS) });
     await drain();
-    await copyMedia();
+    await copyMediaIfDue();
     stats.tracked = tracked.dispatched;
     console.log(
       `tracked brands refreshed: ${tracked.dispatched}/${tracked.targets}`,
@@ -168,6 +191,7 @@ async function main() {
     for (const row of (data ?? []) as Array<{ query: string; country: string; collection_key: string; user_id: string | null }>) {
       if (timeLeft() < 4 * 60_000) break;
       const pageId = /\|page:(\d+)$/.exec(row.collection_key)?.[1] ?? null;
+      if (collectedTonight(pageId, row.query)) continue; // tracked step just read it
       const result = await startAdSpyCollection({
         userId: row.user_id ?? userId,
         query: row.query,
@@ -175,13 +199,14 @@ async function main() {
         platform: "meta",
         mode: "advertiser",
         pageId,
-        minIntervalMs: 0,
+        // Not again if read in full in the last 12 h (by any step).
+        minIntervalMs: 12 * 60 * 60_000,
         reason: "scheduled",
         depth: "deep",
       });
       if (result.outcome !== "dispatched") continue;
       await drain();
-      await copyMedia();
+      await copyMediaIfDue();
       done += 1;
     }
     console.log(`user look-ups read in full: ${done}/${(data ?? []).length}`);
@@ -206,6 +231,11 @@ async function main() {
   if (only.size) console.log(`only: ${order.join(", ") || "(no seed brand matched)"}`);
 
   const collect = async (brand: string, page: Page | null) => {
+    if (collectedTonight(page?.pageId, page?.name ?? brand)) {
+      stats.skippedRecent += 1;
+      console.log(`- ${brand}${page ? ` (${page.pageId})` : ""}: already read tonight`);
+      return;
+    }
     const result = await startAdSpyCollection({
       userId,
       query: page?.name ?? brand,
@@ -226,7 +256,7 @@ async function main() {
     await drain();
     stats.collected += 1;
     console.log(`+ ${brand} (${page?.pageId ?? "by name"}) in ${mins(Date.now() - t0)} min`);
-    await copyMedia();
+    await copyMediaIfDue();
   };
 
   let attempted = 0;
@@ -248,13 +278,11 @@ async function main() {
         continue;
       }
 
-      const want = normalizeAdvertiserName(brand);
-      // Identity boundary: exact name match, or a verified page containing
-      // the brand. Never guess a Page ID.
-      let page = pick(await fromIndex(brand, country), want);
+      // Identity boundary: exactly one matching page, never a guess.
+      let page = pick(await fromIndex(brand, country), brand);
       if (!page) {
         const live = await searchMetaPages(brand, country).catch(() => [] as Page[]);
-        page = pick(live, want);
+        page = pick(live, brand);
       }
       if (!page) {
         stats.noPage += 1;
@@ -273,6 +301,9 @@ async function main() {
       console.error(`! ${brand}:`, error instanceof Error ? error.message : error);
     }
   }
+
+  // Images left from the last hour: copy them before the links expire.
+  await copyMedia(25 * 60_000, true);
 
   console.log("summary", JSON.stringify({ ...stats, minutes: mins(Date.now() - started) }));
 }
