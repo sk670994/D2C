@@ -23,9 +23,9 @@ import { refreshTrackedAdSpy } from "@/lib/ad-intelligence/jobs/refresh-tracked-
 import { normalizeAdvertiserName, searchMetaPages } from "@/lib/ad-intelligence/global/meta-page-search";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { backfillAdMedia } from "@/lib/ad-intelligence/jobs/media-backfill";
-import { pickExactPage } from "@/lib/ad-intelligence/discovery/pick-page";
+import { pickBrandPage } from "@/lib/ad-intelligence/discovery/pick-page";
 
-type Page = { pageId: string; name: string; verification?: string | null };
+type Page = { pageId: string; name: string; verification?: string | null; likes?: number | null; igFollowers?: number | null };
 
 /** 1) our own advertiser index (fast, no browser) */
 async function fromIndex(brand: string, country: string): Promise<Page[]> {
@@ -42,12 +42,14 @@ async function fromIndex(brand: string, country: string): Promise<Page[]> {
 }
 
 /**
- * Exactly one page whose name equals the brand (accents ignored: L'Oréal =
- * Loreal), else exactly one verified page starting with it. Ambiguous = none:
- * a wrong page is worse than a skipped brand.
+ * Brand -> one Meta page (accents ignored: L'Oréal = Loreal). Exact name
+ * first; otherwise the plausible pages are ranked (verified, then audience)
+ * and the top one is taken only with a clear lead. A wrong page is worse
+ * than a skipped brand, so ties return no page plus the candidates to pin.
  */
-function pick(pages: Page[], brand: string): Page | undefined {
-  return pickExactPage(brand, pages.map((p) => ({ ...p, label: p.name }))) ?? undefined;
+function pick(pages: Page[], brand: string) {
+  const result = pickBrandPage(brand, pages.map((p) => ({ ...p, label: p.name })));
+  return { page: result.page ?? undefined, candidates: result.candidates, reason: result.reason };
 }
 
 const started = Date.now();
@@ -278,11 +280,21 @@ async function main() {
         continue;
       }
 
-      // Identity boundary: exactly one matching page, never a guess.
-      let page = pick(await fromIndex(brand, country), brand);
-      if (!page) {
+      // Identity boundary: one page with a clear lead, never a guess. Our
+      // index first (no browser); Meta's live search adds likes/followers.
+      const indexed = await fromIndex(brand, country);
+      let match = pick(indexed, brand);
+      if (!match.page) {
         const live = await searchMetaPages(brand, country).catch(() => [] as Page[]);
-        page = pick(live, brand);
+        match = pick([...live, ...indexed], brand);
+      }
+      const page = match.page;
+      if (page && match.reason !== "exact") console.log(`  ${brand} -> ${page.name} (${page.pageId}) [${match.reason}]`);
+      if (!page && match.candidates.length) {
+        const list = match.candidates
+          .map((c) => `${c.name} ${c.pageId}${c.verification ? ` ${c.verification}` : ""}${c.likes ? ` likes ${c.likes}` : ""}`)
+          .join(" | ");
+        console.log(`~ ${brand}: ${match.candidates.length} possible pages, pin one in seed "pages": ${list}`);
       }
       if (!page) {
         stats.noPage += 1;

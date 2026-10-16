@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { pageChoices, pickExactPage } from "./pick-page";
+import { pageChoices, pickBrandPage, pickExactPage } from "./pick-page";
 
 const moon = { pageId: "1", label: "Moon & Mars Resort", verification: null };
 const cafe = { pageId: "2", label: "Mars Cafe", verification: null };
@@ -53,5 +53,35 @@ describe("accents", () => {
     ];
     expect(pickExactPage("L'Oreal Paris", pages)?.pageId).toBe("111");
     expect(pickExactPage("loreal paris", pages)?.pageId).toBe("111");
+  });
+});
+
+describe("pickBrandPage (nightly seed)", () => {
+  const v = "BLUE_VERIFIED";
+  it("prefers the one verified page among same-name pages", () => {
+    const r = pickBrandPage("Garnier", [
+      { pageId: "1", label: "Garnier", verification: null, likes: 900 },
+      { pageId: "2", label: "Garnier", verification: v, likes: 100 },
+    ]);
+    expect(r.page?.pageId).toBe("2");
+    expect(r.reason).toBe("clear_lead");
+  });
+  it("accepts a single verified page containing the brand", () => {
+    expect(pickBrandPage("Man Company", [{ pageId: "3", label: "The Man Company", verification: v }]).page?.pageId).toBe("3");
+  });
+  it("uses audience only with a 10x lead", () => {
+    const pages = [
+      { pageId: "4", label: "Foxtale India", verification: v, likes: 500_000 },
+      { pageId: "5", label: "Foxtale Global", verification: v, likes: 20_000 },
+    ];
+    expect(pickBrandPage("Foxtale", pages).page?.pageId).toBe("4");
+    pages[1].likes = 100_000;
+    const r = pickBrandPage("Foxtale", pages);
+    expect(r.page).toBeNull();
+    expect(r.reason).toBe("ambiguous");
+    expect(r.candidates).toHaveLength(2);
+  });
+  it("never takes an unverified page that merely contains the brand", () => {
+    expect(pickBrandPage("Minimalist", [{ pageId: "6", label: "Minimalist Fans", verification: null }]).page).toBeNull();
   });
 });
