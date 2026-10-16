@@ -359,7 +359,7 @@ async function main() {
         });
         match = pick([...live, ...indexed.pages], brand);
       }
-      let page = match.page;
+      let page: Page | undefined = match.page;
       if (page) {
         memory.remember(key, { pageId: page.pageId, name: page.name });
         memory.save();
