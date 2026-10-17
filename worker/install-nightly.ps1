@@ -46,8 +46,11 @@ git checkout main >> "%LOG%" 2>&1
 git pull --ff-only >> "%LOG%" 2>&1
 rem RecentHours 20: every brand not collected in the last 20 h is read again.
 powershell -NoProfile -ExecutionPolicy Bypass -File worker\run-prefill.ps1 -RecentHours 20 -Minutes $Minutes >> "%LOG%" 2>&1
-echo === end %DATE% %TIME% exit %ERRORLEVEL% ===>> "%LOG%"
+set RC=%ERRORLEVEL%
+echo === end %DATE% %TIME% exit %RC% ===>> "%LOG%"
 forfiles /p "$logDir" /m prefill-*.log /d -30 /c "cmd /c del @path" >nul 2>&1
+rem The task result is the collection's exit code (forfiles returns 1 when no old log exists).
+exit /b %RC%
 "@ | Set-Content -Path $runner -Encoding ascii
 Remove-Item (Join-Path $logDir "nightly-run.ps1") -ErrorAction SilentlyContinue
 

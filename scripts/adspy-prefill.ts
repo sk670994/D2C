@@ -121,8 +121,13 @@ setAdSpyInlineRunner((payload: CollectionEvent) => {
 /** Page IDs and brand names already read in full tonight: never twice a night. */
 const doneTonight = new Set<string>();
 const nameKey = (name: string) => `name:${normalizeAdvertiserName(name)}`;
+/**
+ * With a page ID, only that page counts: one brand can run ads from several
+ * pages (Kapiva: 3), and each page needs its own full read. The name is
+ * only used when the page is not known yet.
+ */
 const collectedTonight = (pageId: string | null | undefined, name: string) =>
-  (pageId ? doneTonight.has(`page:${pageId}`) : false) || doneTonight.has(nameKey(name));
+  pageId ? doneTonight.has(`page:${pageId}`) : doneTonight.has(nameKey(name));
 
 async function drain() {
   while (pending.length) {
