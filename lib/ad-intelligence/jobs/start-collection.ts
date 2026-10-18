@@ -174,10 +174,17 @@ export async function startAdSpyCollection(input: {
 
   const query = input.query.replace(/\s+/g, " ").trim();
   const country = input.country.trim().toUpperCase();
-  const pageId =
+  let pageId =
     input.mode === "advertiser" && input.pageId && /^\d+$/.test(input.pageId.trim())
       ? input.pageId.trim()
       : null;
+  // A person searching a brand name: if exactly one known Meta page matches,
+  // collect that page, not a name (keyword) search. A name search reads other
+  // pages' ads and finds only a handful of the brand's own (P-TAL: 5 of 144).
+  if (!pageId && input.mode === "advertiser" && (input.reason === "user" || input.reason === "track")) {
+    const { resolveIndexedPage } = await import("@/lib/ad-intelligence/discovery/resolve-indexed-page");
+    pageId = (await resolveIndexedPage(query, country))?.pageId ?? null;
+  }
 
   let job = await getOrCreateAdvertiserCollectionJob({
     query,
@@ -271,7 +278,7 @@ export async function startAdSpyCollection(input: {
     if (process.env.ADSPY_API_USER_DEPTH !== "deep") depth = "quick";
     const { apiCreditsUsedToday, takeUserBrandSlot } = await import("@/lib/ad-intelligence/credit-guard-server");
     const used = await apiCreditsUsedToday();
-    const slot = used < dailyCreditCap() ? await takeUserBrandSlot(input.userId, query) : false;
+    const slot = used < dailyCreditCap() ? await takeUserBrandSlot(input.userId, { pageId, name: query }) : false;
     if (slot === "trial_limit") {
       // Trial look-ups used up: not queued for the night run either.
       job = await updateCollectionJob(job.id, { status: "stale", stage: "stale", errorMessage: TRIAL_LIMIT_MESSAGE });

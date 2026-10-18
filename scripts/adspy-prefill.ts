@@ -25,6 +25,7 @@ import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase
 import { backfillAdMedia } from "@/lib/ad-intelligence/jobs/media-backfill";
 import { pickBrandPage } from "@/lib/ad-intelligence/discovery/pick-page";
 import { PageMemory } from "@/lib/ad-intelligence/worker/page-memory";
+import { notifyBrandReady } from "@/lib/ad-intelligence/jobs/notify-ready";
 
 type Page = { pageId: string; name: string; verification?: string | null; likes?: number | null; igFollowers?: number | null };
 
@@ -120,6 +121,8 @@ setAdSpyInlineRunner((payload: CollectionEvent) => {
 
 /** Page IDs and brand names already read in full tonight: never twice a night. */
 const doneTonight = new Set<string>();
+/** People already emailed "your brand is ready" in this run (max one each). */
+const mailedTonight = new Set<string>();
 const nameKey = (name: string) => `name:${normalizeAdvertiserName(name)}`;
 /**
  * With a page ID, only that page counts: one brand can run ads from several
@@ -139,6 +142,11 @@ async function drain() {
     doneTonight.add(nameKey(payload.query));
     const pageId = result?.pageId ?? payload.advertiserPageId ?? null;
     if (pageId) doneTonight.add(`page:${pageId}`);
+    // Tell people who searched this brand for the first time that it's complete.
+    if (pageId && result) {
+      const mailed = await notifyBrandReady({ pageId, name: payload.query, country: payload.country || "IN", systemUserId: userId, mailedTonight });
+      if (mailed) console.log(`  emailed ${mailed} user(s): ${payload.query} is ready`);
+    }
   }
 }
 

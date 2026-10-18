@@ -4,6 +4,7 @@ import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
+import { pickExactPage } from "@/lib/ad-intelligence/discovery/pick-page";
 
 
 export const runtime = "nodejs";
@@ -156,14 +157,16 @@ async function loadIndexed(
   let rows = (result.data ?? []) as Row[];
   // Nothing found: retry ignoring punctuation and spaces ("ptal" -> "P-TAL").
   // A failed fallback never breaks the normal result.
-  if (!rows.length && query.replace(/[^\p{L}\p{N}]/gu, "").length >= 3) {
+  const exact = pickExactPage(query, rows.map((r) => ({ pageId: r.page_id, label: r.label, verification: r.verification })));
+  if (!exact && query.replace(/[^\p{L}\p{N}]/gu, "").length >= 4) {
     const compact = await client.rpc("adspy_autocomplete_compact", {
       p_query: query,
       p_platform: platform,
       p_country: country,
       p_limit: MAX_RESULTS,
     });
-    if (!compact.error) rows = (compact.data ?? []) as Row[];
+    // Punctuation-free matches first, then whatever the normal search found.
+    if (!compact.error && compact.data?.length) rows = [...((compact.data ?? []) as Row[]), ...rows];
   }
 
   return dedupe(
