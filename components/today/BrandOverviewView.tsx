@@ -129,7 +129,16 @@ export function BrandOverviewView({ pageId, country = "IN" }: { pageId: string; 
           </div>
           <span className="zd-pill zd-pill-good">Source-checked</span>
         </section>
-      ) : null}
+      ) : (
+        <section className="zd-card" aria-label="Collection status" role="status" style={{ gap: 6, padding: "16px 20px", borderLeft: "4px solid var(--zt-warn, #f2a33a)" }}>
+          <strong style={{ fontSize: 15 }}>
+            {b.total ? `${formatInt(b.total)} ads so far. Not yet checked against Meta's full count.` : "We're reading this brand's ads now."}
+          </strong>
+          <span className="zd-muted" style={{ fontSize: 14 }}>
+            A first search is a quick look at the brand's newest ads. Its full ad library is read in tonight's collection and will be here by 9 AM IST. Searching it again won't use another trial search.
+          </span>
+        </section>
+      )}
 
       <div className="zd-grid-5">
         <Rise i={0} className="zd-card" style={{ gap: 4, padding: 18 }}>

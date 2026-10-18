@@ -51,3 +51,14 @@ describe("credit guard", () => {
     expect(istDayStart(t).toISOString()).toBe("2026-10-13T18:30:00.000Z");
   });
 });
+
+describe("trial brand key", () => {
+  it("treats spellings of one brand as one", async () => {
+    const { trialBrandKey } = await import("./credit-guard");
+    expect(trialBrandKey("P-TAL")).toBe("ptal");
+    expect(trialBrandKey("ptal")).toBe("ptal");
+    expect(trialBrandKey(" P TAL ")).toBe("ptal");
+    expect(trialBrandKey("L'Oréal")).toBe("loreal");
+    expect(trialBrandKey("145350652898615")).toBe("page-145350652898615");
+  });
+});

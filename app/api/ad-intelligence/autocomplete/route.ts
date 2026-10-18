@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -153,8 +153,21 @@ async function loadIndexed(
     throw new Error(result.error.message);
   }
 
+  let rows = (result.data ?? []) as Row[];
+  // Nothing found: retry ignoring punctuation and spaces ("ptal" -> "P-TAL").
+  // A failed fallback never breaks the normal result.
+  if (!rows.length && query.replace(/[^\p{L}\p{N}]/gu, "").length >= 3) {
+    const compact = await client.rpc("adspy_autocomplete_compact", {
+      p_query: query,
+      p_platform: platform,
+      p_country: country,
+      p_limit: MAX_RESULTS,
+    });
+    if (!compact.error) rows = (compact.data ?? []) as Row[];
+  }
+
   return dedupe(
-    ((result.data ?? []) as Row[])
+    rows
       .map((row) => mapRow(row, country))
       .filter((item): item is Suggestion => item !== null)
       .map((item) => ({ ...item, score: undefined }))
