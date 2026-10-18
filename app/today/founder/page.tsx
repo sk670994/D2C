@@ -5,6 +5,8 @@ import { TodayShell } from "@/components/today/TodayShell";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { billingSummary, inr, userSummary, weeklySignups, type BillingRow, type UserRow } from "@/lib/admin/stats";
 import { loadOps } from "@/lib/admin/ops-server";
+import { activityByUser, funnel, nextStep, topBrands, trialDaysLeft, TRIAL_SEARCHES } from "@/lib/admin/users";
+import { loadUserActivity } from "@/lib/admin/users-server";
 import { isAdminEmail } from "@/lib/billing/plans";
 import { createClient } from "@/lib/supabase/server";
 
@@ -79,6 +81,7 @@ export default async function FounderPage() {
   let data: Awaited<ReturnType<typeof load>>;
   // Operations never block the page: every part falls back to "—".
   const opsPromise = loadOps(now).catch(() => null);
+  const activityPromise = loadUserActivity(now).catch(() => ({ lookups: [], trial: [], ai: [], ok: false }));
   try {
     data = await load(now);
   } catch (e) {
@@ -98,9 +101,14 @@ export default async function FounderPage() {
   const maxWeek = Math.max(1, ...weeks.map((w) => w.count));
   const withRivals = customers.filter((u) => (data.rivals.get(u.id) ?? 0) > 0).length;
   const billingByUser = new Map(data.billing.map((b) => [b.user_id, b]));
-  const recent = [...customers].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).slice(0, 15);
+  const recent = [...customers].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).slice(0, 25);
   const collectorStale = !data.lastAdAt || now - Date.parse(data.lastAdAt) > 2 * DAY;
   const ops = await opsPromise;
+  const act = await activityPromise;
+  const activity = activityByUser(act.lookups, act.trial, act.ai);
+  const steps = funnel({ users: customers, activity, rivals: data.rivals, billing: billingByUser, now });
+  const brands = topBrands(act.lookups, founders, now);
+  const cell = { padding: "8px 6px", verticalAlign: "top" } as const;
   const dash = "—";
 
   return (
@@ -146,8 +154,46 @@ export default async function FounderPage() {
           </div>
         </section>
 
+        <section className="zd-section" aria-label="Activation funnel">
+          <h2 className="zd-h3">Activation funnel</h2>
+          <div className="zd-card" style={{ gap: 10 }}>
+            {steps.map((s, i) => (
+              <div key={s.label} className="zd-col" style={{ gap: 4 }}>
+                <div className="zd-row" style={{ justifyContent: "space-between", fontSize: 14 }}>
+                  <span>{s.label}</span>
+                  <span className="zd-muted">
+                    {s.count} · {s.pct}%{i > 0 && steps[i - 1].count ? ` (${Math.round((100 * s.count) / steps[i - 1].count)}% of previous)` : ""}
+                  </span>
+                </div>
+                <div style={{ height: 8, borderRadius: 4, background: "var(--zt-border-subtle)" }}>
+                  <div style={{ width: `${Math.max(s.count ? 2 : 0, s.pct)}%`, height: "100%", borderRadius: 4, background: "var(--zt-accent, #0255b1)" }} />
+                </div>
+              </div>
+            ))}
+            <span className="zd-muted" style={{ fontSize: 12 }}>
+              The biggest drop between two steps is the bottleneck to fix first.{act.ok ? "" : " Some activity data could not load; numbers may be low."}
+            </span>
+          </div>
+        </section>
+
+        <section className="zd-section" aria-label="What customers search">
+          <h2 className="zd-h3">What customers searched (7 days)</h2>
+          {brands.length ? (
+            <ul className="zd-muted" style={{ margin: 0, paddingLeft: 18, fontSize: 14 }}>
+              {brands.map((b) => (
+                <li key={b.name}>
+                  {b.name}: {b.users} {b.users === 1 ? "user" : "users"}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="zd-muted" style={{ margin: 0, fontSize: 14 }}>No customer searches in the last 7 days.</p>
+          )}
+        </section>
+
         <section className="zd-section" aria-label="Latest signups">
           <h2 className="zd-h3">Latest signups</h2>
+          <p className="zd-muted" style={{ margin: 0, fontSize: 13 }}>Newest 25 customers. Searches = trial searches used, or brands looked up in 30 days for paid plans.</p>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
               <thead>
@@ -156,24 +202,45 @@ export default async function FounderPage() {
                   <th style={{ padding: "8px 6px" }}>Joined</th>
                   <th style={{ padding: "8px 6px" }}>Last seen</th>
                   <th style={{ padding: "8px 6px" }}>Plan</th>
+                  <th style={{ padding: "8px 6px" }}>Searches</th>
+                  <th style={{ padding: "8px 6px" }}>Brands looked up</th>
                   <th style={{ padding: "8px 6px" }}>Rivals</th>
+                  <th style={{ padding: "8px 6px" }}>AI today</th>
+                  <th style={{ padding: "8px 6px" }}>Next step</th>
                 </tr>
               </thead>
               <tbody>
                 {recent.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="zd-muted" style={{ padding: 12 }}>No signups yet. Share a rival teardown to get the first one.</td>
+                    <td colSpan={9} className="zd-muted" style={{ padding: 12 }}>No signups yet. Share a rival teardown to get the first one.</td>
                   </tr>
                 ) : (
                   recent.map((u) => {
                     const b = billingByUser.get(u.id);
+                    const a = activity.get(u.id);
+                    const rivals = data.rivals.get(u.id) ?? 0;
+                    const left = trialDaysLeft(b, now);
+                    const step = nextStep({ user: u, billing: b, activity: a, rivals, now });
+                    const looked = a?.lookups.slice(0, 3).map((l) => l.query) ?? [];
                     return (
                       <tr key={u.id} style={{ borderTop: "1px solid var(--zt-border-subtle)" }}>
-                        <td style={{ padding: "8px 6px" }}>{u.email ?? "—"}</td>
-                        <td style={{ padding: "8px 6px" }}>{fmtDate(u.created_at)}</td>
-                        <td style={{ padding: "8px 6px" }}>{fmtDate(u.last_sign_in_at)}</td>
-                        <td style={{ padding: "8px 6px" }}>{b ? `${b.plan} · ${b.status}` : "—"}</td>
-                        <td style={{ padding: "8px 6px" }}>{data.rivals.get(u.id) ?? 0}</td>
+                        <td style={cell}>{u.email ?? "—"}</td>
+                        <td style={cell}>{fmtDate(u.created_at)}</td>
+                        <td style={cell}>{fmtDate(u.last_sign_in_at)}</td>
+                        <td style={cell}>
+                          {b ? `${b.plan} · ${b.status}` : "—"}
+                          {left != null ? <span className="zd-muted">{left > 0 ? ` · ${left}d left` : " · ended"}</span> : null}
+                        </td>
+                        <td style={cell}>{b?.status === "trialing" ? `${a?.trialSearches ?? 0}/${TRIAL_SEARCHES}` : a?.lookups.length ?? 0}</td>
+                        <td style={cell}>
+                          {looked.length ? looked.join(", ") : "—"}
+                          {a && a.lookups.length > 3 ? <span className="zd-muted"> +{a.lookups.length - 3}</span> : null}
+                        </td>
+                        <td style={cell}>{rivals}</td>
+                        <td style={cell}>{a?.aiToday ?? 0}</td>
+                        <td style={{ ...cell, color: step.tone === "warn" ? "var(--zt-danger)" : step.tone === "good" ? "var(--zt-success, #1f8a4c)" : undefined, whiteSpace: "nowrap" }}>
+                          {step.label}
+                        </td>
                       </tr>
                     );
                   })
