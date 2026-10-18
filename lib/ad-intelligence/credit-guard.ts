@@ -93,3 +93,13 @@ export const DEFERRED_MESSAGE =
 
 export const TRIAL_LIMIT_MESSAGE =
   "Your free trial includes 3 brand look-ups, and you've used them. Choose a plan to look up more brands.";
+
+/**
+ * One key per brand for the trial allowance: the Meta page ID when known,
+ * else the name without accents, punctuation or spaces ("P-TAL" = "ptal").
+ */
+export function trialBrandKey(brand: string): string {
+  const v = String(brand ?? "").trim();
+  if (/^\d+$/.test(v)) return `page-${v}`;
+  return v.normalize("NFKD").replace(/\p{M}+/gu, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "").slice(0, 80);
+}

@@ -271,7 +271,7 @@ export async function startAdSpyCollection(input: {
     if (process.env.ADSPY_API_USER_DEPTH !== "deep") depth = "quick";
     const { apiCreditsUsedToday, takeUserBrandSlot } = await import("@/lib/ad-intelligence/credit-guard-server");
     const used = await apiCreditsUsedToday();
-    const slot = used < dailyCreditCap() ? await takeUserBrandSlot(input.userId) : false;
+    const slot = used < dailyCreditCap() ? await takeUserBrandSlot(input.userId, query) : false;
     if (slot === "trial_limit") {
       // Trial look-ups used up: not queued for the night run either.
       job = await updateCollectionJob(job.id, { status: "stale", stage: "stale", errorMessage: TRIAL_LIMIT_MESSAGE });
