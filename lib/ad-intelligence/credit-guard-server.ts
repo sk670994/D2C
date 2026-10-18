@@ -30,7 +30,7 @@ export async function apiCreditsUsedToday(): Promise<number> {
  * Counts one live brand fetch against the user's daily allowance.
  * Returns false when the allowance is used up (the brand waits for the night run).
  */
-export async function takeUserBrandSlot(userId: string, brand?: string): Promise<boolean | "trial_limit"> {
+export async function takeUserBrandSlot(userId: string, brand: { pageId?: string | null; name?: string | null } = {}): Promise<boolean | "trial_limit"> {
   let email: string | null = null;
   try {
     const { data } = await createGlobalServiceClient().auth.admin.getUserById(userId);
@@ -42,22 +42,37 @@ export async function takeUserBrandSlot(userId: string, brand?: string): Promise
   const limit = entitlement ? userBrandLimit(entitlement) : 1;
   if (!Number.isFinite(limit)) return true;
   if (limit <= 0) return entitlement?.plan === "trial" ? "trial_limit" : false;
+
   // Free trial: 3 different brands in total for the whole trial (not per day).
-  // The same brand again (a retry, another spelling of the same page, or a
-  // search that showed too little) never uses another of the 3.
-  // Key ends in ":trial" so the daily prune keeps it for the trial window.
-  const brandKey = entitlement?.plan === "trial" && brand ? trialBrandKey(brand) : "";
-  const seenKey = brandKey ? `adspy-tb:${userId}:${brandKey}:trial` : "";
-  if (seenKey) {
-    const { data: seen } = await createGlobalServiceClient().from("rate_limits").select("key").eq("key", seenKey).limit(1);
-    if (seen?.length) return true;
+  // The same brand again (a retry, another spelling, or opening its page after
+  // a name search) never uses another of the 3. Keys end in ":trial" so the
+  // daily prune keeps them for the trial window.
+  const trial = entitlement?.plan === "trial";
+  const pageKey = trial && brand.pageId ? `adspy-tb:${userId}:${trialBrandKey(brand.pageId)}:trial` : "";
+  const nameCompact = trial && brand.name ? trialBrandKey(brand.name) : "";
+  const nameKey = nameCompact ? `adspy-tb:${userId}:${nameCompact}:trial` : "";
+  if (pageKey || nameKey) {
+    const db = createGlobalServiceClient();
+    const { data: seen } = await db.from("rate_limits").select("key").in("key", [pageKey, nameKey].filter(Boolean));
+    const has = new Set(((seen ?? []) as Array<{ key: string }>).map((r) => r.key));
+    if (pageKey && has.has(pageKey)) return true;
+    if (!pageKey && nameKey && has.has(nameKey)) return true;
+    if (pageKey && nameKey && has.has(nameKey)) {
+      // Name already paid for: free only if this page really is that brand,
+      // so an old name can't be paired with a different page for free.
+      const { data: adv } = await db.from("ad_intelligence_advertisers").select("page_name").eq("page_id", brand.pageId!).limit(1);
+      const pageName = trialBrandKey(String((adv ?? [])[0]?.page_name ?? ""));
+      if (pageName && (pageName === nameCompact || pageName.startsWith(nameCompact) || nameCompact.startsWith(pageName))) return true;
+    }
   }
-  const result =
-    entitlement?.plan === "trial"
-      ? await checkSharedRateLimit(`adspy-live:${userId}:trial`, limit, 8 * 86_400_000)
-      : await checkSharedRateLimit(`adspy-live:${userId}:${istDayKey()}`, limit, 86_400_000);
-  if (!result.allowed && entitlement?.plan === "trial") return "trial_limit";
+
+  const result = trial
+    ? await checkSharedRateLimit(`adspy-live:${userId}:trial`, limit, 8 * 86_400_000)
+    : await checkSharedRateLimit(`adspy-live:${userId}:${istDayKey()}`, limit, 86_400_000);
+  if (!result.allowed && trial) return "trial_limit";
   // Remember the brand only once it has actually used one of the 3.
-  if (result.allowed && seenKey) await checkSharedRateLimit(seenKey, 1, 8 * 86_400_000).catch(() => undefined);
+  if (result.allowed) {
+    for (const key of [pageKey, nameKey].filter(Boolean)) await checkSharedRateLimit(key, 1, 8 * 86_400_000).catch(() => undefined);
+  }
   return result.allowed;
 }

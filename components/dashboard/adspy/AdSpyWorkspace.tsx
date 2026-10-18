@@ -36,6 +36,7 @@ import {
 
 import type { Ad, AutocompleteAdvertiser, Job, MetaSourceCounts, SearchResponse, Summary } from "./adspy-types";
 import { pageChoices, pickExactPage } from "@/lib/ad-intelligence/discovery/pick-page";
+import { TrialMeter } from "./TrialMeter";
 import { coveragePercent } from "@/lib/ad-intelligence/global/source-scope";
 import { decodeAd } from "@/lib/today/insights";
 import { ELEMENT_LABEL, ELEMENTS, valueLabel, type Decoded, type ElementKey } from "@/lib/decode/taxonomy";
@@ -93,6 +94,17 @@ const COUNTRIES: Array<[string, string]> = [
 const suggestCache = new Map<string, { at: number; items: AutocompleteAdvertiser[] }>();
 const resultCache = new Map<string, { at: number; data: SearchResponse }>();
 const facetCache = new Map<string, { at: number; data: Facets | null }>();
+
+/**
+ * Users never see raw technical errors (timeouts, fetch failures, SQL text).
+ * Plain messages we wrote ourselves pass through unchanged.
+ */
+const TECHNICAL = /timeout|timed out|aborted|fetch failed|network|econn|socket|\b5\d\d\b|sql|postgres|supabase|rpc|undefined|TypeError|Error:/i;
+function friendly(message: string | null | undefined, fallback = "This is taking longer than usual. Your ads are on the way. Try again in a minute."): string {
+  const text = String(message ?? "").trim();
+  if (!text || TECHNICAL.test(text)) return fallback;
+  return text;
+}
 
 function isJobActive(job?: Job | null) {
   return Boolean(job && ACTIVE_JOB.has(job.status));
@@ -344,11 +356,38 @@ export function AdSpyWorkspace() {
     [country, go],
   );
 
-  const submitFreeText = useCallback(() => {
+  const submitFreeText = useCallback(async () => {
     const q = input.trim();
     if (q.length < 2) {
       setError("Type at least 2 characters.");
       return;
+    }
+    // Brand typed by hand ("ptal"): if exactly one known Meta page matches,
+    // open that page straight away instead of a name search. Falls back to
+    // the name search on any error or ambiguity (never blocks the search).
+    if (mode === "advertiser" && !nameOnly.current.has(`${country}|${q.toLocaleLowerCase()}`)) {
+      try {
+        const url = new URL("/api/ad-intelligence/autocomplete", window.location.origin);
+        url.searchParams.set("q", q);
+        url.searchParams.set("country", country);
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), 2500);
+        const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+        window.clearTimeout(timer);
+        if (response.ok) {
+          const data = (await response.json()) as { success?: boolean; advertisers?: AutocompleteAdvertiser[] };
+          const items = (data.advertisers ?? []).filter((item) => /^\d+$/.test(String(item.pageId ?? "")));
+          const exact = data.success ? pickExactPage(q, items) : null;
+          if (exact) {
+            setInput(exact.label);
+            go({ query: exact.label, pageId: exact.pageId, mode: "advertiser", country, avatar: exact.profileImageUrl ?? null });
+            setAutoLockedFrom(q); // after go(), which clears it
+            return;
+          }
+        }
+      } catch {
+        // fall through to the name search
+      }
     }
     go({ query: q, pageId: null, mode, country });
   }, [country, go, input, mode]);
@@ -358,7 +397,7 @@ export function AdSpyWorkspace() {
     if (suggestOpen && mode === "advertiser" && suggestions[activeIndex] && activeIndex < suggestions.length) {
       pickSuggestion(suggestions[activeIndex]);
     } else {
-      submitFreeText();
+      void submitFreeText();
     }
   };
 
@@ -375,7 +414,7 @@ export function AdSpyWorkspace() {
       setSuggestOpen(false);
     } else if (event.key === "Enter" && suggestOpen && activeIndex === suggestions.length) {
       event.preventDefault();
-      submitFreeText();
+      void submitFreeText();
     }
   };
 
@@ -406,17 +445,29 @@ export function AdSpyWorkspace() {
     if (sort !== "relevant") url.searchParams.set("sort", sort);
     url.searchParams.set("page", String(page));
 
-    fetch(url, { cache: "no-store", signal: controller.signal })
-      .then(async (response) => {
-        const data = (await response.json()) as SearchResponse;
-        if (!response.ok || !data.success) throw new Error(data.error || "Search failed.");
+    const load = (attempt: number): Promise<SearchResponse> =>
+      fetch(url, { cache: "no-store", signal: controller.signal })
+        .then(async (response) => {
+          const data = (await response.json().catch(() => ({ success: false }))) as SearchResponse;
+          if (!response.ok || !data.success) throw new Error(data.error || "Search failed.");
+          return data;
+        })
+        .catch((reason: unknown) => {
+          // One quiet retry: a slow database or a cold start usually clears in seconds.
+          if (attempt === 0 && !(reason instanceof DOMException && reason.name === "AbortError")) {
+            return new Promise<void>((resolve) => window.setTimeout(resolve, 2500)).then(() => load(1));
+          }
+          throw reason;
+        });
+    load(0)
+      .then((data) => {
         resultCache.set(cacheKey, { at: Date.now(), data });
         setResult(data);
         if (data.collectionJob) setJob(data.collectionJob);
       })
       .catch((reason) => {
         if (reason instanceof DOMException && reason.name === "AbortError") return;
-        setError(reason instanceof Error ? reason.message : "Search failed.");
+        setError(friendly(reason instanceof Error ? reason.message : ""));
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -478,10 +529,10 @@ export function AdSpyWorkspace() {
         };
         if (!response.ok || !data.success) throw new Error(data.error || "Could not start collection.");
         if (data.job) setJob(data.job);
-        if (data.message) setNotice(data.message);
+        if (data.message) setNotice(friendly(data.message));
         else if (reason === "manual" && data.outcome === "dispatched") setNotice("Collecting the latest public ads. New creatives appear here automatically.");
       } catch (reasonError) {
-        setError(reasonError instanceof Error ? reasonError.message : "Could not start collection.");
+        setError(friendly(reasonError instanceof Error ? reasonError.message : "", "We couldn't start reading this brand right now. Try again in a minute."));
       }
     },
     [target],
@@ -534,13 +585,13 @@ export function AdSpyWorkspace() {
         }
         if (next.stale) {
           setJob({ ...next, status: "stale" });
-          setNotice("The last collection timed out. Use Refresh data to try again.");
+          setNotice("This brand is taking longer than usual. Its full ad library is read in tonight's collection and will be here by 9 AM IST.");
           return;
         }
         setJob(next);
         if (!ACTIVE_JOB.has(next.status)) {
           setDataVersion((v) => v + 1);
-          if (next.status === "failed") setNotice(next.errorMessage || "Collection stopped. Try Refresh data again in a few minutes.");
+          if (next.status === "failed") setNotice(friendly(next.errorMessage, "We couldn't finish reading this brand just now. Its full ad library is read in tonight's collection and will be here by 9 AM IST."));
           return;
         }
       } catch {
@@ -687,6 +738,7 @@ export function AdSpyWorkspace() {
               </>
             )}
             <p>Search a brand to see its Facebook and Instagram ads: videos, offers, languages, and how long each one has been live.</p>
+            <TrialMeter refreshKey={target ? `${target.country}|${target.pageId ?? target.query}` : ""} />
           </div>
         </div>
       </div>
@@ -779,7 +831,7 @@ export function AdSpyWorkspace() {
                   className={`azs-option azs-option-all ${activeIndex === suggestions.length ? "is-active" : ""}`}
                   onMouseEnter={() => setActiveIndex(suggestions.length)}
                   onMouseDown={(event) => event.preventDefault()}
-                  onClick={submitFreeText}
+                  onClick={() => void submitFreeText()}
                 >
                   <span className="azs-option-icon">
                     <Search size={15} />
@@ -808,20 +860,17 @@ export function AdSpyWorkspace() {
             </select>
           </label>
 
-          <div className="azs-segment" role="radiogroup" aria-label="Search by">
-            {(["advertiser", "keyword"] as const).map((value) => (
-              <button
-                type="button"
-                key={value}
-                role="radio"
-                aria-checked={mode === value}
-                className={mode === value ? "is-on" : ""}
-                onClick={() => setMode(value)}
-              >
-                {value === "advertiser" ? "Brand" : "Keyword"}
-              </button>
-            ))}
-          </div>
+          {/* Brand search is the default; searching ad text is an advanced option, not a choice every user must make. */}
+          <button
+            type="button"
+            className="azs-link"
+            aria-pressed={mode === "keyword"}
+            onClick={() => setMode(mode === "keyword" ? "advertiser" : "keyword")}
+            title={mode === "keyword" ? "Search by brand" : "Find ads whose text mentions a word, from any brand"}
+            style={{ whiteSpace: "nowrap", alignSelf: "center" }}
+          >
+            {mode === "keyword" ? "← Brand search" : "Search ad text"}
+          </button>
 
           <button type="submit" className="azs-btn azs-btn-primary">
             <Search size={15} /> Search
@@ -1207,7 +1256,7 @@ function SourceCoverage({
         </>
       )}
       <span className="azs-muted">{when.trim()}</span>
-      {low && !collecting && " Use Refresh data to collect the rest."}
+      {low && !collecting && " The rest arrives after tonight's collection (by 9 AM IST)."}
     </p>
   );
 }
@@ -1392,13 +1441,13 @@ function AdvertiserHeader({
       <Avatar src={target.avatar} label={name} size={52} />
       <div className="azs-adv-main">
         <span className="azs-kicker">
-          {target.pageId ? "Exact Meta advertiser" : target.mode === "keyword" ? "Keyword search" : "Brand name search"}
+          {target.pageId ? "Brand" : target.mode === "keyword" ? "Ads mentioning" : "Brand name"}
         </span>
         <h2>{name}</h2>
         <div className="azs-adv-meta">
-          {target.pageId && <span>Page ID {target.pageId}</span>}
+          
           <span>{COUNTRIES.find(([c]) => c === target.country)?.[1] ?? target.country}</span>
-          <span>{total === null ? "Counting ads…" : `${formatInt(total)} ads indexed`}</span>
+          <span>{total === null ? "Loading ads…" : `${formatInt(total)} ads`}</span>
           {lastUpdatedAt && <span>Updated {formatDate(lastUpdatedAt)}</span>}
         </div>
         <SourceCoverage
@@ -1412,7 +1461,7 @@ function AdvertiserHeader({
         {!target.pageId && target.mode === "advertiser" &&
           (pageOptions.length > 0 ? (
             <div className="azs-lock" role="group" aria-label="Lock to one Meta page">
-              <span>Matching by name. Which “{target.query}” do you mean?</span>
+              <span>Pick the right brand to see all its ads:</span>
               {pageOptions.map((option) => (
                 <button key={option.pageId} type="button" className="azs-lock-choice" onClick={() => onPickPage(option)} title={`Meta Page ID ${option.pageId}`}>
                   <Avatar src={option.profileImageUrl} label={option.label} size={20} />
@@ -1422,7 +1471,7 @@ function AdvertiserHeader({
             </div>
           ) : (
             <p className="azs-fine">
-              Matching by name, so other advertisers with a similar name can appear. Meta counts a name as a keyword, so its totals are not comparable here. Pick a suggestion to lock results to one brand’s Meta page.
+              Showing ads from pages named “{target.query}”. If this isn’t the brand you meant, pick it from the suggestions as you type.
             </p>
           ))}
         {target.pageId && autoLockedFrom && (

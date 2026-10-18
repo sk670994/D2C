@@ -36,7 +36,7 @@ as $$
   cross join lateral (
     select regexp_replace(lower(translate(coalesce(a.page_name, ''), 'ÀÁÂÃÄÅàáâãäåÈÉÊËèéêëÌÍÎÏìíîïÒÓÔÕÖòóôõöÙÚÛÜùúûüÇçÑñ', 'AAAAAAaaaaaaEEEEeeeeIIIIiiiiOOOOOoooooUUUUuuuuCcNn')), '[^a-z0-9]', '', 'g') as name
   ) c
-  where length(i.q) >= 3
+  where length(i.q) >= 4
     and lower(a.platform) = i.platform
     and (a.country is null or upper(a.country) = i.country)
     and c.name like i.q || '%'

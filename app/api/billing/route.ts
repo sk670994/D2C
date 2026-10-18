@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { NEW_BRANDS_PER_DAY } from "@/lib/ad-intelligence/credit-guard";
 
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
@@ -23,10 +24,17 @@ export async function GET() {
     .eq("user_id", user.id)
     .eq("platform", "meta");
 
+  // Trial: brand searches used so far (the counter takeUserBrandSlot writes).
+  let trialSearches = 0;
+  if (entitlement.status === "trialing" && !entitlement.admin) {
+    const { data: hit } = await createGlobalServiceClient().from("rate_limits").select("hits").eq("key", `adspy-live:${user.id}:trial`).limit(1);
+    trialSearches = Math.max(0, Number((hit ?? [])[0]?.hits ?? 0) || 0);
+  }
+
   return NextResponse.json({
     success: true,
     entitlement,
-    usage: { rivals: count ?? 0 },
+    usage: { rivals: count ?? 0, trialSearches: Math.min(trialSearches, NEW_BRANDS_PER_DAY.trial), trialSearchLimit: NEW_BRANDS_PER_DAY.trial },
     plans: PAID_PLANS.map((key) => PLANS[key]),
     checkoutReady: razorpayConfigured(),
     keyId: process.env.RAZORPAY_KEY_ID?.trim() || null,
