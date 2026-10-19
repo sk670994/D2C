@@ -3,6 +3,8 @@ import "server-only";
 import { listTrackedBrands } from "@/lib/ad-intelligence/global/store";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { reapExpiredAdSpyRequests } from "@/lib/ad-intelligence/durable-run";
+import { buildAdvertiserCollectionKey } from "@/lib/ad-intelligence/global/page-aware-store";
+import { sortOldestFirst } from "@/lib/ad-intelligence/global/scan-rules";
 import { recoverStaleRuns, startAdSpyCollection } from "./start-collection";
 
 /**
@@ -19,14 +21,17 @@ import { recoverStaleRuns, startAdSpyCollection } from "./start-collection";
 /** Keep each cron invocation small; the queue does the heavy lifting. */
 const MAX_DISPATCH_PER_RUN = 40;
 
-type Target = {
+export type TrackedTarget = {
   userId: string;
   query: string;
   country: string;
   pageId: string | null;
   refreshHours: number;
   source: "watchlist" | "tracked" | "brand_vault";
+  /** Last finished full read (null = never, or the last one was partial). */
+  lastCompletedAt?: string | null;
 };
+type Target = TrackedTarget;
 
 async function listWatchlistTargets(): Promise<Target[]> {
   const { data, error } = await createGlobalServiceClient()
@@ -85,6 +90,99 @@ async function listBrandVaultTargets(): Promise<Target[]> {
     });
 }
 
+/** Expire dead leases and clear runs whose worker died. Never throws. */
+export async function recoverAdSpyQueue(): Promise<{ reapedRequests: number; recoveredRuns: number }> {
+  const reapedRequests = await reapExpiredAdSpyRequests().catch((error) => {
+    console.error("[AdSpy scheduled] reap failed", error);
+    return 0;
+  });
+  const recoveredRuns = await recoverStaleRuns().catch((error) => {
+    console.error("[AdSpy scheduled] stale recovery failed", error);
+    return 0;
+  });
+  return { reapedRequests, recoveredRuns };
+}
+
+/**
+ * Last finished full read per target, from the collection jobs the targets
+ * themselves start (same collection key). One small read per 100 targets;
+ * a failure only loses the ordering, never the targets.
+ */
+async function lastCompletedByKey(targets: Target[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const keys = Array.from(new Set(targets.map(targetKey)));
+  const client = createGlobalServiceClient();
+  for (let i = 0; i < keys.length; i += 100) {
+    const { data, error } = await client
+      .from("ad_intelligence_collection_jobs")
+      .select("collection_key,completed_at")
+      .in("collection_key", keys.slice(i, i + 100))
+      .not("completed_at", "is", null)
+      .limit(1000);
+    if (error) {
+      console.warn("[AdSpy scheduled] last completion times unavailable", error.message);
+      return out;
+    }
+    for (const row of (data ?? []) as Array<{ collection_key: string; completed_at: string | null }>) {
+      if (!row.completed_at) continue;
+      const prev = out.get(row.collection_key);
+      if (!prev || row.completed_at > prev) out.set(row.collection_key, row.completed_at);
+    }
+  }
+  return out;
+}
+
+function targetKey(target: Target): string {
+  return buildAdvertiserCollectionKey({
+    query: target.query.replace(/\s+/g, " ").trim(),
+    country: target.country,
+    platform: "meta",
+    mode: "advertiser",
+    pageId: target.pageId,
+  });
+}
+
+/**
+ * Every brand to re-read, one entry per advertiser identity (watchlists with
+ * an exact Page ID first), sorted by last finished read, oldest (or never)
+ * first. No cap: the PC collector takes them one at a time until its night
+ * budget runs out; the Vercel cron caps itself.
+ */
+export async function listTrackedAdSpyTargets(): Promise<TrackedTarget[]> {
+  const trackedRows = (await listTrackedBrands()).filter((brand) => brand.platform === "meta" && brand.query.length >= 2);
+  const tracked = trackedRows.map<Target>((brand) => ({
+    userId: brand.userId,
+    query: brand.query,
+    country: brand.country,
+    pageId: null,
+    refreshHours: brand.refreshHours,
+    source: "tracked",
+    lastCompletedAt: brand.lastCollectedAt ?? null,
+  }));
+
+  const watched = await listWatchlistTargets();
+  const vault = await listBrandVaultTargets();
+
+  const seen = new Set<string>();
+  const targets: Target[] = [];
+  for (const target of [...watched, ...vault, ...tracked]) {
+    const key = `${target.country}|${target.pageId ?? target.query.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push(target);
+  }
+
+  const completed = await lastCompletedByKey(targets);
+  for (const target of targets) {
+    const fromJob = completed.get(targetKey(target)) ?? null;
+    // The job's completed_at is null after a partial scan; tracked brands
+    // also skip last_collected_at then. Take the later known time.
+    const known = [fromJob, target.lastCompletedAt ?? null].filter((v): v is string => Boolean(v)).sort();
+    target.lastCompletedAt = known.length ? known[known.length - 1] : null;
+  }
+  return sortOldestFirst(targets, (t) => t.lastCompletedAt ?? null);
+}
+
 export async function refreshTrackedAdSpy(options: {
   /** "deep" = full history; only for the long-running nightly job, not the 60s Vercel cron. */
   depth?: "quick" | "deep";
@@ -106,38 +204,8 @@ export async function refreshTrackedAdSpy(options: {
     return { reapedRequests: 0, recoveredRuns: 0, targets: 0, dispatched: 0, skipped: { nightly_on_pc: 1 }, errors: 0 };
   }
 
-  const reapedRequests = await reapExpiredAdSpyRequests().catch((error) => {
-    console.error("[AdSpy scheduled] reap failed", error);
-    return 0;
-  });
-  const recoveredRuns = await recoverStaleRuns().catch((error) => {
-    console.error("[AdSpy scheduled] stale recovery failed", error);
-    return 0;
-  });
-
-  const tracked = (await listTrackedBrands())
-    .filter((brand) => brand.platform === "meta" && brand.query.length >= 2)
-    .map<Target>((brand) => ({
-      userId: brand.userId,
-      query: brand.query,
-      country: brand.country,
-      pageId: null,
-      refreshHours: brand.refreshHours,
-      source: "tracked",
-    }));
-
-  const watched = await listWatchlistTargets();
-  const vault = await listBrandVaultTargets();
-
-  // Watchlists (exact Page ID) first; one dispatch per advertiser identity.
-  const seen = new Set<string>();
-  const targets: Target[] = [];
-  for (const target of [...watched, ...vault, ...tracked]) {
-    const key = `${target.country}|${target.pageId ?? target.query.toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    targets.push(target);
-  }
+  const { reapedRequests, recoveredRuns } = await recoverAdSpyQueue();
+  const targets = await listTrackedAdSpyTargets();
 
   let dispatched = 0;
   let errors = 0;

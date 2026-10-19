@@ -127,6 +127,19 @@ type State = {
   persistedAds: number;
 };
 
+export type CollectionResult = State & {
+  jobId: string;
+  pageId?: string | null;
+  /** False when another worker held the request: nothing was collected here. */
+  claimed: boolean;
+  /**
+   * Browser scans only: did the scan reach Meta's end (>= 98% of its total)?
+   * Null when not known (quick runs, API sources).
+   */
+  complete?: boolean | null;
+  stoppedBy?: MetaScrapeOutcome["stoppedBy"] | null;
+};
+
 function uniqueBatch(
   ads: CompetitorAd[],
   seen: Set<string>,
@@ -197,7 +210,7 @@ async function knownAdIds(pageId: string): Promise<(id: string) => boolean> {
 export async function collectAdIntelligence(
   data: CollectionEvent,
   options: { deadlineAt?: number } = {},
-): Promise<State & { jobId: string; pageId?: string | null }> {
+): Promise<CollectionResult> {
   const job = await getCollectionJob(data.jobId);
 
   if (!job) {
@@ -228,6 +241,7 @@ export async function collectAdIntelligence(
 
     return {
       jobId: data.jobId,
+      claimed: false,
       discoveredAds: latest?.discoveredAds ?? 0,
       normalizedAds: latest?.normalizedAds ?? 0,
       persistedAds: latest?.persistedAds ?? 0,
@@ -252,6 +266,9 @@ export async function collectAdIntelligence(
   // Billed SearchApi calls for this collection (cost tracking).
   let searchApiCalls = 0;
   let continuation: { cursor: string; pagesSoFar: number; pageId: string | null; scanStartedAt: string } | null = null;
+  // Browser scan outcome (null = not a browser scan or not known).
+  let scanComplete: boolean | null = null;
+  let scanStoppedBy: MetaScrapeOutcome["stoppedBy"] | null = null;
 
   /*
    * Progress writes (job row + run row) are throttled: at most every 30 s or
@@ -478,9 +495,9 @@ export async function collectAdIntelligence(
         outcome.stoppedBy === "exhausted"
       ) {
         try {
-          const stopped = await markStoppedAds({ pageId: scrapePageId, platform: data.platform, scanStartedAt: apiScanStartedAt });
-          if (stopped > 0) touchedAdvertisers.add(scrapePageId);
-          console.info("[AdSpy collect] live scan complete", { provider, pageId: scrapePageId, metaTotal: outcome.totalResults, markedStopped: stopped });
+          const marked = await markStoppedAds({ pageId: scrapePageId, platform: data.platform, scanStartedAt: apiScanStartedAt });
+          if (marked.stopped > 0) touchedAdvertisers.add(scrapePageId);
+          console.info("[AdSpy collect] live scan complete", { provider, pageId: scrapePageId, metaTotal: outcome.totalResults, ...marked });
         } catch (error) {
           console.warn("[AdSpy collect] mark stopped failed", error instanceof Error ? error.message : error);
         }
@@ -556,8 +573,12 @@ export async function collectAdIntelligence(
           mode: data.mode,
           collectionDepth: phase,
           advertiserPageId: scrapePageId,
-          deadlineAt:
+          // The caller's deadline (nightly run: time left tonight) wins over
+          // the per-brand budget when it is earlier.
+          deadlineAt: Math.min(
+            options.deadlineAt ?? Number.POSITIVE_INFINITY,
             Date.now() + (IS_SERVERLESS ? SERVERLESS_BUDGET_MS : WORKER_BUDGET_MS),
+          ),
         },
         async (batch) => {
           await persist(batch);
@@ -567,22 +588,35 @@ export async function collectAdIntelligence(
         },
       );
 
-      // A complete live-only scan of one page: anything of that page still
-      // flagged live but not seen in this scan has stopped running.
+      // A complete live-only scan of one page (>= 98% of Meta's total):
+      // anything of that page still flagged live but not seen in this scan
+      // gets a strike; the second miss in a row marks it stopped.
       const scan = outcome as MetaScrapeOutcome | null;
+      if (scan && phase === "deep") {
+        scanComplete = scan.complete;
+        scanStoppedBy = scan.stoppedBy;
+      }
       if (scan && scrapePageId && data.mode === "advertiser" && scan.activeOnly && scan.complete) {
         try {
-          const stopped = await markStoppedAds({ pageId: scrapePageId, platform: data.platform, scanStartedAt });
-          if (stopped > 0) touchedAdvertisers.add(scrapePageId);
+          const marked = await markStoppedAds({ pageId: scrapePageId, platform: data.platform, scanStartedAt });
+          if (marked.stopped > 0) touchedAdvertisers.add(scrapePageId);
           console.info("[AdSpy collect] live scan complete", {
             pageId: scrapePageId,
-            live: scan.collected,
+            seen: scan.collected,
             metaTotal: scan.metaTotal,
-            markedStopped: stopped,
+            ...marked,
           });
         } catch (error) {
           console.warn("[AdSpy collect] mark stopped failed", error instanceof Error ? error.message : error);
         }
+      } else if (scan && scrapePageId && data.mode === "advertiser" && phase === "deep") {
+        console.info("[AdSpy collect] partial scan: no ad marked stopped", {
+          pageId: scrapePageId,
+          collected: scan.collected,
+          metaTotal: scan.metaTotal,
+          hasNextPage: scan.hasNextPage,
+          stoppedBy: scan.stoppedBy,
+        });
       }
 
       // Keep Meta's own count so the app can show "Meta shows N, we have M".
@@ -596,6 +630,8 @@ export async function collectAdIntelligence(
           statusScope: scan?.activeOnly ? "active" : statusScopeForDepth(phase),
           metaTotal: observedTotal,
           collectedAds: state.discoveredAds,
+          complete: scan ? scan.complete : null,
+          stoppedBy: scan?.stoppedBy ?? null,
         });
       }
     } else {
@@ -663,6 +699,7 @@ export async function collectAdIntelligence(
       return {
         jobId: data.jobId,
         pageId: resolvedPageId ?? scrapePageId,
+        claimed: true,
         ...state,
       };
     }
@@ -682,12 +719,19 @@ export async function collectAdIntelligence(
         maxAttempts: 2,
       });
     }
+    // A browser scan that stopped early (deadline, rate limit, < 98% of
+    // Meta's total) is saved but not "completed": no completed_at, so the
+    // minimum-interval checks (completed_at only) let it run again soon, and
+    // tonight's oldest-first order puts it at the front next time.
+    const partialScan = scanComplete === false;
     await completeAdSpyRequest({
       requestId: data.requestId,
       result: {
         phase,
         metaTotalCount,
         resolvedPageId,
+        complete: scanComplete,
+        stoppedBy: scanStoppedBy,
         source: data.platform === "meta" ? metaSource() : null,
         searchApiCalls,
         discoveredAds:
@@ -717,7 +761,7 @@ export async function collectAdIntelligence(
           state.normalizedAds,
         persistedAds:
           state.persistedAds,
-        completedAt: continuation ? null : new Date().toISOString(),
+        completedAt: continuation || partialScan ? null : new Date().toISOString(),
         errorMessage: null,
       },
     );
@@ -732,7 +776,8 @@ export async function collectAdIntelligence(
 
     // Bookkeeping only: the ads are already saved and the job is complete.
     // A failure here must never flip a successful collection to "failed".
-    try {
+    // A partial scan leaves the tracked brand due, so it is read again.
+    if (!partialScan) try {
       await markTrackedBrandCollected({
         query: data.query,
         country: data.country,
@@ -745,6 +790,9 @@ export async function collectAdIntelligence(
     return {
       jobId: data.jobId,
       pageId: resolvedPageId ?? scrapePageId,
+      claimed: true,
+      complete: scanComplete,
+      stoppedBy: scanStoppedBy,
       ...state,
     };
   } catch (error) {

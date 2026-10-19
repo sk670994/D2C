@@ -38,6 +38,7 @@ import {
 import { extractLibraryPage, normalizeLibraryNode } from "../meta/library-json";
 import { libraryNodeToAd } from "../meta/node-to-ad";
 import { browserProxy, ESBUILD_NAME_SHIM } from "@/lib/ad-intelligence/browser-shim";
+import { finalStop, isScanComplete } from "@/lib/ad-intelligence/global/scan-rules";
 
 // Overridable only for local tests against a mock Ad Library.
 const META_LIBRARY_URL = process.env.ADSPY_META_LIBRARY_URL || "https://www.facebook.com/ads/library/";
@@ -649,7 +650,10 @@ export type MetaScrapeOutcome = {
   hasNextPage: boolean | null;
   stoppedBy: "done" | "deadline" | "rate_limited";
   activeOnly: boolean;
-  /** Meta has no more pages, or we hold at least Meta's own total. */
+  /**
+   * Meta's paging said "no more" AND we hold >= 98% of Meta's own total
+   * (see isScanComplete). Only a complete scan may count ads as missed.
+   */
   complete: boolean;
 };
 
@@ -724,26 +728,49 @@ async function scrapeWithBrowser(
     const pendingBatch: CompetitorAd[] = [];
     const pendingScans = new Set<Promise<void>>();
     // Mutated from the response listener, so kept in an object (not narrowed by TS).
-    const state: { hasNextPage: boolean | null; jsonResponses: number; rateLimitedAt: number } = {
+    const state: {
+      hasNextPage: boolean | null;
+      jsonResponses: number;
+      rateLimitedAt: number;
+      /** Never reset (rateLimitedAt is, after the back-off). */
+      lastRateLimitAt: number;
+      lastGrowthAt: number;
+      hasNextPageFalseAt: number;
+    } = {
       hasNextPage: null,
       jsonResponses: 0,
       rateLimitedAt: 0,
+      lastRateLimitAt: 0,
+      lastGrowthAt: 0,
+      hasNextPageFalseAt: 0,
     };
     // Diagnostics for the "scrape finished" log: did Meta answer our scrolls?
     const diag = { graphqlPosts: 0, pageQueries: 0, pageQueryAds: 0, rateLimits: 0, emptySample: "" };
 
     // Meta's own JSON: first page in the HTML, every next page from /api/graphql.
-    const absorb = (text: string) => {
+    // Paging flag source: only the list's own page queries (and the first
+    // HTML page) say whether more ads follow. Other /api/graphql responses
+    // can carry a has_next_page of their own (19 Oct: Kapiva "complete" at
+    // 1,178 of ~1,300 ads), so their flag is ignored.
+    const absorb = (text: string, paging: "page_query" | "html" | "other") => {
       mergeMetaIdentity(metaIdentity, scanMetaIdentity(text));
       const libraryPage = extractLibraryPage(text);
-      if (libraryPage.rateLimited) state.rateLimitedAt = Date.now();
+      if (libraryPage.rateLimited) {
+        state.rateLimitedAt = Date.now();
+        state.lastRateLimitAt = state.rateLimitedAt;
+      }
       if (libraryPage.totalCount != null) {
         metaIdentity.totalCount = Math.max(metaIdentity.totalCount ?? 0, libraryPage.totalCount);
       }
       if (libraryPage.nodes.length) {
         state.jsonResponses += 1;
-        if (libraryPage.hasNextPage != null) state.hasNextPage = libraryPage.hasNextPage;
+        const trusted = paging === "page_query" || (paging === "html" && state.hasNextPage == null);
+        if (trusted && libraryPage.hasNextPage != null) {
+          state.hasNextPage = libraryPage.hasNextPage;
+          if (libraryPage.hasNextPage === false) state.hasNextPageFalseAt = Date.now();
+        }
       }
+      const sizeBefore = collected.size;
       for (const node of libraryPage.nodes) {
         const ad = jsonNodeToAd(node, input, sourceUrl, metaIdentity.totalCount);
         if (!ad || !isRelevant(ad, input)) continue;
@@ -755,6 +782,7 @@ async function scrapeWithBrowser(
           if (!known) pendingBatch.push(ad);
         }
       }
+      if (collected.size > sizeBefore) state.lastGrowthAt = Date.now();
     };
 
     page.on("response", (response) => {
@@ -769,7 +797,7 @@ async function scrapeWithBrowser(
           if (body.length > 8_000_000) return;
           const before = collected.size;
           const wasLimited = state.rateLimitedAt;
-          absorb(body);
+          absorb(body, isPageQuery ? "page_query" : "other");
           if (state.rateLimitedAt !== wasLimited) diag.rateLimits += 1;
           if (isPageQuery) {
             diag.pageQueryAds += collected.size - before;
@@ -788,12 +816,12 @@ async function scrapeWithBrowser(
     await page
       .waitForLoadState("load", { timeout: Math.max(1_000, Math.min(10_000, remaining() - 3_000)) })
       .catch(() => undefined);
-    absorb(await page.content().catch(() => ""));
+    absorb(await page.content().catch(() => ""), "html");
 
     // No JSON in the HTML yet: give the page a moment, then read again.
     if (state.jsonResponses === 0 && !outOfTime()) {
       await page.waitForTimeout(INITIAL_WAIT);
-      absorb(await page.content().catch(() => ""));
+      absorb(await page.content().catch(() => ""), "html");
     }
 
     const bodyText = await page.locator("body").innerText().catch(() => "");
@@ -817,6 +845,7 @@ async function scrapeWithBrowser(
         if (!ad || !isRelevant(ad, input)) continue;
         collected.set(ad.id, ad);
         pendingBatch.push(ad);
+        state.lastGrowthAt = Date.now();
       }
     };
 
@@ -834,8 +863,15 @@ async function scrapeWithBrowser(
       if (collected.size >= target) break;
       if (quick && jsonMode) break; // quick = Meta's first page (~30 ads), no scrolling
       if (jsonMode && state.hasNextPage === false) break; // Meta says there is nothing more
-      // Meta's own total reached (exact page search): nothing left to fetch.
-      if (input.advertiserPageId && metaIdentity.totalCount && collected.size >= metaIdentity.totalCount) break;
+      // Meta's own total reached (exact page search): stop only once Meta's
+      // paging has also said "no more" (or will not say anything), so the
+      // scan can count as complete. One extra page query at most.
+      if (
+        input.advertiserPageId &&
+        metaIdentity.totalCount &&
+        collected.size >= metaIdentity.totalCount &&
+        state.hasNextPage !== true
+      ) break;
       if (outOfTime()) {
         stoppedBy = "deadline";
         break;
@@ -905,6 +941,22 @@ async function scrapeWithBrowser(
     if (state.jsonResponses === 0) await readDom();
     await flush(true);
 
+    // Meta rate-limited us after the last new ad: the list may be cut short.
+    stoppedBy = finalStop({
+      stoppedBy,
+      lastRateLimitAt: state.lastRateLimitAt,
+      lastGrowthAt: state.lastGrowthAt,
+      hasNextPageFalseAt: state.hasNextPageFalseAt,
+    });
+    const complete =
+      state.jsonResponses > 0 &&
+      isScanComplete({
+        stoppedBy,
+        hasNextPage: state.hasNextPage,
+        metaTotal: metaIdentity.totalCount,
+        collected: collected.size,
+      });
+
     console.info("[MetaProvider] scrape finished", {
       query: input.query,
       pageId: input.advertiserPageId ?? null,
@@ -914,6 +966,7 @@ async function scrapeWithBrowser(
       metaTotal: metaIdentity.totalCount,
       hasNextPage: state.hasNextPage,
       stoppedBy,
+      complete,
       ...diag,
       tmpFreeMb: tmpFreeMb(),
       seconds: Math.round((Date.now() - startedAt) / 1000),
@@ -925,11 +978,7 @@ async function scrapeWithBrowser(
       hasNextPage: state.hasNextPage,
       stoppedBy,
       activeOnly: new URL(pageUrl).searchParams.get("active_status") === "active",
-      complete:
-        stoppedBy === "done" &&
-        state.jsonResponses > 0 &&
-        (state.hasNextPage === false ||
-          (metaIdentity.totalCount != null && collected.size >= metaIdentity.totalCount)),
+      complete,
     });
 
     return dedupeAds(Array.from(collected.values())).sort((a, b) => {
