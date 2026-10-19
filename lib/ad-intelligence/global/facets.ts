@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createGlobalServiceClient } from "./supabase";
+import { isMissingFunctionError } from "./slow-db";
 
 /**
  * Facet counts for the AdSpy results page ("Hindi · 124 ads").
@@ -203,7 +204,7 @@ function weekStartUtc(date: Date): Date {
  * Facets are computed in Postgres (adspy_search_facets): one round trip, no
  * 5,000-row cap, and unfiltered advertiser views come from the precomputed
  * adspy_advertiser_summaries row. The Node implementation below is kept only
- * as a fallback while the migration rolls out.
+ * as a fallback while the migration rolls out (function missing only).
  */
 export async function getSearchFacets(input: FacetInput): Promise<FacetResult> {
   const { data, error } = await createGlobalServiceClient().rpc("adspy_search_facets", {
@@ -220,6 +221,12 @@ export async function getSearchFacets(input: FacetInput): Promise<FacetResult> {
 
   if (!error && data && typeof data === "object") {
     return data as FacetResult;
+  }
+
+  // Only a missing function justifies the Node path. On a timeout it would
+  // scan the same table again (up to 5 more round trips) and time out too.
+  if (error && !isMissingFunctionError(error)) {
+    throw new Error(`Facet query failed: ${error.message}`);
   }
 
   console.warn("[AdSpy facets] SQL facets unavailable; using fallback", { error: error?.message ?? null });

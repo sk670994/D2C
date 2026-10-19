@@ -100,11 +100,23 @@ const facetCache = new Map<string, { at: number; data: Facets | null }>();
  * Plain messages we wrote ourselves pass through unchanged.
  */
 const TECHNICAL = /timeout|timed out|aborted|fetch failed|network|econn|socket|\b5\d\d\b|sql|postgres|supabase|rpc|undefined|TypeError|Error:/i;
-function friendly(message: string | null | undefined, fallback = "This is taking longer than usual. Your ads are on the way. Try again in a minute."): string {
+function friendly(message: string | null | undefined, fallback = "We couldn't load this right now. Please try again in a minute."): string {
   const text = String(message ?? "").trim();
   if (!text || TECHNICAL.test(text)) return fallback;
   return text;
 }
+
+/** Shown when /search answered `degraded` (database too slow for a name search). */
+const DEGRADED_NOTICE =
+  "This brand is new or our database is busy. We've queued it — its full ad library will be read in tonight's collection (by 9 AM IST).";
+const TONIGHT_NOTICE =
+  "This brand is taking longer than usual. Its full ad library is read in tonight's collection and will be here by 9 AM IST.";
+/** Status polling: give up (and point to tonight's run) after this long. */
+const POLL_MAX_MS = 10 * 60_000;
+const POLL_MAX_DELAY_MS = 15_000;
+
+/** Only failures where the server never answered properly are worth a retry. */
+class RetryableSearchError extends Error {}
 
 function isJobActive(job?: Job | null) {
   return Boolean(job && ACTIVE_JOB.has(job.status));
@@ -190,6 +202,7 @@ export function AdSpyWorkspace() {
   const warmedUp = useRef(false);
   const autoCollected = useRef<Set<string>>(new Set());
   const pollTimer = useRef<number | null>(null);
+  const pollStartedAt = useRef<{ id: string; at: number } | null>(null);
   const lastPersisted = useRef(-1);
   const lastBump = useRef(0);
   const resultsTop = useRef<HTMLDivElement | null>(null);
@@ -442,6 +455,10 @@ export function AdSpyWorkspace() {
     const url = new URL("/api/ad-intelligence/search", window.location.origin);
     applyTargetParams(url, target);
     applyFilterParams(url, filters);
+    // "Search name instead": stop the server from resolving the name to a page.
+    if (!target.pageId && nameOnly.current.has(`${target.country}|${target.query.trim().toLocaleLowerCase()}`)) {
+      url.searchParams.set("resolve", "0");
+    }
     if (sort !== "relevant") url.searchParams.set("sort", sort);
     url.searchParams.set("page", String(page));
 
@@ -449,21 +466,46 @@ export function AdSpyWorkspace() {
       fetch(url, { cache: "no-store", signal: controller.signal })
         .then(async (response) => {
           const data = (await response.json().catch(() => ({ success: false }))) as SearchResponse;
-          if (!response.ok || !data.success) throw new Error(data.error || "Search failed.");
+          if (!response.ok || !data.success) {
+            const message = data.error || "Search failed.";
+            // Gateway / cold start: retryable. A 500 already took the server
+            // up to 25 s; repeating it only doubles the wait and the DB load.
+            throw [502, 503, 504].includes(response.status) ? new RetryableSearchError(message) : new Error(message);
+          }
           return data;
         })
         .catch((reason: unknown) => {
-          // One quiet retry: a slow database or a cold start usually clears in seconds.
-          if (attempt === 0 && !(reason instanceof DOMException && reason.name === "AbortError")) {
+          // One quiet retry for network errors (TypeError) and 502/503/504 only.
+          const retryable = reason instanceof RetryableSearchError || reason instanceof TypeError;
+          if (attempt === 0 && retryable && !controller.signal.aborted) {
             return new Promise<void>((resolve) => window.setTimeout(resolve, 2500)).then(() => load(1));
           }
           throw reason;
         });
     load(0)
       .then((data) => {
-        resultCache.set(cacheKey, { at: Date.now(), data });
+        // A degraded (database too slow) answer is not cached: the next visit asks again.
+        if (!data.degraded) resultCache.set(cacheKey, { at: Date.now(), data });
         setResult(data);
         if (data.collectionJob) setJob(data.collectionJob);
+        // The server resolved the typed name to exactly one known Meta page:
+        // lock to it (same as the autocomplete lock) so facets, collection
+        // and the URL use the page. "Search name instead" undoes it.
+        const resolvedId = String(data.resolvedPageId ?? "").trim();
+        if (/^\d+$/.test(resolvedId) && !target.pageId && target.mode === "advertiser") {
+          const from = target.query.trim();
+          const label = String(data.resolvedLabel ?? "").trim() || from;
+          const locked: SearchTarget = { ...target, query: label, pageId: resolvedId };
+          // This response already is the page's result: no second request.
+          if (!data.degraded) resultCache.set(`${stateKey(locked, filters, page)}|${sort}|v${dataVersion}`, { at: Date.now(), data });
+          setAutoLockedFrom(from);
+          setInput(label);
+          setTarget((current) =>
+            current && !current.pageId && current.query === target.query && current.country === target.country
+              ? { ...current, query: label, pageId: resolvedId }
+              : current,
+          );
+        }
       })
       .catch((reason) => {
         if (reason instanceof DOMException && reason.name === "AbortError") return;
@@ -494,6 +536,9 @@ export function AdSpyWorkspace() {
     const url = new URL("/api/ad-intelligence/facets", window.location.origin);
     applyTargetParams(url, target);
     applyFilterParams(url, filters);
+    if (!target.pageId && nameOnly.current.has(`${target.country}|${target.query.trim().toLocaleLowerCase()}`)) {
+      url.searchParams.set("resolve", "0");
+    }
 
     fetch(url, { cache: "no-store", signal: controller.signal })
       .then(async (response) => {
@@ -557,53 +602,101 @@ export function AdSpyWorkspace() {
   }, [job, key, loading, result, startCollection, target]);
 
   // Poll an active collection and refresh results as creatives land.
+  // Never stops silently: failed polls back off (max 15 s), hidden tabs pause
+  // and resume on return, and after 10 minutes the page points to tonight's
+  // collection instead of spinning forever.
   useEffect(() => {
     if (!job || !isJobActive(job)) {
       lastPersisted.current = -1;
       return;
     }
+    const jobId = job.id;
+    // Keyed by job, so a restart of this effect does not reset the 10-minute cap.
+    const previous = pollStartedAt.current;
+    const started = previous && previous.id === jobId ? previous : { id: jobId, at: Date.now() };
+    pollStartedAt.current = started;
+    const startedAt = started.at;
     let delay = 1500;
     let alive = true;
+    let inFlight = false;
 
-    const tick = async () => {
+    const schedule = (ms: number) => {
       if (!alive) return;
-      try {
-        const response = await fetch(`/api/ad-intelligence/search/status/${encodeURIComponent(job.id)}`, { cache: "no-store" });
-        const data = (await response.json()) as { success: boolean; job?: Job & { stale?: boolean } };
-        if (!alive || !data.success || !data.job) return;
-        const next = data.job;
-        if (next.persistedAds !== lastPersisted.current) {
-          lastPersisted.current = next.persistedAds;
-          delay = 1500;
-          // Refresh results while ads land, but at most every 4 seconds.
-          if (next.persistedAds > 0 && Date.now() - lastBump.current > 4000) {
-            lastBump.current = Date.now();
-            setDataVersion((v) => v + 1);
-          }
-        } else {
-          delay = Math.min(5000, Math.round(delay * 1.4));
-        }
-        if (next.stale) {
-          setJob({ ...next, status: "stale" });
-          setNotice("This brand is taking longer than usual. Its full ad library is read in tonight's collection and will be here by 9 AM IST.");
-          return;
-        }
-        setJob(next);
-        if (!ACTIVE_JOB.has(next.status)) {
-          setDataVersion((v) => v + 1);
-          if (next.status === "failed") setNotice(friendly(next.errorMessage, "We couldn't finish reading this brand just now. Its full ad library is read in tonight's collection and will be here by 9 AM IST."));
-          return;
-        }
-      } catch {
-        delay = Math.min(5000, delay * 2);
-      }
-      if (alive) pollTimer.current = window.setTimeout(() => void tick(), delay);
+      if (pollTimer.current !== null) window.clearTimeout(pollTimer.current);
+      pollTimer.current = window.setTimeout(() => {
+        pollTimer.current = null;
+        void tick();
+      }, ms);
+    };
+    const backoff = () => {
+      delay = Math.min(POLL_MAX_DELAY_MS, Math.round(delay * 2));
+    };
+    const giveUp = () => {
+      alive = false;
+      setJob((current) => (current && current.id === jobId ? { ...current, status: "stale" } : current));
+      setNotice(TONIGHT_NOTICE);
     };
 
-    pollTimer.current = window.setTimeout(() => void tick(), delay);
+    const tick = async () => {
+      if (!alive || inFlight) return;
+      if (Date.now() - startedAt > POLL_MAX_MS) {
+        giveUp();
+        return;
+      }
+      // Paused while the tab is hidden; onVisible resumes it.
+      if (document.hidden) return;
+      inFlight = true;
+      try {
+        const response = await fetch(`/api/ad-intelligence/search/status/${encodeURIComponent(jobId)}`, { cache: "no-store" });
+        const data = (await response.json().catch(() => ({ success: false }))) as { success: boolean; job?: Job & { stale?: boolean; deferred?: boolean } };
+        if (!alive) return;
+        if (!response.ok || !data.success || !data.job) {
+          backoff();
+        } else {
+          const next = data.job;
+          if (next.persistedAds !== lastPersisted.current) {
+            lastPersisted.current = next.persistedAds;
+            delay = 1500;
+            // Refresh results while ads land, but at most every 4 seconds.
+            if (next.persistedAds > 0 && Date.now() - lastBump.current > 4000) {
+              lastBump.current = Date.now();
+              setDataVersion((v) => v + 1);
+            }
+          } else {
+            delay = Math.min(5000, Math.round(delay * 1.4));
+          }
+          if (next.stale || next.deferred) {
+            alive = false;
+            setJob({ ...next, status: "stale" });
+            setNotice(TONIGHT_NOTICE);
+            return;
+          }
+          setJob(next);
+          if (!ACTIVE_JOB.has(next.status)) {
+            alive = false;
+            setDataVersion((v) => v + 1);
+            if (next.status === "failed") setNotice(friendly(next.errorMessage, "We couldn't finish reading this brand just now. Its full ad library is read in tonight's collection and will be here by 9 AM IST."));
+            return;
+          }
+        }
+      } catch {
+        backoff();
+      } finally {
+        inFlight = false;
+      }
+      schedule(delay);
+    };
+
+    const onVisible = () => {
+      if (!document.hidden && alive && pollTimer.current === null && !inFlight) schedule(300);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    schedule(delay);
     return () => {
       alive = false;
+      document.removeEventListener("visibilitychange", onVisible);
       if (pollTimer.current !== null) window.clearTimeout(pollTimer.current);
+      pollTimer.current = null;
     };
     // Re-run only when a different job starts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -945,6 +1038,12 @@ export function AdSpyWorkspace() {
               <button type="button" className="azs-icon-btn" aria-label="Dismiss" onClick={() => setNotice("")}>
                 <X size={14} />
               </button>
+            </div>
+          )}
+          {result?.degraded && !collecting && !notice && !error && (
+            <div className="azs-banner" role="status">
+              <Clock3 size={15} />
+              <span>{DEGRADED_NOTICE}</span>
             </div>
           )}
           {error && (

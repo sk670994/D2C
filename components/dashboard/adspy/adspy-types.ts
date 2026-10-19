@@ -399,6 +399,22 @@ export type SearchResponse = {
     | null
     | undefined;
 
+  /** Brand name the server resolved to exactly one known Meta page. */
+  resolvedPageId?:
+    | string
+    | null
+    | undefined;
+
+  resolvedLabel?:
+    | string
+    | null
+    | undefined;
+
+  /** The database was too slow; an empty result was returned instead of an error. */
+  degraded?:
+    | boolean
+    | undefined;
+
   error?:
     | string
     | undefined;

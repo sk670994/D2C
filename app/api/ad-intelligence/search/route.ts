@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
-import { parseAdSort, searchGlobalAdsAccurate } from "@/lib/ad-intelligence/global/accurate-search";
+import { emptyResult, parseAdSort, searchGlobalAdsAccurate } from "@/lib/ad-intelligence/global/accurate-search";
+import { isSlowDatabaseError } from "@/lib/ad-intelligence/global/slow-db";
+import { resolveIndexedPage } from "@/lib/ad-intelligence/discovery/resolve-indexed-page";
 import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
 import { getSourceCounts } from "@/lib/ad-intelligence/global/source-counts";
 import { sourceScopeFor } from "@/lib/ad-intelligence/global/source-scope";
@@ -11,8 +13,12 @@ export const runtime = "nodejs";
 // Run next to the Supabase database (ap-southeast-2 / Sydney).
 export const preferredRegion = "syd1";
 export const dynamic = "force-dynamic";
+// The database client aborts at 25 s; a slow search answers degraded before this.
+export const maxDuration = 30;
 
 const PAGE_SIZE = 25;
+/** Brand-name -> page look-up budget on the search path. */
+const RESOLVE_TIMEOUT_MS = 4000;
 
 function platform(value: string | null): AdPlatform {
   return value === "google" || value === "linkedin" ? value : "meta";
@@ -56,7 +62,7 @@ export async function GET(request: NextRequest) {
   const p = platform(params.get("platform"));
   const m = mode(params.get("mode"));
   const pg = page(params.get("page"));
-  const pid = pageId(params.get("pageId"));
+  const requestedPid = pageId(params.get("pageId"));
   const language = textFilter(params.get("language"), 32);
   const region = textFilter(params.get("region"), 100);
   const creativeTypeValue = creativeType(params.get("creativeType"));
@@ -71,7 +77,7 @@ export async function GET(request: NextRequest) {
       country: c,
       platform: p,
       mode: m,
-      pageId: pid ?? null,
+      pageId: requestedPid ?? null,
       language: language ?? null,
       region: region ?? null,
       creativeType: creativeTypeValue ?? null,
@@ -85,6 +91,18 @@ export async function GET(request: NextRequest) {
       dataSource: "indexed",
     });
   }
+
+  // Brand typed by name ("Deconstruct"): if it is exactly one Meta page we
+  // already know, search that page. A page search uses the advertiser_id
+  // index; a name search scans every advertiser name and can time out.
+  let pid = requestedPid;
+  let resolved: { pageId: string; label: string } | null = null;
+  // resolve=0: the user chose "Search name instead".
+  if (!pid && m === "advertiser" && p === "meta" && params.get("resolve") !== "0") {
+    resolved = await resolveIndexedPage(q, c, RESOLVE_TIMEOUT_MS);
+    if (resolved) pid = resolved.pageId;
+  }
+  const resolvedFields = resolved ? { resolvedPageId: resolved.pageId, resolvedLabel: resolved.label } : {};
 
   try {
     // Meta's own count for the same scope (exact page or keyword), read in
@@ -120,6 +138,7 @@ export async function GET(request: NextRequest) {
         creativeType: creativeTypeValue ?? null,
         activeStatus: activeStatusValue ?? null,
         sort,
+        ...resolvedFields,
         ...result,
         metaSource: await metaSourcePromise,
         limit: PAGE_SIZE,
@@ -133,6 +152,32 @@ export async function GET(request: NextRequest) {
     );
   } catch (error) {
     console.error("[AdSpy search]", error);
+    // A brand-name search the database could not answer in time: answer
+    // "nothing indexed yet" instead of an error, so the page can queue the
+    // brand for collection (and record the look-up) rather than show a 500.
+    if (!requestedPid && isSlowDatabaseError(error)) {
+      return NextResponse.json(
+        {
+          success: true,
+          query: q,
+          country: c,
+          platform: p,
+          mode: m,
+          pageId: pid ?? null,
+          language: language ?? null,
+          region: region ?? null,
+          creativeType: creativeTypeValue ?? null,
+          activeStatus: activeStatusValue ?? null,
+          sort,
+          ...resolvedFields,
+          ...emptyResult(pg, PAGE_SIZE),
+          metaSource: null,
+          dataSource: "indexed",
+          degraded: true,
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+    }
     return NextResponse.json(
       {
         success: false,

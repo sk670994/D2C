@@ -683,11 +683,17 @@ export async function collectAdIntelligence(
       kickAdSpyDrain();
     }
 
-    await markTrackedBrandCollected({
-      query: data.query,
-      country: data.country,
-      platform: data.platform,
-    });
+    // Bookkeeping only: the ads are already saved and the job is complete.
+    // A failure here must never flip a successful collection to "failed".
+    try {
+      await markTrackedBrandCollected({
+        query: data.query,
+        country: data.country,
+        platform: data.platform,
+      });
+    } catch (markError) {
+      console.warn("[AdSpy] markTrackedBrandCollected failed (collection kept):", markError instanceof Error ? markError.message : markError);
+    }
 
     return {
       jobId: data.jobId,

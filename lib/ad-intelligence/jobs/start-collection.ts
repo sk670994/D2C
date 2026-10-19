@@ -142,6 +142,26 @@ export async function recoverStaleRuns(collectionKey?: string): Promise<number> 
   return recovered;
 }
 
+/**
+ * A person looked this brand up but nothing new was started (already running,
+ * recently collected...). Still record the look-up: tonight's prefill reads
+ * brands whose last_requested_at is within 26 h. Best effort, never throws.
+ */
+async function recordLookup(job: CollectionJob): Promise<void> {
+  // Already recorded by getOrCreateAdvertiserCollectionJob a moment ago.
+  const last = new Date(job.lastRequestedAt).getTime();
+  if (Number.isFinite(last) && Date.now() - last < 60_000) return;
+  try {
+    const { error } = await createGlobalServiceClient()
+      .from("ad_intelligence_collection_jobs")
+      .update({ last_requested_at: new Date().toISOString() })
+      .eq("id", job.id);
+    if (error) console.warn("[AdSpy] could not record look-up:", error.message);
+  } catch (error) {
+    console.warn("[AdSpy] could not record look-up:", error instanceof Error ? error.message : error);
+  }
+}
+
 async function findActiveRunForKey(collectionKey: string): Promise<{ id: string; collection_job_id: string } | null> {
   const { data, error } = await createGlobalServiceClient()
     .from("adspy_runs")
@@ -173,6 +193,9 @@ export async function startAdSpyCollection(input: {
   }
 
   const query = input.query.replace(/\s+/g, " ").trim();
+  // Only people's look-ups are recorded; the scheduled prefill must not keep
+  // re-adding brands to its own "looked up in the last 26 h" list.
+  const lookup = input.reason === "user" || input.reason === "track";
   const country = input.country.trim().toUpperCase();
   let pageId =
     input.mode === "advertiser" && input.pageId && /^\d+$/.test(input.pageId.trim())
@@ -193,6 +216,7 @@ export async function startAdSpyCollection(input: {
     mode: input.mode,
     userId: input.userId,
     advertiserPageId: pageId,
+    recordLookup: lookup,
   });
 
   const collectionKey = buildAdvertiserCollectionKey({
@@ -215,6 +239,7 @@ export async function startAdSpyCollection(input: {
     ownRun &&
     ACTIVE_RUN_STATUSES.has(ownRun.status)
   ) {
+    if (lookup) await recordLookup(job);
     return { job, run: ownRun, dispatched: false, outcome: "already_running", collectionKey };
   }
 
@@ -224,6 +249,7 @@ export async function startAdSpyCollection(input: {
   if (activeForKey && activeForKey.collection_job_id !== job.id) {
     // Hand back the job that is actually collecting, so the page follows its progress.
     const live = (await getCollectionJob(activeForKey.collection_job_id)) ?? job;
+    if (lookup) await recordLookup(job);
     return { job: live, run: ownRun, dispatched: false, outcome: "running_for_another_request", collectionKey };
   }
 
@@ -244,9 +270,11 @@ export async function startAdSpyCollection(input: {
     if (other) {
       // Follow the collection already running for this page (same data for everyone).
       const live = other.collection_job_id ? await getCollectionJob(other.collection_job_id) : null;
+      if (lookup) await recordLookup(job);
       return { job: live ?? job, run: ownRun, dispatched: false, outcome: "running_for_another_request", collectionKey };
     }
     if (busy.some((r) => r.status === "completed")) {
+      if (lookup) await recordLookup(job);
       return { job, run: ownRun, dispatched: false, outcome: "recently_collected", collectionKey };
     }
   }
@@ -257,10 +285,10 @@ export async function startAdSpyCollection(input: {
 
   // 4. Respect the minimum interval between collections.
   const minInterval = Math.max(0, input.minIntervalMs ?? 0, creditGuarded ? apiMinIntervalMs() : 0);
-  const lastActivityAt = Math.max(
-    new Date(job.lastRequestedAt).getTime() || 0,
-    job.completedAt ? new Date(job.completedAt).getTime() || 0 : 0,
-  );
+  // Only finished collections count. last_requested_at records every
+  // look-up (for tonight's prefill), so it must not reset this window: a
+  // look-up would otherwise block the next refresh and tonight's full read.
+  const lastActivityAt = job.completedAt ? new Date(job.completedAt).getTime() || 0 : 0;
   if (
     minInterval > 0 &&
     !ACTIVE_JOB_STATUSES.has(job.status) &&
@@ -269,16 +297,19 @@ export async function startAdSpyCollection(input: {
     lastActivityAt > 0 &&
     Date.now() - lastActivityAt < minInterval
   ) {
+    if (lookup) await recordLookup(job);
     return { job, run: ownRun, dispatched: false, outcome: "recently_collected", collectionKey };
   }
 
   // 4b. Credit budget: site-wide daily ceiling, then the user's daily allowance.
   let depth = input.depth ?? defaultCollectionDepth();
+  // What the slot cost, refunded if the collection then fails to start.
+  const slotReceipt: { counterKey?: string; brandKeys?: string[] } = {};
   if (creditGuarded) {
     if (process.env.ADSPY_API_USER_DEPTH !== "deep") depth = "quick";
     const { apiCreditsUsedToday, takeUserBrandSlot } = await import("@/lib/ad-intelligence/credit-guard-server");
     const used = await apiCreditsUsedToday();
-    const slot = used < dailyCreditCap() ? await takeUserBrandSlot(input.userId, { pageId, name: query }) : false;
+    const slot = used < dailyCreditCap() ? await takeUserBrandSlot(input.userId, { pageId, name: query }, slotReceipt) : false;
     if (slot === "trial_limit") {
       // Trial look-ups used up: not queued for the night run either.
       job = await updateCollectionJob(job.id, { status: "stale", stage: "stale", errorMessage: TRIAL_LIMIT_MESSAGE });
@@ -297,56 +328,70 @@ export async function startAdSpyCollection(input: {
   }
 
   // 5. Start a fresh run + request and hand it to the worker.
-  job = await updateCollectionJob(job.id, {
-    status: "queued",
-    stage: "queued",
-    errorMessage: null,
-    completedAt: null,
-    discoveredAds: 0,
-    normalizedAds: 0,
-    persistedAds: 0,
-    startedAt: null,
-    lastRequestedAt: new Date().toISOString(),
-  });
+  //    The trial/daily slot above is taken before this point (it decides
+  //    whether to start at all). If any step until the request is queued
+  //    throws, give the slot back: the user got nothing for it. Once queued,
+  //    the worker will collect it even if the dispatch ping below fails.
+  const queue = async () => {
+    job = await updateCollectionJob(job.id, {
+      status: "queued",
+      stage: "queued",
+      errorMessage: null,
+      completedAt: null,
+      discoveredAds: 0,
+      normalizedAds: 0,
+      persistedAds: 0,
+      startedAt: null,
+      lastRequestedAt: new Date().toISOString(),
+    });
 
-  const run = await getOrCreateDurableRun({
-    userId: input.userId,
-    collectionJobId: job.id,
-    collectionKey,
-    query: job.query,
-    country: job.country,
-    platform: job.platform,
-    mode: job.mode,
-    advertiserPageId: pageId,
-  });
+    const run = await getOrCreateDurableRun({
+      userId: input.userId,
+      collectionJobId: job.id,
+      collectionKey,
+      query: job.query,
+      country: job.country,
+      platform: job.platform,
+      mode: job.mode,
+      advertiserPageId: pageId,
+    });
 
-  const payload: Omit<CollectionEvent, "requestId"> = {
-    jobId: job.id,
-    query: job.query,
-    country: job.country,
-    platform: job.platform,
-    mode: job.mode,
-    collectionKey,
-    collectionDepth: depth,
-    advertiserPageId: pageId,
-    runId: run.id,
+    const payload: Omit<CollectionEvent, "requestId"> = {
+      jobId: job.id,
+      query: job.query,
+      country: job.country,
+      platform: job.platform,
+      mode: job.mode,
+      collectionKey,
+      collectionDepth: depth,
+      advertiserPageId: pageId,
+      runId: run.id,
+    };
+
+    const request = await enqueueAdSpyRequest({
+      runId: run.id,
+      // Unique per dispatch so a re-used run never hands back an old,
+      // already-completed request that the worker would refuse to claim.
+      uniqueKey: `${collectionKey}:${input.reason}:${Date.now()}`,
+      requestType: "initial",
+      payload,
+      priority: input.reason === "user" ? 100 : 50,
+      maxAttempts: 2,
+    });
+    return { run, payload, requestId: request.id };
   };
-
-  const request = await enqueueAdSpyRequest({
-    runId: run.id,
-    // Unique per dispatch so a re-used run never hands back an old,
-    // already-completed request that the worker would refuse to claim.
-    uniqueKey: `${collectionKey}:${input.reason}:${Date.now()}`,
-    requestType: "initial",
-    payload,
-    priority: input.reason === "user" ? 100 : 50,
-    maxAttempts: 2,
+  const queued = await queue().catch(async (error: unknown) => {
+    if (slotReceipt.counterKey) {
+      const { refundUserBrandSlot } = await import("@/lib/ad-intelligence/credit-guard-server");
+      await refundUserBrandSlot(slotReceipt);
+    }
+    throw error;
   });
 
   await dispatchAdSpyCollection(
-    { ...payload, requestId: request.id },
-    `${collectionKey}:${request.id}`,
+    { ...queued.payload, requestId: queued.requestId },
+    `${collectionKey}:${queued.requestId}`,
   );
 
-  return { job, run, dispatched: true, outcome: "dispatched", collectionKey };
+  return { job, run: queued.run, dispatched: true, outcome: "dispatched", collectionKey };
 }

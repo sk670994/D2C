@@ -1159,13 +1159,15 @@ export async function markTrackedBrandCollected(input: {
   const client =
     createGlobalServiceClient();
 
-  const query =
-    input.query.trim();
+  // Match the unique key (user_id, normalized_query, country, platform):
+  // "Mamaearth " / "mamaearth" are the same tracked brand.
+  const normalizedQuery =
+    normalizeCollectionQuery(input.query);
 
   const country =
     input.country.trim().toUpperCase();
 
-  if (!query) {
+  if (!normalizedQuery) {
     return;
   }
 
@@ -1176,7 +1178,7 @@ export async function markTrackedBrandCollected(input: {
         last_collected_at:
           new Date().toISOString(),
       })
-      .eq("query", query)
+      .eq("normalized_query", normalizedQuery)
       .eq("country", country)
       .eq("platform", input.platform)
       .eq("active", true);
