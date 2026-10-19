@@ -32,7 +32,16 @@ import {
 } from "@/lib/ad-intelligence/durable-run";
 
 const CHUNK_SIZE = 25;
-const HEARTBEAT_MS = 15_000;
+/**
+ * Heartbeat refreshes adspy_runs.heartbeat_at and the request lease
+ * (adspy_requests.locked_at). 60 s keeps well inside every window that reads
+ * them: the claim lease (LEASE_SECONDS, at least 90 s), the 300 s reaper lease
+ * and the 3 min run-stale window (lib/ad-intelligence/jobs/stale-run.ts).
+ */
+const HEARTBEAT_MS = 60_000;
+/** Progress (counts) is written at most this often, or every N chunks. */
+const PROGRESS_EVERY_MS = 30_000;
+const PROGRESS_EVERY_CHUNKS = 10;
 
 /**
  * Serverless functions are killed at maxDuration (60s). The scrape must stop
@@ -134,20 +143,37 @@ function uniqueBatch(
   return unique;
 }
 
-async function refreshAdvertiserSummaries(platform: string, country: string, pageIds: Set<string>): Promise<void> {
-  // Best effort: a failed refresh must never fail the collection. Search
-  // recomputes a summary lazily when it is missing or older than 6 hours.
+async function refreshAdvertiserSummaries(platform: string, country: string, pageIds: Set<string>, deadlineAt?: number): Promise<void> {
+  // Best effort per page: a failed refresh must never fail the collection.
+  // Search no longer writes summaries (adspy_search_facets is read-only since
+  // Pack C), so EVERY page this run touched is refreshed here, not just 25.
+  // The Today cache of each page is dropped too, so its 6-hour TTL never
+  // hides the ads just saved.
   const { createGlobalServiceClient } = await import("@/lib/ad-intelligence/global/supabase");
+  const { forgetBrand } = await import("@/lib/today/cache");
   const client = createGlobalServiceClient();
-  for (const pageId of Array.from(pageIds).slice(0, 25)) {
-    const { error } = await client.rpc("adspy_refresh_advertiser_summary", {
-      p_platform: platform,
-      p_page_id: pageId,
-      p_country: country,
-    });
-    if (error) {
-      console.warn("[AdSpy collect] summary refresh failed", { pageId, error: error.message });
+  const all = Array.from(pageIds);
+  for (let i = 0; i < all.length; i += 1) {
+    const pageId = all[i];
+    // Only a hard function deadline (Vercel) stops the loop; facets for a page
+    // whose summary is missing are still computed (read-only) at search time.
+    if (deadlineAt && Date.now() > deadlineAt) {
+      console.warn("[AdSpy collect] summary refresh stopped at deadline", { refreshed: i, skipped: all.length - i });
+      break;
     }
+    try {
+      const { error } = await client.rpc("adspy_refresh_advertiser_summary", {
+        p_platform: platform,
+        p_page_id: pageId,
+        p_country: country,
+      });
+      if (error) {
+        console.warn("[AdSpy collect] summary refresh failed", { pageId, error: error.message });
+      }
+    } catch (error) {
+      console.warn("[AdSpy collect] summary refresh failed", { pageId, error: error instanceof Error ? error.message : error });
+    }
+    await forgetBrand(pageId).catch(() => undefined);
   }
 }
 
@@ -227,6 +253,51 @@ export async function collectAdIntelligence(
   let searchApiCalls = 0;
   let continuation: { cursor: string; pagesSoFar: number; pageId: string | null; scanStartedAt: string } | null = null;
 
+  /*
+   * Progress writes (job row + run row) are throttled: at most every 30 s or
+   * every 10 chunks. They used to be 2 row updates per 25-ad chunk. The
+   * completion / failure paths below always write the final counts, so
+   * nothing is lost. A failed progress write never fails the brand.
+   */
+  // 0: the first chunk is written at once, so open pages see ads arriving.
+  let lastProgressAt = 0;
+  let chunksSinceProgress = 0;
+  const writeProgress = async (force = false): Promise<void> => {
+    chunksSinceProgress += 1;
+    if (!force && chunksSinceProgress < PROGRESS_EVERY_CHUNKS && Date.now() - lastProgressAt < PROGRESS_EVERY_MS) return;
+    chunksSinceProgress = 0;
+    lastProgressAt = Date.now();
+    try {
+      await updateCollectionJob(data.jobId, {
+        status:
+          phase === "quick"
+            ? "scraping"
+            : "deep",
+        stage:
+          phase === "quick"
+            ? "scraping"
+            : "deep",
+        discoveredAds: state.discoveredAds,
+        normalizedAds: state.normalizedAds,
+        persistedAds: state.persistedAds,
+      });
+
+      await updateAdSpyRunCounts({
+        runId: data.runId!,
+        discoveredAds: state.discoveredAds,
+        normalizedAds: state.normalizedAds,
+        persistedAds: state.persistedAds,
+        stage:
+          phase === "quick"
+            ? "meta_quick"
+            : "meta_deep",
+        status: "running",
+      });
+    } catch (error) {
+      console.warn("[AdSpy collect] progress write skipped", error instanceof Error ? error.message : error);
+    }
+  };
+
   const persist = async (
     incoming: CompetitorAd[],
   ): Promise<void> => {
@@ -274,31 +345,7 @@ export async function collectAdIntelligence(
         result.insertedOrUpdated ?? 0,
       );
 
-      await updateCollectionJob(data.jobId, {
-        status:
-          phase === "quick"
-            ? "scraping"
-            : "deep",
-        stage:
-          phase === "quick"
-            ? "scraping"
-            : "deep",
-        discoveredAds: state.discoveredAds,
-        normalizedAds: state.normalizedAds,
-        persistedAds: state.persistedAds,
-      });
-
-      await updateAdSpyRunCounts({
-        runId: data.runId!,
-        discoveredAds: state.discoveredAds,
-        normalizedAds: state.normalizedAds,
-        persistedAds: state.persistedAds,
-        stage:
-          phase === "quick"
-            ? "meta_quick"
-            : "meta_deep",
-        status: "running",
-      });
+      await writeProgress();
     }
   };
 
@@ -611,7 +658,7 @@ export async function collectAdIntelligence(
         status: "exhausted",
       });
 
-      await refreshAdvertiserSummaries(data.platform, data.country, touchedAdvertisers);
+      await refreshAdvertiserSummaries(data.platform, data.country, touchedAdvertisers, options.deadlineAt);
 
       return {
         jobId: data.jobId,
@@ -675,7 +722,7 @@ export async function collectAdIntelligence(
       },
     );
 
-    await refreshAdvertiserSummaries(data.platform, data.country, touchedAdvertisers);
+    await refreshAdvertiserSummaries(data.platform, data.country, touchedAdvertisers, options.deadlineAt);
 
 
     if (continuation) {

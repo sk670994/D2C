@@ -36,6 +36,12 @@ export async function notifyBrandReady(input: { pageId: string; name: string; co
       .eq("country", input.country)
       .gte("created_at", since)
       // Values are double-quoted so names with dots, commas or apostrophes are safe.
+      // The jobs table has no page column (the page is only the
+      // collection_key suffix "|page:<id>"), so the leading-wildcard LIKE
+      // stays. It only runs on the few rows the partial index
+      // ad_intelligence_collection_jobs_recent_adv_idx (Pack C c2 SQL:
+      // country, created_at WHERE platform='meta' AND mode='advertiser')
+      // returns for the last 72 h, never on the whole table.
       .or(`collection_key.like."*|page:${input.pageId}",query.ilike."${input.name.replace(/["\\%_*]/g, "")}"`)
       .limit(50);
     const users = new Set(((jobs.data ?? []) as Array<{ user_id: string | null }>).map((j) => j.user_id).filter((id): id is string => Boolean(id) && id !== input.systemUserId));

@@ -75,7 +75,8 @@ async function databaseReady(): Promise<boolean> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const { error } = await createGlobalServiceClient()
       .from("ad_intelligence_brands")
-      .select("id", { head: true, count: "exact" })
+      // One indexed row, not count:"exact" (which counted the whole table).
+      .select("id")
       .limit(1)
       .then((r) => r, (e: unknown) => ({ error: e }));
     if (!error) return true;

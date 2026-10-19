@@ -301,7 +301,7 @@ export async function decodePendingAds(options: { limit?: number; deadlineAt?: n
 }
 
 /** Decodes for a set of creative ids (chunked to keep URLs short). */
-export async function loadDecodes(creativeIds: string[]): Promise<Map<string, Decoded>> {
+export async function loadDecodes(creativeIds: string[], onError?: () => void): Promise<Map<string, Decoded>> {
   const client = createGlobalServiceClient();
   const out = new Map<string, Decoded>();
   for (let i = 0; i < creativeIds.length; i += 150) {
@@ -311,7 +311,10 @@ export async function loadDecodes(creativeIds: string[]): Promise<Map<string, De
       .eq("status", "done")
       .in("creative_id", creativeIds.slice(i, i + 150));
     if (error) {
-      if (!/42P01|PGRST205|does not exist/i.test(error.message)) console.warn("[decode] load failed", error.message);
+      if (!/42P01|PGRST205|does not exist/i.test(error.message)) {
+        console.warn("[decode] load failed", error.message);
+        onError?.();
+      }
       return out;
     }
     for (const row of (data ?? []) as Array<{ creative_id: string; elements: unknown }>) {

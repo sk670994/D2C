@@ -3,7 +3,7 @@
  * No server-only imports so it can be unit tested.
  */
 
-/** A claimed (running) collection heartbeats every 15s. */
+/** A claimed (running) collection heartbeats every 60s (HEARTBEAT_MS in collect-ad-intelligence.ts). */
 export const RUN_STALE_AFTER_MS = 3 * 60_000;
 /**
  * A running request's lease: adspy_requests.locked_at is refreshed by every

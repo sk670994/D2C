@@ -57,6 +57,8 @@ export async function getSourceCounts(input: {
   platform: string;
   country: string;
   scope: SourceScope;
+  /** Called when the read failed (not when there is simply no row). */
+  onError?: () => void;
 }): Promise<SourceCounts | null> {
   try {
     const client = createGlobalServiceClient();
@@ -71,6 +73,7 @@ export async function getSourceCounts(input: {
     if (error) {
       if (!MISSING_TABLE.test(`${error.code ?? ""} ${error.message}`)) {
         console.warn("[AdSpy source count] read failed", error.message);
+        input.onError?.();
       }
       return null;
     }
@@ -84,6 +87,7 @@ export async function getSourceCounts(input: {
     };
     return { scopeType: input.scope.scopeType, active: pick("active"), all: pick("all") };
   } catch {
+    input.onError?.();
     return null;
   }
 }

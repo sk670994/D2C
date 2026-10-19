@@ -167,11 +167,16 @@ export async function updateCollectionJob(jobId: string, patch: Partial<{
   if (patch.completedAt !== undefined) payload.completed_at = patch.completedAt;
   if (patch.lastRequestedAt !== undefined) payload.last_requested_at = patch.lastRequestedAt;
 
-  const { error } = await createGlobalServiceClient().from("ad_intelligence_collection_jobs").update(payload).eq("id", jobId);
+  // UPDATE ... RETURNING: one round trip instead of an update plus a re-read.
+  const { data, error } = await createGlobalServiceClient()
+    .from("ad_intelligence_collection_jobs")
+    .update(payload)
+    .eq("id", jobId)
+    .select(COLLECTION_JOB_SELECT)
+    .maybeSingle();
   if (error) throw new Error(`Failed to update collection job: ${error.message}`);
-  const job = await getCollectionJob(jobId);
-  if (!job) throw new Error("Collection job disappeared after update.");
-  return job;
+  if (!data) throw new Error("Collection job disappeared after update.");
+  return mapJob(data);
 }
 
 function escapeLike(value: string): string {
