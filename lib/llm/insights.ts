@@ -532,22 +532,15 @@ async function callGemini(apiKey: string, model: string, prompt: string, timeout
       }
     };
     const baseUrl = "https://generativelanguage.googleapis.com";
-    const modelPath = `/models/${model.replace(/^models\//, "")}:generateContent?key=${apiKey}`;
+    const modelPath = `/models/${encodeURIComponent(model.replace(/^models\//, ""))}:generateContent`;
 
-    let res = await fetch(`${baseUrl}/v1beta${modelPath}`, {
+    // Key goes in a header so it never appears in URLs, logs or error messages.
+    const res = await fetch(`${baseUrl}/v1beta${modelPath}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify(payload),
       signal: controller.signal
     });
-    if (!res.ok && res.status === 404) {
-      res = await fetch(`${baseUrl}/v1${modelPath}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      });
-    }
     if (!res.ok) return null;
     const data = (await res.json()) as GeminiGenerateResponse;
     const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("").trim();

@@ -18,6 +18,7 @@ import {
   type DurableRun,
 } from "@/lib/ad-intelligence/durable-run";
 import { dispatchAdSpyCollection, getAdSpyDispatchMode } from "./dispatch-adspy-collection";
+import { REQUEST_LEASE_MS, RUN_STALE_AFTER_MS, isRunStale } from "./stale-run";
 import { apiMinIntervalMs, dailyCreditCap, DEFERRED_MESSAGE, paidMetaSourceActive, TRIAL_LIMIT_MESSAGE } from "@/lib/ad-intelligence/credit-guard";
 
 /**
@@ -28,16 +29,13 @@ import { apiMinIntervalMs, dailyCreditCap, DEFERRED_MESSAGE, paidMetaSourceActiv
  * and stuck runs are recovered before a new one is started.
  */
 
-/** A claimed (running) collection heartbeats every 15s. */
-export const RUN_STALE_AFTER_MS = 3 * 60_000;
-/**
- * A run that is only waiting (queued / retrying backoff) has no heartbeat.
- * With one persistent worker, waiting behind an 8-minute job is normal, so
- * waiting runs are only given up on after this much longer window.
- */
-export const WAITING_RUN_STALE_AFTER_MS =
-  Number(process.env.ADSPY_WAITING_RUN_STALE_MS) ||
-  (process.env.ADSPY_COLLECTOR === "worker" || process.env.ADSPY_COLLECTOR === "searchapi" ? 30 * 60_000 : RUN_STALE_AFTER_MS);
+export {
+  REQUEST_LEASE_MS,
+  RUN_STALE_AFTER_MS,
+  RUNNING_RUN_HARD_STALE_MS,
+  WAITING_RUN_STALE_AFTER_MS,
+  isRunStale,
+} from "./stale-run";
 
 const ACTIVE_JOB_STATUSES = new Set([
   "queued",
@@ -115,10 +113,31 @@ export async function recoverStaleRuns(collectionKey?: string): Promise<number> 
   const { data, error } = await query;
   if (error) throw new Error(`Failed to scan AdSpy runs: ${error.message}`);
 
+  // Running runs that missed heartbeats: check their request leases in one query.
+  const rows = (data ?? []) as Array<{ id: string; collection_job_id: string; status: string; heartbeat_at?: string | null; updated_at?: string | null }>;
+  const suspect = rows
+    .filter((row) => row.status === "running" && heartbeatAgeMs(row) >= RUN_STALE_AFTER_MS)
+    .map((row) => String(row.id));
+  let leased: Set<string> | null = new Set();
+  if (suspect.length) {
+    const { data: leases, error: leaseError } = await client
+      .from("adspy_requests")
+      .select("run_id")
+      .in("run_id", suspect)
+      .eq("status", "running")
+      .gte("locked_at", new Date(Date.now() - REQUEST_LEASE_MS).toISOString());
+    if (leaseError) {
+      console.warn("[AdSpy] lease check failed; using the long running-run threshold", leaseError.message);
+      leased = null;
+    } else {
+      for (const lease of (leases ?? []) as Array<{ run_id: string }>) leased.add(String(lease.run_id));
+    }
+  }
+
   let recovered = 0;
-  for (const row of data ?? []) {
-    const limit = row.status === "running" ? RUN_STALE_AFTER_MS : WAITING_RUN_STALE_AFTER_MS;
-    if (heartbeatAgeMs(row) < limit) continue;
+  for (const row of rows) {
+    const leaseLive = row.status !== "running" ? false : leased === null ? null : leased.has(String(row.id));
+    if (!isRunStale({ status: row.status, heartbeatAgeMs: heartbeatAgeMs(row), leaseLive })) continue;
 
     await finishAdSpyRun({
       runId: String(row.id),

@@ -1,8 +1,10 @@
 name: AdSpy nightly pre-fill
 
+# Manual runs only. The founder's Windows PC runs the nightly collector at 01:00 IST
+# (scripts/adspy-prefill.ts; Vercel env ADSPY_NIGHTLY_ON_PC=1). A scheduled run here
+# is harmful: Meta rate-limits GitHub's IPs after ~30 ads, and the half-finished run
+# stamps brands as "recently collected", which then blocks the PC run for 120 hours.
 on:
-  schedule:
-    - cron: "30 20 * * *" # 02:00 IST
   workflow_dispatch:
     inputs:
       minutes:

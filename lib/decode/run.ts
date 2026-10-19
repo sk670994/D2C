@@ -71,9 +71,9 @@ export async function decodeCreativeWithUsage(ad: CreativeForDecode, apiKey: str
   ];
   if (image) parts.push({ inline_data: { mime_type: image.mimeType, data: image.data } });
 
-  const response = await fetch(`${GEMINI_BASE}/models/${decodeModel()}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+  const response = await fetch(`${GEMINI_BASE}/models/${encodeURIComponent(decodeModel())}:generateContent`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify({
       contents: [{ role: "user", parts }],
       generationConfig: { temperature: 0.1, maxOutputTokens: 600, responseMimeType: "application/json" },

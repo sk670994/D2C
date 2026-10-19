@@ -10,9 +10,13 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 /**
- * Pipeline health check. Called every 30 min by GitHub Actions (ops-health.yml)
- * and daily by Vercel Cron, both with CRON_SECRET. Emails OPS_ALERT_EMAIL
- * (at most once per issue every 3 h). ?dry=1 checks without emailing.
+ * Pipeline health check, with CRON_SECRET. Emails OPS_ALERT_EMAIL (at most once
+ * per issue every 3 h). ?dry=1 checks without emailing.
+ *
+ * Light (default, hourly from GitHub ops-health.yml): the ops status view,
+ * decode counts and alerts only - a few cheap reads on the nano database.
+ * Full (?full=1, daily from Vercel Cron): also freshness and coverage checks,
+ * cut-off runs, AI spend, rate_limits_prune and the billing reconcile.
  */
 export async function GET(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
@@ -28,7 +32,10 @@ export async function GET(request: NextRequest) {
     client.from("ad_creative_decodes").select("creative_id", { count: "exact", head: true }).eq("status", "done").gte("decoded_at", since),
     client.from("ad_creative_decodes").select("creative_id", { count: "exact", head: true }).eq("status", "failed").gte("decoded_at", since),
   ]);
-  if (ops.error) return NextResponse.json({ ok: false, error: ops.error.message }, { status: 500 });
+  if (ops.error) {
+    console.error("[ops-health] adspy_ops_status failed", ops.error.message);
+    return NextResponse.json({ ok: false, error: "ops status unavailable" }, { status: 500 });
+  }
   const o = (ops.data ?? {}) as Record<string, unknown>;
   const num = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
 
@@ -45,59 +52,70 @@ export async function GET(request: NextRequest) {
     geminiConfigured: Boolean(process.env.GEMINI_API_KEY?.trim()),
     serverlessCollector: process.env.ADSPY_COLLECTOR === "searchapi",
   };
-  // Freshness: watched brands whose summary was not recomputed in 36 h.
-  try {
-    const { data: watchRows } = await client.from("adspy_advertiser_watchlists").select("advertiser_id").eq("platform", "meta").limit(2000);
-    const watchedIds = Array.from(new Set((watchRows ?? []).map((r: { advertiser_id: unknown }) => String(r.advertiser_id)).filter((id) => /^\d+$/.test(id))));
-    if (watchedIds.length) {
-      const fresh = new Set<string>();
-      const cutoff = new Date(now - 36 * 3_600_000).toISOString();
-      for (let i = 0; i < watchedIds.length; i += 200) {
-        const { data } = await client.from("adspy_advertiser_summaries").select("advertiser_id").in("advertiser_id", watchedIds.slice(i, i + 200)).gte("computed_at", cutoff);
-        for (const row of (data ?? []) as Array<{ advertiser_id: string }>) fresh.add(String(row.advertiser_id));
+  const full = request.nextUrl.searchParams.get("full") === "1";
+  if (full) {
+    // Freshness: watched brands whose summary was not recomputed in 36 h.
+    try {
+      const { data: watchRows } = await client.from("adspy_advertiser_watchlists").select("advertiser_id").eq("platform", "meta").limit(2000);
+      const watchedIds = Array.from(new Set((watchRows ?? []).map((r: { advertiser_id: unknown }) => String(r.advertiser_id)).filter((id) => /^\d+$/.test(id))));
+      if (watchedIds.length) {
+        const fresh = new Set<string>();
+        const cutoff = new Date(now - 36 * 3_600_000).toISOString();
+        for (let i = 0; i < watchedIds.length; i += 200) {
+          const { data } = await client.from("adspy_advertiser_summaries").select("advertiser_id").in("advertiser_id", watchedIds.slice(i, i + 200)).gte("computed_at", cutoff);
+          for (const row of (data ?? []) as Array<{ advertiser_id: string }>) fresh.add(String(row.advertiser_id));
+        }
+        snapshot.watchedBrands = watchedIds.length;
+        snapshot.staleWatchedBrands = watchedIds.length - fresh.size;
       }
-      snapshot.watchedBrands = watchedIds.length;
-      snapshot.staleWatchedBrands = watchedIds.length - fresh.size;
+    } catch {
+      // freshness is best effort
     }
-  } catch {
-    // freshness is best effort
-  }
-  // Completeness: every page scan this week vs Meta's own live count.
-  try {
-    const weekAgo = new Date(now - 7 * 86_400_000).toISOString();
-    const { data } = await client
-      .from("adspy_source_counts")
-      .select("scope_key,meta_total,collected_ads")
-      .eq("scope_type", "page")
-      .eq("status_scope", "active")
-      .gte("observed_at", weekAgo)
-      .gte("meta_total", 20)
-      .limit(2000);
-    const rows = (data ?? []) as Array<{ scope_key: string; meta_total: number; collected_ads: number }>;
-    const low = rows.filter((r) => Number(r.collected_ads) < MIN_COVERAGE * Number(r.meta_total));
-    const lowCoverage: NonNullable<OpsSnapshot["lowCoverage"]> = [];
-    for (const r of low.slice(0, 50)) {
-      const { data: named } = await client
-        .from("ad_intelligence_creatives")
-        .select("advertiser_name")
-        .eq("advertiser_id", r.scope_key)
-        .limit(1);
-      const name = String((named as Array<{ advertiser_name?: string }> | null)?.[0]?.advertiser_name ?? r.scope_key);
-      lowCoverage.push({ name, pageId: r.scope_key, have: Number(r.collected_ads), meta: Number(r.meta_total) });
+    // Completeness: every page scan this week vs Meta's own live count.
+    try {
+      const weekAgo = new Date(now - 7 * 86_400_000).toISOString();
+      const { data } = await client
+        .from("adspy_source_counts")
+        .select("scope_key,meta_total,collected_ads")
+        .eq("scope_type", "page")
+        .eq("status_scope", "active")
+        .gte("observed_at", weekAgo)
+        .gte("meta_total", 20)
+        .limit(2000);
+      const rows = (data ?? []) as Array<{ scope_key: string; meta_total: number; collected_ads: number }>;
+      const low = rows.filter((r) => Number(r.collected_ads) < MIN_COVERAGE * Number(r.meta_total));
+      const lowCoverage: NonNullable<OpsSnapshot["lowCoverage"]> = [];
+      // Name lookups: Meta only (matches the platform index), 5 at a time.
+      const lowSlice = low.slice(0, 50);
+      for (let i = 0; i < lowSlice.length; i += 5) {
+        const batch = await Promise.all(
+          lowSlice.slice(i, i + 5).map(async (r) => {
+            const { data: named } = await client
+              .from("ad_intelligence_creatives")
+              .select("advertiser_name")
+              .eq("platform", "meta")
+              .eq("advertiser_id", r.scope_key)
+              .limit(1);
+            const name = String((named as Array<{ advertiser_name?: string }> | null)?.[0]?.advertiser_name ?? r.scope_key);
+            return { name, pageId: r.scope_key, have: Number(r.collected_ads), meta: Number(r.meta_total) };
+          }),
+        );
+        lowCoverage.push(...batch);
+      }
+      snapshot.coverageChecked = rows.length;
+      snapshot.lowCoverage = lowCoverage;
+    } catch {
+      // coverage is best effort
     }
-    snapshot.coverageChecked = rows.length;
-    snapshot.lowCoverage = lowCoverage;
-  } catch {
-    // coverage is best effort
+    // Runs the reaper had to kill: the only trace a Vercel timeout leaves in the DB.
+    const cut = await client.from("adspy_runs").select("id", { count: "exact", head: true })
+      .eq("status", "failed").ilike("error_message", "%stopped responding%").gte("updated_at", since);
+    snapshot.cutOff24h = cut.count ?? 0;
+    await client.rpc("rate_limits_prune").then(() => undefined, () => undefined);
+    // Plan switches: make sure no old Razorpay subscription keeps billing.
+    const billingLeft = await import("@/lib/billing/server").then((m) => m.reconcilePlanSwitches()).catch(() => 0);
+    if (billingLeft > 0) console.warn("[ops-health] old subscriptions still not cancelled", billingLeft);
   }
-  // Runs the reaper had to kill: the only trace a Vercel timeout leaves in the DB.
-  const cut = await client.from("adspy_runs").select("id", { count: "exact", head: true })
-    .eq("status", "failed").ilike("error_message", "%stopped responding%").gte("updated_at", since);
-  snapshot.cutOff24h = cut.count ?? 0;
-  await client.rpc("rate_limits_prune").then(() => undefined, () => undefined);
-  // Plan switches: make sure no old Razorpay subscription keeps billing.
-  const billingLeft = await import("@/lib/billing/server").then((m) => m.reconcilePlanSwitches()).catch(() => 0);
-  if (billingLeft > 0) console.warn("[ops-health] old subscriptions still not cancelled", billingLeft);
   const issues = evaluateOps(snapshot);
   const to = process.env.OPS_ALERT_EMAIL?.trim();
   const dry = request.nextUrl.searchParams.get("dry") === "1";
@@ -127,17 +145,23 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // AI spend in the last 24 h from the cost ledger (estimate; absent until the table exists).
+  // AI spend in the last 24 h from the cost ledger (full check only; estimate; absent until the table exists).
   let aiSpend24h: Record<string, { calls: number; usd: number }> | null = null;
-  const spend = await client.from("ai_calls").select("provider,cost_usd").gte("created_at", since).limit(20000);
-  if (!spend.error) {
-    aiSpend24h = {};
-    for (const row of (spend.data ?? []) as Array<{ provider: string; cost_usd: number | null }>) {
-      const p = (aiSpend24h[row.provider] ??= { calls: 0, usd: 0 });
-      p.calls += 1;
-      p.usd = Math.round((p.usd + Number(row.cost_usd ?? 0)) * 10000) / 10000;
+  let aiSpendTruncated = false;
+  if (full) {
+    const SPEND_ROWS = 5000;
+    const spend = await client.from("ai_calls").select("provider,cost_usd").gte("created_at", since).limit(SPEND_ROWS);
+    if (!spend.error) {
+      aiSpend24h = {};
+      const rows = (spend.data ?? []) as Array<{ provider: string; cost_usd: number | null }>;
+      aiSpendTruncated = rows.length >= SPEND_ROWS;
+      for (const row of rows) {
+        const p = (aiSpend24h[row.provider] ??= { calls: 0, usd: 0 });
+        p.calls += 1;
+        p.usd = Math.round((p.usd + Number(row.cost_usd ?? 0)) * 10000) / 10000;
+      }
     }
   }
 
-  return NextResponse.json({ ok: issues.length === 0, issues, snapshot, aiSpend24h, alerted: due.map((i) => i.key), email });
+  return NextResponse.json({ ok: issues.length === 0, mode: full ? "full" : "light", issues, snapshot, aiSpend24h, aiSpendTruncated, alerted: due.map((i) => i.key), email });
 }

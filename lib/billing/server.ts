@@ -6,7 +6,7 @@ import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase
 
 import { isDisposableEmail } from "@/lib/auth/disposable-email";
 import { checkSignupEmail } from "@/lib/auth/email-check-server";
-import { entitlementFor, isAdminEmail, razorpayPlanEnv, TRIAL_DAYS, type Entitlement, type PaidPlanKey, type SubscriptionRow } from "./plans";
+import { entitlementFor, isAdminEmail, razorpayPlanEnv, TRIAL_DAYS, unavailableEntitlement, type Entitlement, type PaidPlanKey, type SubscriptionRow } from "./plans";
 
 const RAZORPAY_API = "https://api.razorpay.com/v1";
 const COLUMNS = "user_id,plan,status,trial_ends_at,current_period_end,pending_plan,razorpay_subscription_id,previous_subscription_id";
@@ -39,17 +39,26 @@ export async function getBillingRow(userId: string, email?: string | null): Prom
   const inserted = await client.from("billing_subscriptions").upsert(trial, { onConflict: "user_id", ignoreDuplicates: true }).select(COLUMNS).maybeSingle();
   if (inserted.data) return inserted.data as BillingRow;
   const again = await client.from("billing_subscriptions").select(COLUMNS).eq("user_id", userId).maybeSingle();
+  if (again.error && !missingTable(again.error.message)) throw new Error(again.error.message);
   return (again.data as BillingRow | null) ?? null;
 }
 
 /**
  * What the user may do now. Before the billing migration runs, everyone
- * gets the trial allowance (never locked out by a missing table).
+ * gets the trial allowance (never locked out by a missing table), and a new
+ * user gets their trial row created by getBillingRow. Any other database
+ * error fails closed (inactive) instead of granting a free trial.
  */
 export async function getEntitlement(userId: string, email?: string | null): Promise<Entitlement> {
   const admin = isAdminEmail(email, process.env.ZOOPTRACK_ADMIN_EMAILS);
   if (admin) return entitlementFor(null, Date.now(), { admin: true });
-  const row = await getBillingRow(userId, email).catch(() => null);
+  let row: BillingRow | null;
+  try {
+    row = await getBillingRow(userId, email);
+  } catch (error) {
+    console.error("[billing] entitlement lookup failed; failing closed", error instanceof Error ? error.message : error);
+    return unavailableEntitlement();
+  }
   return entitlementFor(row);
 }
 
@@ -186,7 +195,7 @@ async function cancelPreviousSubscription(userId: string, subscriptionId: string
 }
 
 /** Cancel a subscription that was created at checkout but never paid. Best effort. */
-async function cancelUnpaid(subscriptionId: string): Promise<void> {
+export async function cancelUnpaid(subscriptionId: string): Promise<void> {
   await razorpay(`/subscriptions/${encodeURIComponent(subscriptionId)}/cancel`, { method: "POST", body: { cancel_at_cycle_end: 0 } }).catch((reason) =>
     console.warn("[billing] could not cancel unpaid checkout", subscriptionId, reason instanceof Error ? reason.message : reason),
   );

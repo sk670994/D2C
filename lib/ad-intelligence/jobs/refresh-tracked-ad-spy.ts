@@ -90,7 +90,7 @@ export async function refreshTrackedAdSpy(options: {
   depth?: "quick" | "deep";
   /** Override the per-brand minimum gap (nightly job: 12 h, so cron drift never skips a night). */
   minIntervalMs?: number;
-  /** Only reap/recover; start no collections (nightly run happens on the PC). */
+  /** Nightly run happens on the PC: return at once, without any DB reads. */
   skipDispatch?: boolean;
 } = {}): Promise<{
   reapedRequests: number;
@@ -100,6 +100,12 @@ export async function refreshTrackedAdSpy(options: {
   skipped: Record<string, number>;
   errors: number;
 }> {
+  // The PC collector reads every tracked brand in full each night (free) and
+  // reaps stuck runs itself; the Vercel cron then has nothing to do.
+  if (options.skipDispatch) {
+    return { reapedRequests: 0, recoveredRuns: 0, targets: 0, dispatched: 0, skipped: { nightly_on_pc: 1 }, errors: 0 };
+  }
+
   const reapedRequests = await reapExpiredAdSpyRequests().catch((error) => {
     console.error("[AdSpy scheduled] reap failed", error);
     return 0;
@@ -136,12 +142,6 @@ export async function refreshTrackedAdSpy(options: {
   let dispatched = 0;
   let errors = 0;
   const skipped: Record<string, number> = {};
-
-  // The PC collector reads every tracked brand in full each night (free).
-  // Then the Vercel cron only reaps stuck runs and spends no API credits.
-  if (options.skipDispatch) {
-    return { reapedRequests, recoveredRuns, targets: targets.length, dispatched: 0, skipped: { nightly_on_pc: targets.length }, errors: 0 };
-  }
 
   for (const target of targets) {
     if (dispatched >= MAX_DISPATCH_PER_RUN) {

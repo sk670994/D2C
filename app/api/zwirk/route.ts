@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { checkSharedRateLimit } from "@/lib/rate-limit";
 import { takeAiCall } from "@/lib/ai/limits-server";
+import { sanitizeZwirkInput } from "@/lib/zwirk/input-limits";
 import { routeZwirkIntent } from "@/lib/zwirk/reasoning/intent-router";
 import { buildSpecializedZwirkPrompt } from "@/lib/zwirk/prompts/context-prompt";
 import {
@@ -405,70 +406,36 @@ export async function POST(
       );
     }
 
-    // Daily AI allowance by plan (shared with report insights).
+    /*
+     * --------------------------------------------------
+     * 2. Read and cap the request body (before any AI allowance is spent)
+     * --------------------------------------------------
+     */
+    let rawBody: unknown;
+    try {
+      rawBody = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid request." }, { status: 400 });
+    }
+    const parsed = sanitizeZwirkInput(rawBody);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: parsed.status });
+    }
+    const {
+      messages,
+      competitorContext,
+      adSpyContext,
+      pagePath,
+      entityContext,
+      context: contextValue,
+    } = parsed.input;
+
+    // Daily AI allowance by plan (shared with report insights). Counted only for valid requests.
     const aiBlock = await takeAiCall(user.id, user.email ?? null);
     if (aiBlock) {
       return NextResponse.json(
         { error: aiBlock.message, code: "ai_daily_limit" },
         { status: 429, headers: { "Retry-After": String(aiBlock.retryAfterSeconds) } },
-      );
-    }
-
-    /*
-     * --------------------------------------------------
-     * 2. Read request body
-     * --------------------------------------------------
-     */
-    const body =
-      (await request.json()) as {
-        messages?: ChatMessage[];
-        context?: string;
-        competitorContext?: string;
-        adSpyContext?: string;
-        pagePath?: string;
-        entityContext?: unknown;
-      };
-
-    const messages =
-      Array.isArray(
-        body.messages
-      )
-        ? body.messages
-        : [];
-
-    const competitorContext =
-      typeof body.competitorContext ===
-      "string"
-        ? body.competitorContext
-        : undefined;
-
-    const adSpyContext =
-      typeof body.adSpyContext ===
-      "string"
-        ? body.adSpyContext
-        : undefined;
-
-    
-    const pagePath =
-      typeof body.pagePath ===
-      "string"
-        ? body.pagePath
-        : "";
-
-    const entityContext =
-      body.entityContext;
-
-    if (
-      messages.length === 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "No messages provided",
-        },
-        {
-          status: 400,
-        }
       );
     }
 
@@ -545,12 +512,6 @@ export async function POST(
      * 5. Build prompt
      * --------------------------------------------------
      */
-    const contextValue =
-      typeof body.context ===
-      "string"
-        ? body.context
-        : undefined;
-
     const basePrompt =
       buildPrompt(
         messages,
@@ -605,9 +566,8 @@ export async function POST(
           `Current Zooptrack page: ${pagePath || "/"}`,
 
         entity:
-          entityContext &&
-          typeof entityContext === "object"
-            ? entityContext as Parameters<
+          entityContext
+            ? entityContext as unknown as Parameters<
                 typeof buildZwirkContext
               >[0]["entity"]
             : null,
@@ -753,258 +713,74 @@ export async function POST(
     const baseUrl =
       "https://generativelanguage.googleapis.com";
 
-    const callGemini =
-      async (
-        generationConfig: {
-          maxOutputTokens: number;
-        }
-      ) => {
-        let lastResponse:
-          | Response
-          | null =
-          null;
+    const modelName =
+      model.replace(/^models\//, "");
 
-        let lastEndpoint =
-          "";
+    // One stable endpoint; the key travels in a header, never in the URL.
+    const endpoint =
+      `${baseUrl}/v1beta/models/${encodeURIComponent(modelName)}:generateContent`;
 
-        const maxAttempts =
-          3;
-
-        for (
-          let attempt = 1;
-          attempt <=
-          maxAttempts;
-          attempt++
-        ) {
-          const controller =
-            new AbortController();
-
-          const timeout =
-            setTimeout(
-              () =>
-                controller.abort(),
-              timeoutMs
-            );
-
-          try {
-            const payload = {
-              contents: [
-                {
-                  role: "user",
-                  parts: [
-                    {
-                      text: prompt,
-                    },
-                  ],
-                },
-              ],
-              generationConfig,
-            };
-
-            const modelName =
-              model.replace(
-                /^models\//,
-                ""
-              );
-
-            let endpoint =
-              `${baseUrl}/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-
-            let res =
-              await fetch(
-                endpoint,
-                {
-                  method:
-                    "POST",
-                  headers: {
-                    "Content-Type":
-                      "application/json",
-                  },
-                  body: JSON.stringify(
-                    payload
-                  ),
-                  signal:
-                    controller.signal,
-                }
-              );
-
-            if (
-              !res.ok &&
-              res.status === 404
-            ) {
-              endpoint =
-                `${baseUrl}/v1/models/${modelName}:generateContent?key=${apiKey}`;
-
-              res =
-                await fetch(
-                  endpoint,
-                  {
-                    method:
-                      "POST",
-                    headers: {
-                      "Content-Type":
-                        "application/json",
-                    },
-                    body: JSON.stringify(
-                      payload
-                    ),
-                    signal:
-                      controller.signal,
-                  }
-                );
-            }
-
-            lastResponse =
-              res;
-
-            lastEndpoint =
-              endpoint;
-
-            if (
-              res.status ===
-              503
-            ) {
-              if (
-                attempt <
-                maxAttempts
-              ) {
-                const delay =
-                  attempt *
-                  1500;
-
-                console.warn(
-                  `[api/zwirk] Gemini 503. Retrying in ${delay}ms...`
-                );
-
-                await new Promise(
-                  (
-                    resolve
-                  ) =>
-                    setTimeout(
-                      resolve,
-                      delay
-                    )
-                );
-
-                continue;
-              }
-            }
-
-            return {
-              res,
-              endpoint,
-            };
-          } catch (error) {
-            if (
-              attempt ===
-              maxAttempts
-            ) {
-              throw error;
-            }
-
-            const delay =
-              attempt *
-              1500;
-
-            console.warn(
-              `[api/zwirk] Gemini request failed. Retrying in ${delay}ms...`
-            );
-
-            await new Promise(
-              (
-                resolve
-              ) =>
-                setTimeout(
-                  resolve,
-                  delay
-                )
-            );
-          } finally {
-            clearTimeout(
-              timeout
-            );
-          }
-        }
-
-        if (
-          !lastResponse
-        ) {
-          throw new Error(
-            "Gemini request failed."
-          );
-        }
-
-        return {
-          res:
-            lastResponse,
-          endpoint:
-            lastEndpoint,
-        };
+    const callGemini = async (generationConfig: { maxOutputTokens: number }) => {
+      const payload = {
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig,
       };
+      const maxAttempts = 2;
+      let res: Response | null = null;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          res = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": apiKey,
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
+        // Retry only on rate limit / overload; anything else is final.
+        if ((res.status === 429 || res.status === 503) && attempt < maxAttempts) {
+          console.warn(`[api/zwirk] Gemini ${res.status}. Retrying once...`);
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          continue;
+        }
+        break;
+      }
+      if (!res) throw new Error("Gemini request failed.");
+      return res;
+    };
 
     /*
      * --------------------------------------------------
      * 8. Primary Gemini request
      * --------------------------------------------------
      */
-    const primaryConfig = {
-      maxOutputTokens: 1200,
-    };
-
-    const {
-      res,
-      endpoint,
-    } = await callGemini(
-      primaryConfig
-    );
+    const res = await callGemini({ maxOutputTokens: 1200 });
 
     /*
      * --------------------------------------------------
-     * 9. Handle Gemini error
+     * 9. Handle Gemini error (details stay in server logs only)
      * --------------------------------------------------
      */
     if (!res.ok) {
-      const errorText =
-        await res.text();
-
-      if (
-        res.status ===
-        503
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "Gemini temporarily unavailable",
-            status: 503,
-            detail:
-              "The selected Gemini model is currently experiencing high demand. Please try again in a few seconds.",
-            model,
-            endpoint,
-            retryable:
-              true,
-          },
-          {
-            status: 503,
-          }
-        );
-      }
-
+      const errorText = await res.text().catch(() => "");
+      console.error(
+        `[api/zwirk] Gemini error status=${res.status} model=${modelName} body=${errorText.slice(0, 500)}`
+      );
+      const busy = res.status === 429 || res.status === 503;
       return NextResponse.json(
         {
-          error:
-            "LLM error",
-          status:
-            res.status,
-          detail:
-            errorText ||
-            "No error body returned",
-          model,
-          endpoint,
+          error: busy
+            ? "ZWIRK is busy right now. Please try again in a few seconds."
+            : "ZWIRK could not answer right now. Please try again.",
+          retryable: busy,
         },
-        {
-          status:
-            res.status,
-        }
+        { status: busy ? 503 : 502 }
       );
     }
 
@@ -1087,15 +863,16 @@ export async function POST(
       proof,
     });
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "ZWIRK error";
+    const aborted = error instanceof Error && error.name === "AbortError";
+    console.error(
+      `[api/zwirk] failed: ${error instanceof Error ? error.message : String(error)}`
+    );
 
     return NextResponse.json(
       {
-        error:
-          message,
+        error: aborted
+          ? "ZWIRK took too long to answer. Please try again."
+          : "ZWIRK could not answer right now. Please try again.",
       },
       {
         status: 500,
