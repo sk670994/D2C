@@ -88,7 +88,7 @@ export function FooterCta({ title, copy }: { title: string; copy: string }) {
       <div>
         <p>{copy}</p>
         <Link className={t.btn} href="/login">
-          Start the 7-day free trial
+          Start free trial
         </Link>
       </div>
     </footer>

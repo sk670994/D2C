@@ -36,7 +36,7 @@ export default async function LoginPage({
             Know what your rivals ran this week.
           </h1>
           <p className="auth-lead">
-            Start a 7-day free trial. Verify your email. No password or
+            Start free: 3 brand searches, no card. Verify your email. No password or
             ad-account access needed.
           </p>
           <ul className="auth-points">

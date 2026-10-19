@@ -28,7 +28,7 @@ export const PLANS: Record<PlanKey, Plan> = {
     key: "trial",
     name: "Free trial",
     priceInr: 0,
-    audience: `${TRIAL_DAYS} days, no card`,
+    audience: "3 brand searches, no card",
     rivals: 5,
     alerts: true,
     features: ["5 rivals", "Today + email report", "AI ad decoding", "Big-move alerts"],

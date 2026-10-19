@@ -1119,3 +1119,11 @@
 .legalLine{
   border-bottom-color:rgba(29,42,46,.08);
 }
+.heroReel{
+  min-width:0;
+  width:100%;
+  padding:40px 0;
+}
+@media (max-width:900px){
+  .heroReel{ padding:0 0 32px; }
+}
