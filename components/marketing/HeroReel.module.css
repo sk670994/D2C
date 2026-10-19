@@ -77,6 +77,11 @@
 .mark { position: absolute; top: 7px; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%; border: 3px solid var(--surface); box-shadow: 0 0 0 1px var(--line); transition: left 0.9s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.3s; }
 .verdict { border-radius: 12px; padding: 10px 12px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .stamp { font-size: 1.5em; letter-spacing: 0.04em; }
+@media (max-width: 560px) {
+  .stage { aspect-ratio: 4 / 5; }
+  .vault { grid-template-columns: 1fr; }
+  .vside { display: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   .a, .track i, .mark { transition: none; }
   .caret, .scan { animation: none; }

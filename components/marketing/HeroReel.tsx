@@ -141,7 +141,7 @@ function Finder({ t }: { t: number }) {
 const VAULT = [
   { key: "h", side: "Hooks", title: "Which openings Glowlab repeats", color: "var(--blue)", rows: [["Doctor says", 38], ["Before / after", 27], ["Founder story", 18]] },
   { key: "c", side: "Creators", title: "Who appears in their ads", color: "var(--plum)", rows: [["Dermatologist", 41], ["Customer UGC", 33], ["Founder", 14]] },
-  { key: "l", side: "Languages", title: "Which languages they speak in", color: "var(--green)", rows: [["Hinglish", 52], ["Hindi", 28], ["English", 20]] },
+  { key: "l", side: "Languages", title: "Which languages they speak in", color: "var(--green)", rows: [["Hinglish", 34], ["Hindi", 20], ["English", 16], ["Telugu", 12], ["Marathi", 10], ["Malayalam", 8]] },
 ] as const;
 
 function Vault({ t }: { t: number }) {
