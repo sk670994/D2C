@@ -19,7 +19,7 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
     label: "Watch",
     items: [
       { key: "today", href: "/today", label: "Today", icon: <CalendarClock aria-hidden="true" /> },
-      { key: "adspy", href: "/adspy", label: "Discover ads", icon: <Search aria-hidden="true" /> },
+      { key: "adspy", href: "/zooplens", label: "ZoopLens", icon: <Search aria-hidden="true" /> },
       { key: "finder", href: "/today/finder", label: "Ad finder", icon: <Tags aria-hidden="true" /> },
       { key: "vault", href: "/brand-vault", label: "Brand Vault", icon: <BookOpen aria-hidden="true" /> },
     ],

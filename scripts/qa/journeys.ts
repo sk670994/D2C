@@ -217,7 +217,7 @@ async function runUser(browser: Browser, n: number, created: string[]): Promise<
     });
 
     await step(steps, "AdSpy search", async () => {
-      await page.goto(`${SITE}/adspy`, { waitUntil: "domcontentloaded", timeout: 45_000 });
+      await page.goto(`${SITE}/zooplens`, { waitUntil: "domcontentloaded", timeout: 45_000 });
       const { status, json } = await api(page, "GET", `/api/ad-intelligence/autocomplete?q=${encodeURIComponent("mamaearth")}&country=IN`);
       must(status === 200, `autocomplete ${status}`);
       must(Array.isArray(json.advertisers) && (json.advertisers as unknown[]).length > 0, "no suggestions");

@@ -158,7 +158,7 @@ export function FinderView() {
                 return (
                   <Link
                     key={ad.id}
-                    href={ad.advertiser_id ? `/adspy?q=${encodeURIComponent(brand)}&pid=${encodeURIComponent(ad.advertiser_id)}` : "/adspy"}
+                    href={ad.advertiser_id ? `/zooplens?q=${encodeURIComponent(brand)}&pid=${encodeURIComponent(ad.advertiser_id)}` : "/zooplens"}
                     className={`zd-tile tone-${(i % 4) + 1}`}
                     style={style}
                     aria-label={`${brand}: ${hook ?? "ad"}`}

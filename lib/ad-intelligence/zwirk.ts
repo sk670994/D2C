@@ -159,7 +159,7 @@ export function clearZwirkAdSpySnapshot(): void {
 }
 
 /**
- * Turns the full AdSpy dataset into a reasoning-friendly
+ * Turns the full ZoopLens dataset into a reasoning-friendly
  * text block for Gemini.
  *
  * We intentionally keep the substantive business fields
@@ -171,7 +171,7 @@ export function formatAdSpyForZwirk(
   const summary = snapshot.summary;
 
   const lines: string[] = [
-    `AdSpy query: ${snapshot.query}`,
+    `ZoopLens query: ${snapshot.query}`,
     `Country: ${snapshot.country}`,
     `Platform: ${snapshot.platform}`,
     `Fetched: ${snapshot.fetchedAt}`,

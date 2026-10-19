@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   title: { default: SITE_TITLE, template: "%s | Zooptrack" },
   description: SITE_DESCRIPTION,
   applicationName: "Zooptrack",
-  keywords: ["Meta ad library India", "competitor ads", "Facebook ads spy tool", "Instagram ads", "D2C brands India", "ad intelligence", "AdSpy"],
+  keywords: ["Meta ad library India", "competitor ads", "Facebook ads spy tool", "Instagram ads", "D2C brands India", "ad intelligence", "ZoopLens"],
   alternates: { types: { "text/plain": "/llms.txt" } },
   openGraph: {
     type: "website",
@@ -61,7 +61,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <p className="footer-title">Product</p>
                 <ul className="footer-list">
                   <li><a href="/today">Today</a></li>
-                  <li><a href="/adspy">Discover ads</a></li>
+                  <li><a href="/zooplens">Discover ads</a></li>
                   <li><a href="/pricing">Pricing</a></li>
                   <li><a href="/login">Start free trial</a></li>
                 </ul>

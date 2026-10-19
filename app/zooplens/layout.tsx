@@ -8,7 +8,7 @@ export default function AdSpyLayout({ children }: { children: React.ReactNode })
   return (
     <>
       {children}
-      {/* ZWIRK research copilot: receives AdSpy context via window events. */}
+      {/* ZWIRK research copilot: receives ZoopLens context via window events. */}
       <ZwirkDock />
     </>
   );

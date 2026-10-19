@@ -840,7 +840,7 @@ setReport(merged);
         setSelectedSection("ad");
         break;
       case "go-adspy":
-        router.push("/adspy");
+        router.push("/zooplens");
         break;
       case "go-zwirk":
         router.push("/zwirk");
@@ -1720,7 +1720,7 @@ setReport(merged);
     { id: "go-all", label: "Go to All Sections" },
     { id: "go-unit", label: "Go to Unit Economics" },
     { id: "go-ad", label: "Go to Ad Metrics" },
-    { id: "go-adspy", label: "Go to AdSpy" },
+    { id: "go-adspy", label: "Go to ZoopLens" },
     { id: "go-zwirk", label: "Open ZWIRK Assistant" },
     { id: "go-scale", label: "Go to Scale Planner" },
     { id: "go-pnl", label: "Go to Monthly P&L" },

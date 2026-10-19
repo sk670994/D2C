@@ -129,7 +129,7 @@ function buildPrompt(
     adSpyContext &&
     adSpyContext.trim().length > 0
       ? adSpyContext.trim()
-      : "No AdSpy intelligence is currently available.";
+      : "No ZoopLens intelligence is currently available.";
 
   return [
     "You are ZWIRK, a sharp virtual assistant for DTC operators.",
@@ -142,7 +142,7 @@ function buildPrompt(
 
     "Use the metrics available in the Context block first.",
 
-    "Use the AdSpy intelligence when the question involves competitors, competitor ads, creative strategy, offers, hooks, creators, positioning, creative longevity, market patterns, or what the brand should test next.",
+    "Use the ZoopLens intelligence when the question involves competitors, competitor ads, creative strategy, offers, hooks, creators, positioning, creative longevity, market patterns, or what the brand should test next.",
 
     "Combine first-party business performance with competitor intelligence whenever both are relevant.",
 
@@ -154,7 +154,7 @@ function buildPrompt(
 
     "Never refuse to provide a useful analysis or plan merely because one or more metrics are missing.",
 
-    "Clearly distinguish dashboard facts, AdSpy observations, and assumptions.",
+    "Clearly distinguish dashboard facts, ZoopLens observations, and assumptions.",
 
     "Do not invent dashboard metrics, campaign performance, revenue, CAC, ROAS, margins, orders, clicks, CTR, impressions, or other business data.",
 
@@ -182,9 +182,9 @@ function buildPrompt(
 
     "ADSPY INTERPRETATION RULES:",
 
-    "AdSpy contains public competitor intelligence observed from the Meta Ad Library.",
+    "ZoopLens contains public competitor intelligence observed from the Meta Ad Library.",
 
-    "AdSpy creative score, longevity score, relevance score, and engagement potential are estimates or derived signals unless explicitly stated otherwise.",
+    "ZoopLens creative score, longevity score, relevance score, and engagement potential are estimates or derived signals unless explicitly stated otherwise.",
 
     "Never describe engagement potential as actual engagement, clicks, CTR, impressions, spend, conversions, revenue, ROAS, or profit.",
 
@@ -221,7 +221,7 @@ function buildPrompt(
 
     "",
 
-    "AdSpy intelligence (locked):",
+    "ZoopLens intelligence (locked):",
     lockedAdSpy,
 
     "",
@@ -288,7 +288,7 @@ function buildPrompt(
 
     "Use actual numbers from the Context whenever available.",
 
-    "Use actual AdSpy observations whenever relevant.",
+    "Use actual ZoopLens observations whenever relevant.",
 
     "Explain why each major recommendation matters.",
 
@@ -561,7 +561,7 @@ export async function POST(
         adSpyContext
       );
     const zwirkPageType =
-      pagePath.startsWith("/adspy")
+      pagePath.startsWith("/zooplens")
         ? "adspy"
         : pagePath.startsWith("/brand-vault")
           ? "brand_vault"
@@ -586,7 +586,7 @@ export async function POST(
 
         label:
           zwirkPageType === "adspy"
-            ? "AdSpy"
+            ? "ZoopLens"
             : zwirkPageType === "brand_vault"
               ? "Brand Vault"
               : zwirkPageType === "zwirk"
@@ -741,7 +741,7 @@ export async function POST(
       !adSpyContext.trim()
     ) {
       proofAssumptions.push(
-        "No current AdSpy intelligence was attached to this ZWIRK request."
+        "No current ZoopLens intelligence was attached to this ZWIRK request."
       );
     }
 

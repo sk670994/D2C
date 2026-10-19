@@ -35,7 +35,7 @@ async function searchAdSpy(
   page: Page,
   query: string
 ) {
-  await safeGoto(page, "/adspy");
+  await safeGoto(page, "/zooplens");
 
   const search = page.getByRole("combobox").first();
 
@@ -78,7 +78,7 @@ async function unknownBrandScenario(page: Page) {
 }
 
 async function keywordScenario(page: Page) {
-  await safeGoto(page, "/adspy");
+  await safeGoto(page, "/zooplens");
 
   const modeButton = page.getByRole("radio", {
     name: /keyword/i,
@@ -132,7 +132,7 @@ async function navigationScenario(page: Page) {
 
   await sleep(randomDelay(700, 2000));
 
-  await safeGoto(page, "/adspy");
+  await safeGoto(page, "/zooplens");
 
   await sleep(randomDelay(700, 2000));
 

@@ -37,7 +37,7 @@ export default async function OpengraphImage() {
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 24, color: "#5f6b6e" }}>
           <span>zooptrack.co.in</span>
-          <span style={{ padding: "10px 22px", borderRadius: 999, background: "#0255b1", color: "#fff", fontWeight: 700 }}>Try AdSpy free</span>
+          <span style={{ padding: "10px 22px", borderRadius: 999, background: "#0255b1", color: "#fff", fontWeight: 700 }}>Try ZoopLens free</span>
         </div>
       </div>
     ),

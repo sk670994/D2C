@@ -13,7 +13,7 @@ import { formatInr, FOUNDING_OFFER, PLANS, yearlyPriceInr } from "@/lib/billing/
 type Scene = "home" | "radar" | "conveyor" | "ledger" | "unfold" | "cockpit" | "archive";
 
 const nav = [
-  ["AdSpy", "/adspy"],
+  ["ZoopLens", "/zooplens"],
   ["Brand ads", "/brand"],
   ["How it works", "/decision-loop"],
   ["Pricing", "/pricing"],

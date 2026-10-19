@@ -117,7 +117,7 @@ export function CommandCenter({
                     {item.id === "cac" || item.id === "leak" ? (
                       <Button type="button" variant="secondary" onClick={() => onGoSection?.("ad")}>View ad metrics</Button>
                     ) : (
-                      <Link href="/adspy"><Button type="button" variant="secondary">Analyze market</Button></Link>
+                      <Link href="/zooplens"><Button type="button" variant="secondary">Analyze market</Button></Link>
                     )}
                   </div>
                 </div>

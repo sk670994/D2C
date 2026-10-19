@@ -12,7 +12,7 @@ export default async function AdSpyPage() {
   } = await supabase.auth.getUser();
 
   if (error || !user) {
-    redirect("/login?next=/adspy");
+    redirect("/login?next=/zooplens");
   }
 
   return (

@@ -3,7 +3,7 @@ import { SiteTopBar } from "@/components/brand/SiteTopBar";
 
 export const metadata: Metadata = {
   title: "Contact the Zooptrack team",
-  description: "Questions about AdSpy, pricing, agency plans or a demo? Write to the Zooptrack team.",
+  description: "Questions about ZoopLens, pricing, agency plans or a demo? Write to the Zooptrack team.",
   alternates: { canonical: "/contact" },
 };
 
