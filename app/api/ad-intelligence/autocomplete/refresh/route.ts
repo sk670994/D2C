@@ -12,7 +12,7 @@ export async function GET() {
       source: "disabled",
       code: "AUTOCOMPLETE_REFRESH_DISABLED",
       message:
-        "Live advertiser discovery is disabled. Use Search & collect to start an explicit AdSpy collection.",
+        "Live advertiser discovery is disabled. Use Search & collect to start an explicit ZoopLens collection.",
     },
     { status: 410 },
   );

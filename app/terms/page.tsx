@@ -3,7 +3,7 @@ import { SiteTopBar } from "@/components/brand/SiteTopBar";
 
 export const metadata: Metadata = {
   title: "Terms of service",
-  description: "The terms for using Zooptrack, AdSpy and ZWIRK.",
+  description: "The terms for using Zooptrack, ZoopLens and ZWIRK.",
   alternates: { canonical: "/terms" },
 };
 

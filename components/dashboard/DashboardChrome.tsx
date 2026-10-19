@@ -42,9 +42,9 @@ export function DashboardCommandRail({
         <h3>Workspaces</h3>
       </div>
       <div className="section-list">
-        <Link href="/adspy" className="section-chip">
-          <span>AdSpy</span>
-          <small className="rail-status rail-neutral">AdSpy</small>
+        <Link href="/zooplens" className="section-chip">
+          <span>ZoopLens</span>
+          <small className="rail-status rail-neutral">ZoopLens</small>
         </Link>
         <Link href="/zwirk" className="section-chip">
           <span>ZWIRK</span>
@@ -99,7 +99,7 @@ export function DashboardHero({
       </div>
       <div className="hero-meta">
         <span className="muted-text">{userEmail ? `Signed in as ${userName ? `${userName} (${userEmail})` : userEmail}` : "Not signed in"}</span>
-        <Link href="/adspy"><Button type="button" variant="secondary">Open AdSpy</Button></Link>
+        <Link href="/zooplens"><Button type="button" variant="secondary">Open ZoopLens</Button></Link>
         <Link href="/zwirk" onClick={onOpenZwirk}><Button type="button">Open ZWIRK</Button></Link>
         <ThemeToggle />
         {userEmail ? <SignOutButton /> : <Link href="/login"><Button type="button" variant="secondary">Sign In</Button></Link>}

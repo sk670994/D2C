@@ -126,7 +126,7 @@ export async function updateSession(
       "/dashboard",
     ) ||
     pathname.startsWith(
-      "/adspy",
+      "/zooplens",
     ) ||
     pathname.startsWith(
       "/brand-vault",

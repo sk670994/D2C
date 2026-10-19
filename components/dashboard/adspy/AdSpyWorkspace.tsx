@@ -730,7 +730,7 @@ export function AdSpyWorkspace() {
         <div className={`azs-titlebar ${target ? "" : "is-hero"}`}>
           <div>
             {target ? (
-              <h1>AdSpy</h1>
+              <h1>ZoopLens</h1>
             ) : (
               <>
                 <span className="azs-eyebrow">From the Meta Ad Library</span>
@@ -2219,7 +2219,7 @@ function AdDetail({ ad, onClose }: { ad: Ad; onClose: () => void }) {
                 ))}
               </dl>
               <p className="azs-fine">
-                Spend, reach, CTR and ROAS are not published by Meta for these ads, so AdSpy never estimates them.
+                Spend, reach, CTR and ROAS are not published by Meta for these ads, so ZoopLens never estimates them.
               </p>
             </section>
             <div className="azs-modal-actions">

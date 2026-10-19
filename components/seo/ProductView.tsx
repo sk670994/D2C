@@ -32,7 +32,7 @@ export async function ProductView({ entry }: { entry: SeoEntry }) {
           <h1>{entry.h1}</h1>
           <p className={t.lede}>{entry.intro}</p>
           <div className={t.btns}>
-            <Link className={t.btn} href="/login?next=%2Fadspy">Start free trial</Link>
+            <Link className={t.btn} href="/login?next=%2Fzooplens">Start free trial</Link>
             <Link className={`${t.btn} ${t.btnGhost}`} href="/brand">See real brand pages</Link>
           </div>
         </div>

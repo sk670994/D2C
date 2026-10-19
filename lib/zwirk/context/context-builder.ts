@@ -6,7 +6,7 @@
 
 const EVIDENCE_RULES = [
   "FACT = directly supplied first-party or user data.",
-  "OBSERVED = a directly observed AdSpy or market signal.",
+  "OBSERVED = a directly observed ZoopLens or market signal.",
   "DERIVED = a calculation or inference from available evidence.",
   "ASSUMPTION = something not directly established by the available data.",
   "RECOMMENDATION = an action proposed from the evidence.",

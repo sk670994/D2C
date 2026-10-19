@@ -8,7 +8,7 @@ import { BrandLogo } from "@/components/app/BrandLogo";
 
 const LINKS = [
   { href: "/dashboard", label: "Command" },
-  { href: "/adspy", label: "AdSpy" },
+  { href: "/zooplens", label: "ZoopLens" },
   { href: "/zwirk", label: "ZWIRK" },
   { href: "/brand-vault", label: "Brand" }
 ] as const;

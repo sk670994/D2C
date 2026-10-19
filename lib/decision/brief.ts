@@ -138,7 +138,7 @@ export function buildDailyBrief(report: CalculatedReport, userName = ""): DailyB
         `FACT · Net profit ${rupees(report.monthlyPnl.netProfitMonth)}`,
         `DERIVED · Health score ${scan.score}/100`
       ],
-      action: "Analyze a product URL in AdSpy and create one experiment this week.",
+      action: "Analyze a product URL in ZoopLens and create one experiment this week.",
       kindTag: "RECOMMENDATION"
     });
   }

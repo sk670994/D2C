@@ -5,7 +5,12 @@ import { SEO_REDIRECTS } from "./lib/seo/redirects";
 const nextConfig: NextConfig = {
   // Merged SEO pages: old URLs point permanently to the stronger page.
   async redirects() {
-    return SEO_REDIRECTS.map(([source, destination]) => ({ source, destination, permanent: true }));
+    return [
+      // AdSpy was renamed ZoopLens: old links and bookmarks keep working (query string is kept).
+      { source: "/adspy", destination: "/zooplens", permanent: true },
+      { source: "/adspy/:path*", destination: "/zooplens/:path*", permanent: true },
+      ...SEO_REDIRECTS.map(([source, destination]) => ({ source, destination, permanent: true })),
+    ];
   },
 
   serverExternalPackages: [

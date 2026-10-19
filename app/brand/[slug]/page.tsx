@@ -134,7 +134,7 @@ export default async function BrandPage({ params }: { params: Promise<{ slug: st
   const { advertiser, facets, ads } = await load(slug);
   const name = advertiser?.name ?? nameFromSlug(slug);
   const path = `/brand/${brandSlug(name)}`;
-  const next = advertiser ? `/adspy?q=${encodeURIComponent(advertiser.name)}&pid=${advertiser.pageId}` : `/adspy?q=${encodeURIComponent(name)}`;
+  const next = advertiser ? `/zooplens?q=${encodeURIComponent(advertiser.name)}&pid=${advertiser.pageId}` : `/zooplens?q=${encodeURIComponent(name)}`;
   const signup = `/login?next=${encodeURIComponent(next)}`;
   const total = facets?.total ?? 0;
   const active = facets?.status.find((b) => b.value === "active")?.count ?? 0;

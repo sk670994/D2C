@@ -5,8 +5,8 @@ import { JsonLd } from "@/components/seo/JsonLd";
 import { breadcrumbSchema, faqSchema } from "@/lib/seo/schema";
 
 export const metadata: Metadata = {
-  title: "FAQ — how Zooptrack and AdSpy work",
-  description: "Where the ad data comes from, how often it refreshes, what AdSpy shows, pricing and privacy — answered in plain words.",
+  title: "FAQ — how Zooptrack and ZoopLens work",
+  description: "Where the ad data comes from, how often it refreshes, what ZoopLens shows, pricing and privacy — answered in plain words.",
   alternates: { canonical: "/faq" },
 };
 

@@ -13,7 +13,7 @@ type ChatMessage = {
 };
 
 function pageContext(pathname: string): string {
-  if (pathname.startsWith("/adspy")) return "AdSpy · competitor intelligence";
+  if (pathname.startsWith("/zooplens")) return "ZoopLens · competitor intelligence";
   if (pathname.startsWith("/brand-vault")) return "Brand Vault";
   if (pathname.startsWith("/zwirk")) return "ZWIRK workspace";
   return "Command Center · profitability";
@@ -54,7 +54,7 @@ export function ZwirkDock() {
   const isApp = [
     "/today",
     "/dashboard",
-    "/adspy",
+    "/zooplens",
     "/brand-vault",
     "/records",
     "/zwirk",

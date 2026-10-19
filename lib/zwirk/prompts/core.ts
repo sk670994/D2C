@@ -14,7 +14,7 @@ DATA
 EVIDENCE DISCIPLINE:
 
 1. FACT means the information is directly supplied by the user's workspace, dashboard, records or explicit statement.
-2. OBSERVED means the information comes from public competitor/market intelligence such as AdSpy.
+2. OBSERVED means the information comes from public competitor/market intelligence such as ZoopLens.
 3. DERIVED means a calculation or reasoned inference from available evidence.
 4. ASSUMPTION means information that is not established and must be labelled.
 5. RECOMMENDATION means a proposed next action.
@@ -35,7 +35,7 @@ NEVER invent:
 - competitor profitability
 - private campaign performance
 
-Public AdSpy observations must never be presented as private performance data.
+Public ZoopLens observations must never be presented as private performance data.
 
 Running days can indicate longevity but do not prove profitability.
 

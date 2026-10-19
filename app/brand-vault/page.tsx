@@ -199,7 +199,7 @@ export default function BrandVaultPage() {
               <button onClick={() => { setMenuOpen(false); setSettingsOpen(true); }}>Edit vault</button>
               <Link href="/today">Today</Link>
               <Link href="/dashboard">Dashboard</Link>
-              <Link href="/adspy">AdSpy</Link>
+              <Link href="/zooplens">ZoopLens</Link>
             </div>
           ) : null}
           <div className="bvp-shell-tools"><Link href="/zwirk">ZWIRK</Link></div>
@@ -284,7 +284,7 @@ function periodWord(period: BrandVaultPeriod) {
 function adspyHref(c: CompetitorAnalytics) {
   const params = new URLSearchParams({ q: c.name, country: c.country || "IN" });
   if (c.pageId) params.set("pid", c.pageId);
-  return `/adspy?${params.toString()}`;
+  return `/zooplens?${params.toString()}`;
 }
 
 function WorkspaceSection({ section, analytics, visibleCompetitors, focus, saveAction, openWhatsApp, activeBrandName, openSection }: {

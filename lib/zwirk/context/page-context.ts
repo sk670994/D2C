@@ -3,7 +3,7 @@
 export function resolveZwirkPage(pathname: string): ZwirkPage {
   if (pathname === "/" || pathname === "") return "home";
   if (pathname.startsWith("/dashboard")) return "dashboard";
-  if (pathname.startsWith("/adspy")) return "adspy";
+  if (pathname.startsWith("/zooplens")) return "adspy";
   if (pathname.startsWith("/brand-vault")) return "brand-vault";
   if (pathname.startsWith("/records")) return "records";
   if (pathname.startsWith("/decision-loop")) return "decision-loop";
@@ -23,7 +23,7 @@ const PAGE_CONTEXT: Record<ZwirkPage, Omit<ZwirkPageContext, "page">> = {
     description: "The user's business performance, economics, scale readiness and decision metrics."
   },
   adspy: {
-    label: "AdSpy · competitor intelligence",
+    label: "ZoopLens · competitor intelligence",
     description: "Competitor advertisements, advertisers, creative patterns, offers, hooks and observed market signals."
   },
   "brand-vault": {

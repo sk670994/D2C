@@ -33,7 +33,7 @@ export function formatInt(value: number): string {
 export function EvidenceTile({ ad, index, brand, pageId }: { ad: EvidenceAd; index: number; brand: string; pageId: string }) {
   const image = safeImage(ad.thumbnailUrl);
   const style: CSSProperties | undefined = image ? { backgroundImage: `url("${image.replace(/"/g, "%22")}")` } : undefined;
-  const href = `/adspy?q=${encodeURIComponent(brand)}&pid=${encodeURIComponent(pageId)}`;
+  const href = `/zooplens?q=${encodeURIComponent(brand)}&pid=${encodeURIComponent(pageId)}`;
   return (
     <Link href={href} className={`zd-tile tone-${(index % 4) + 1}`} style={style} aria-label={`${ad.format} ad by ${brand}: ${ad.hook ?? "no copy captured"}`}>
       <span className="zd-tile-meta">

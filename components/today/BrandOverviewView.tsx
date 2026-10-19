@@ -59,7 +59,7 @@ export function BrandOverviewView({ pageId, country = "IN" }: { pageId: string; 
   }
 
   const b = state.data;
-  const adsHref = `/adspy?q=${encodeURIComponent(b.name)}&pid=${encodeURIComponent(b.pageId)}`;
+  const adsHref = `/zooplens?q=${encodeURIComponent(b.name)}&pid=${encodeURIComponent(b.pageId)}`;
   const metaAll = b.coverage?.all?.total ?? null;
   const metaActive = b.coverage?.active?.total ?? null;
   const coverage = metaAll ? { meta: metaAll, held: b.total, label: "all-time" } : metaActive ? { meta: metaActive, held: b.active, label: "live" } : null;
