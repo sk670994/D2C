@@ -13,9 +13,9 @@ import {
 
 describe("credit guard", () => {
   it("reads caps from env with safe defaults", () => {
-    expect(dailyCreditCap({})).toBe(150);
+    expect(dailyCreditCap({})).toBe(400);
     expect(dailyCreditCap({ ADSPY_DAILY_CREDIT_CAP: "40" })).toBe(40);
-    expect(dailyCreditCap({ ADSPY_DAILY_CREDIT_CAP: "abc" })).toBe(150);
+    expect(dailyCreditCap({ ADSPY_DAILY_CREDIT_CAP: "abc" })).toBe(400);
     expect(quickPages({})).toBe(2);
     expect(quickPages({ META_API_QUICK_PAGES: "0" })).toBe(1);
     expect(apiMinIntervalMs({})).toBe(12 * 60 * 60_000);

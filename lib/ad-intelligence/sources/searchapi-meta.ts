@@ -36,6 +36,8 @@ export type SearchApiPage = {
   totalResults: number | null;
   nextPageToken: string | null;
   ms: number;
+  /** Provider balance after this call, when the provider reports it (ScrapeCreators). */
+  creditsRemaining?: number | null;
 };
 
 export class SearchApiError extends Error {
@@ -160,16 +162,20 @@ export type SearchApiCollectInput = AdSearchInput & {
   isKnown?: (adId: string) => boolean;
   /** Continue a previous run from this page token. */
   startToken?: string | null;
+  /** Stop (resumable) once the provider reports this balance or less. */
+  stopAtCredits?: number | null;
 };
 
 export type SearchApiCollectResult = {
   calls: number;
   ads: number;
   totalResults: number | null;
-  stoppedBy: "exhausted" | "deadline" | "max_pages" | "caught_up";
-  /** Page token to continue from in a later run (deadline / max_pages only). */
+  stoppedBy: "exhausted" | "deadline" | "max_pages" | "caught_up" | "credit_floor";
+  /** Page token to continue from in a later run (deadline / max_pages / credit_floor). */
   nextToken?: string | null;
   ms: number;
+  /** Latest balance the provider reported (null = not reported). */
+  creditsRemaining?: number | null;
 };
 
 export function sourceUrlFor(input: Pick<AdSearchInput, "query" | "country" | "advertiserPageId">): string {
@@ -218,18 +224,24 @@ export async function collectMetaAdsViaSearchApi(
   let adsOut = 0;
   let totalResults: number | null = null;
   let knownStreak = 0;
+  let creditsRemaining: number | null = null;
   const seen = new Set<string>();
 
   for (;;) {
-    if (calls >= maxPages) return { calls, ads: adsOut, totalResults, stoppedBy: "max_pages", ms: Date.now() - started, nextToken: token };
+    if (calls >= maxPages) return { calls, ads: adsOut, totalResults, stoppedBy: "max_pages", ms: Date.now() - started, nextToken: token, creditsRemaining };
     // Leave room for one more call plus persisting its ads.
     if (calls > 0 && Date.now() > input.deadlineAt - 25_000) {
-      return { calls, ads: adsOut, totalResults, stoppedBy: "deadline", ms: Date.now() - started, nextToken: token };
+      return { calls, ads: adsOut, totalResults, stoppedBy: "deadline", ms: Date.now() - started, nextToken: token, creditsRemaining };
+    }
+    // Balance at the floor: stop paying; the free night run reads the rest.
+    if (calls > 0 && input.stopAtCredits != null && creditsRemaining != null && creditsRemaining <= input.stopAtCredits) {
+      return { calls, ads: adsOut, totalResults, stoppedBy: "credit_floor", ms: Date.now() - started, nextToken: token, creditsRemaining };
     }
 
     const page = await fetchPage(token, Math.max(8_000, Math.min(20_000, input.deadlineAt - Date.now())));
     calls += 1;
     if (page.totalResults != null) totalResults = page.totalResults;
+    if (page.creditsRemaining != null && Number.isFinite(page.creditsRemaining)) creditsRemaining = page.creditsRemaining;
 
     const batch: CompetitorAd[] = [];
     let fresh = 0;
@@ -251,12 +263,12 @@ export async function collectMetaAdsViaSearchApi(
 
     knownStreak = fresh === 0 ? knownStreak + 1 : 0;
     if (input.stopAfterKnownPages && input.isKnown && knownStreak >= input.stopAfterKnownPages) {
-      return { calls, ads: adsOut, totalResults, stoppedBy: "caught_up", ms: Date.now() - started };
+      return { calls, ads: adsOut, totalResults, stoppedBy: "caught_up", ms: Date.now() - started, creditsRemaining };
     }
 
     token = page.nextPageToken;
     if (!token || page.ads.length === 0) {
-      return { calls, ads: adsOut, totalResults, stoppedBy: "exhausted", ms: Date.now() - started };
+      return { calls, ads: adsOut, totalResults, stoppedBy: "exhausted", ms: Date.now() - started, creditsRemaining };
     }
   }
 }

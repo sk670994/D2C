@@ -1,8 +1,8 @@
 import "server-only";
 
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
-import { apiCreditsUsedToday } from "@/lib/ad-intelligence/credit-guard-server";
-import { dailyCreditCap, istDayKey } from "@/lib/ad-intelligence/credit-guard";
+import { apiCreditsUsedToday, paidCreditsRemaining } from "@/lib/ad-intelligence/credit-guard-server";
+import { dailyCreditCap, istDayKey, paidCreditFloor } from "@/lib/ad-intelligence/credit-guard";
 import { dbHealth, summarizeCounters, summarizeCoverage, summarizeRuns, type CounterRow, type CoverageRow, type RunRow } from "./ops";
 
 const DAY = 86_400_000;
@@ -16,7 +16,7 @@ export async function loadOps(now: number) {
   const since = (ms: number) => new Date(now - ms).toISOString();
   const day = istDayKey(now);
 
-  const [runs, coverage, credits, ai, trial, stats] = await Promise.all([
+  const [runs, coverage, credits, ai, trial, stats, balance] = await Promise.all([
     db
       .from("adspy_runs")
       .select("status,persisted_ads,created_at,started_at,completed_at,error_message")
@@ -62,7 +62,8 @@ export async function loadOps(now: number) {
       (r) => (r.error ? null : dbHealth(r.data as { db_bytes: number; creatives_upd: number; creatives_hot: number } | null)),
       () => null,
     ),
+    paidCreditsRemaining().catch(() => null),
   ]);
 
-  return { runs, coverage, credits, creditCap: dailyCreditCap(), ai, trial, db: stats };
+  return { runs, coverage, credits, creditCap: dailyCreditCap(), balance, creditFloor: paidCreditFloor(), ai, trial, db: stats };
 }

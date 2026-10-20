@@ -9,6 +9,7 @@ import {
 } from "@/lib/ad-intelligence/global/store";
 
 import { checkSharedRateLimit } from "@/lib/rate-limit";
+import { paidMetaSourceActive } from "@/lib/ad-intelligence/credit-guard";
 
 import {
   getDurableRunByCollectionJob,
@@ -227,16 +228,20 @@ export async function POST(
       isRefreshing,
       outcome: result.outcome,
       message:
-        result.outcome === "recently_collected"
-          ? "This advertiser was refreshed a few minutes ago. Showing the latest indexed data."
+        result.outcome === "up_to_date"
+          ? "Up to date: every live ad Meta shows for this brand is already here (fully read in the last 24 hours)."
+          : result.outcome === "recently_collected"
+          ? "This advertiser was refreshed recently. Showing the latest indexed data."
           : result.outcome === "trial_limit"
             ? "Your free trial includes 3 brand look-ups, and you've used them. Choose a plan to look up more brands."
           : result.outcome === "deferred"
-            ? "Live look-ups for today are used up. This brand is queued for tonight's full collection; every ad will be here by tomorrow morning."
+            ? "Queued for tonight: live look-ups are paused right now, so this brand is read in tonight's full collection. Every ad will be here by tomorrow morning."
           : result.outcome === "running_for_another_request"
             ? "A collection for this advertiser is already running. Search again in a minute to see new ads."
             : null,
       advertiserPageId: pageId,
+      // Paid live source on: collections run now, not tonight.
+      liveSource: paidMetaSourceActive(),
     });
   } catch (error) {
     if (error instanceof UnsupportedPlatformError) {
