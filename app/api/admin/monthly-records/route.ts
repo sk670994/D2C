@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient as createServerAuthClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
+import { isAdminEmail } from "@/lib/billing/plans";
 
 export async function GET(request: Request) {
   try {
@@ -14,8 +15,8 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const adminEmail = (process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? "").trim().toLowerCase();
-    if (!adminEmail || user.email?.toLowerCase() !== adminEmail) {
+    // Same server-only admin list as the founder page (not a NEXT_PUBLIC_ variable).
+    if (!isAdminEmail(user.email, process.env.ZOOPTRACK_ADMIN_EMAILS)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

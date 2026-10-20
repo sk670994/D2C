@@ -1,27 +1,18 @@
 {
+  "regions": [
+    "syd1"
+  ],
   "crons": [
-    {
-      "path": "/api/cron/fetch-ad-data",
-      "schedule": "0 2 * * *"
-    },
     {
       "path": "/api/cron/refresh-tracked-adspy",
       "schedule": "30 20 * * *"
     },
     {
-      "path": "/api/adspy/drain",
-      "schedule": "45 20 * * *"
-    },
-    {
-      "path": "/api/cron/weekly-report",
-      "schedule": "30 3 * * *"
-    },
-    {
       "path": "/api/cron/decode-ads",
-      "schedule": "0 21 * * *"
+      "schedule": "0 1 * * *"
     },
     {
-      "path": "/api/cron/ops-health",
+      "path": "/api/cron/ops-health?full=1",
       "schedule": "15 3 * * *"
     },
     {

@@ -63,6 +63,8 @@ export type ZwirkWorkspaceContext = {
   dashboard?: string | null;
   competitiveContext?: string | null;
   adSpyContext?: string | null;
+  /** Server-loaded decoded ads of the user's watched rivals (lib/zwirk/rivals-server.ts). */
+  rivalAds?: string | null;
   history?: string | null;
   experiments?: string | null;
 };

@@ -4,7 +4,7 @@ name: report-tick
 # The route only sends what is due and not yet sent, so extra runs are harmless.
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/15 0-17 * * *" # every 15 min, 05:30-23:15 IST
   workflow_dispatch:
 
 jobs:

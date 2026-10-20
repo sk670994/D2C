@@ -1,4 +1,5 @@
 import type { CalculatedReport, InsightPayload } from "@/lib/types/domain";
+import { jsonGenerationConfig } from "@/lib/ai/gemini-config";
 
 type GeminiGenerateResponse = {
   candidates?: Array<{
@@ -525,29 +526,19 @@ async function callGemini(apiKey: string, model: string, prompt: string, timeout
     if (!apiKey) return null;
     const payload = {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.25,
-        maxOutputTokens: 1800,
-        responseMimeType: "application/json"
-      }
+      // Thinking off (it used to eat the 1,800-token budget and cut the JSON short).
+      generationConfig: jsonGenerationConfig(model, { temperature: 0.25, maxOutputTokens: 3000 })
     };
     const baseUrl = "https://generativelanguage.googleapis.com";
-    const modelPath = `/models/${model.replace(/^models\//, "")}:generateContent?key=${apiKey}`;
+    const modelPath = `/models/${encodeURIComponent(model.replace(/^models\//, ""))}:generateContent`;
 
-    let res = await fetch(`${baseUrl}/v1beta${modelPath}`, {
+    // Key goes in a header so it never appears in URLs, logs or error messages.
+    const res = await fetch(`${baseUrl}/v1beta${modelPath}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify(payload),
       signal: controller.signal
     });
-    if (!res.ok && res.status === 404) {
-      res = await fetch(`${baseUrl}/v1${modelPath}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      });
-    }
     if (!res.ok) return null;
     const data = (await res.json()) as GeminiGenerateResponse;
     const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("").trim();
@@ -589,18 +580,9 @@ export async function generateInsights(report: CalculatedReport, adMetrics: AdMe
     };
   }
 
-  if (raw) {
-    const repairPrompt = `Convert the following text into strict JSON only. No markdown. Use the same output shape as requested.\nText: ${raw}`;
-    const repairedRaw = await callGemini(apiKey, model, repairPrompt, timeoutMs);
-    const repaired = repairedRaw ? parseModelInsights(repairedRaw) : null;
-    if (repaired) {
-      return {
-        ...mergeInsights(deterministic, repaired),
-        source: "gemini",
-        latencyMs: Date.now() - startedAt
-      };
-    }
-  }
+  // No second "repair" call: with JSON mode and thinking off a bad reply is
+  // rare, and the deterministic insights below are the friendly fallback.
+  if (raw) console.warn("[insights] Gemini reply was not valid JSON; using deterministic insights.");
 
   return {
     ...deterministic,

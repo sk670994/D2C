@@ -17,10 +17,15 @@ export async function GET(request: NextRequest) {
     return new Response("Unauthorized", { status: 401 });
   }
 
+  // ADSPY_NIGHTLY_ON_PC=1: the PC collects tracked brands in full each night
+  // for free (and reaps stuck runs itself), so this cron does nothing at all:
+  // no API credits and no database reads on the nano instance.
+  if (process.env.ADSPY_NIGHTLY_ON_PC === "1") {
+    return Response.json({ success: true, skipped: "nightly_on_pc" });
+  }
+
   try {
-    // ADSPY_NIGHTLY_ON_PC=1: the PC collects tracked brands in full each
-    // night for free, so this cron must not spend ScrapeCreators credits.
-    const result = await refreshTrackedAdSpy({ skipDispatch: process.env.ADSPY_NIGHTLY_ON_PC === "1" });
+    const result = await refreshTrackedAdSpy();
 
     return Response.json({
       success: true,
@@ -35,10 +40,7 @@ export async function GET(request: NextRequest) {
     return Response.json(
       {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Tracked AdSpy refresh failed.",
+        error: "Tracked AdSpy refresh failed.",
       },
       { status: 500 },
     );

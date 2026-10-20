@@ -21,6 +21,10 @@ export const dynamic = "force-dynamic";
 const JOB_STALE_AFTER_MS =
   10 * 60_000;
 
+/** A durable run nobody picked up for this long waits for tonight's collection. */
+const RUN_UNCLAIMED_AFTER_MS =
+  5 * 60_000;
+
 const ACTIVE_JOB_STATUSES = new Set([
   "queued",
   "scraping",
@@ -34,6 +38,7 @@ const ACTIVE_JOB_STATUSES = new Set([
 function mapJob(
   job: CollectionJob,
   stale: boolean,
+  deferred = false,
 ) {
   return {
     id: job.id,
@@ -70,6 +75,9 @@ function mapJob(
     createdAt:
       job.createdAt,
     stale,
+    // Queued but no worker claimed it (e.g. worker runs only at night).
+    // The client treats it like stale: "tonight's collection, by 9 AM IST".
+    deferred,
     hasMore:
       job.status !== "complete" &&
       job.status !== "exhausted" &&
@@ -123,6 +131,24 @@ function mapRun(
     updatedAt:
       run.updatedAt,
   };
+}
+
+/**
+ * Queued durable run that no worker has claimed within 5 minutes (no start,
+ * no heartbeat, nothing running). Without this the page would spin forever
+ * when collection only runs in the nightly worker.
+ */
+function unclaimedRun(
+  run: Awaited<
+    ReturnType<
+      typeof getDurableRunByCollectionJob
+    >
+  >,
+): boolean {
+  if (!run || run.status !== "queued") return false;
+  if (run.startedAt || run.heartbeatAt || Number(run.runningRequests ?? 0) > 0) return false;
+  const t = new Date(run.updatedAt ?? run.createdAt ?? "").getTime();
+  return Number.isFinite(t) && Date.now() - t > RUN_UNCLAIMED_AFTER_MS;
 }
 
 function oldJob(
@@ -221,6 +247,11 @@ export async function GET(
         durableRun.status,
       );
 
+    const deferred =
+      !(isOld && !durableAlive) &&
+      ACTIVE_JOB_STATUSES.has(job.status) &&
+      unclaimedRun(durableRun);
+
     if (
       isOld &&
       !durableAlive
@@ -242,7 +273,8 @@ export async function GET(
         success: true,
         job: mapJob(
           job,
-          isOld && !durableAlive,
+          (isOld && !durableAlive) || deferred,
+          deferred,
         ),
         durableRun:
           mapRun(durableRun),

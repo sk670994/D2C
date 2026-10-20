@@ -56,12 +56,15 @@ Remove-Item (Join-Path $logDir "nightly-run.ps1") -ErrorAction SilentlyContinue
 
 $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$runner`"" -WorkingDirectory $root
 $trigger = New-ScheduledTaskTrigger -Daily -At $Time
+# Time limit = collection budget + 60 min: git pull, npm, up to 15 min of
+# database waits and the last image copy, so Windows never kills a brand
+# mid-scan (a cut scan never marks stopped ads, but wastes the brand).
 $settings = New-ScheduledTaskSettingsSet `
   -WakeToRun `
   -StartWhenAvailable `
   -AllowStartIfOnBatteries `
   -DontStopIfGoingOnBatteries `
-  -ExecutionTimeLimit (New-TimeSpan -Minutes ($Minutes + 30)) `
+  -ExecutionTimeLimit (New-TimeSpan -Minutes ($Minutes + 60)) `
   -MultipleInstances IgnoreNew
 
 Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $settings -Description "Zooptrack: full Meta ad collection for tracked, looked-up and seed brands." -Force | Out-Null

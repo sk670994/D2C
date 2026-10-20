@@ -18,6 +18,8 @@ export type SourceCounts = {
 };
 
 const MISSING_TABLE = /42P01|PGRST205|does not exist|could not find the table/i;
+/** complete / stopped_by columns not there yet (migration 20261021010000). */
+const MISSING_COLUMN = /PGRST204|42703|column .* does not exist|could not find the '.*' column/i;
 
 /** Best effort: a failed write never fails a collection. */
 export async function recordSourceCount(input: {
@@ -27,23 +29,36 @@ export async function recordSourceCount(input: {
   statusScope: SourceStatusScope;
   metaTotal: number;
   collectedAds: number;
+  /** Browser scans: reached Meta's end (>= 98% of its total)? Null = not known. */
+  complete?: boolean | null;
+  stoppedBy?: string | null;
 }): Promise<void> {
   if (!Number.isFinite(input.metaTotal) || input.metaTotal < 0) return;
   try {
     const client = createGlobalServiceClient();
-    const { error } = await client.from("adspy_source_counts").upsert(
-      {
-        platform: input.platform,
-        country: input.country.trim().toUpperCase(),
-        scope_type: input.scope.scopeType,
-        scope_key: input.scope.scopeKey,
-        status_scope: input.statusScope,
-        meta_total: Math.round(input.metaTotal),
-        collected_ads: Math.max(0, Math.round(input.collectedAds)),
-        observed_at: new Date().toISOString(),
-      },
-      { onConflict: "platform,country,scope_type,scope_key,status_scope" },
-    );
+    const row: Record<string, unknown> = {
+      platform: input.platform,
+      country: input.country.trim().toUpperCase(),
+      scope_type: input.scope.scopeType,
+      scope_key: input.scope.scopeKey,
+      status_scope: input.statusScope,
+      meta_total: Math.round(input.metaTotal),
+      collected_ads: Math.max(0, Math.round(input.collectedAds)),
+      observed_at: new Date().toISOString(),
+    };
+    const withScan = input.complete !== undefined || input.stoppedBy !== undefined;
+    if (withScan) {
+      row.complete = input.complete ?? null;
+      row.stopped_by = input.stoppedBy ?? null;
+    }
+    const onConflict = "platform,country,scope_type,scope_key,status_scope";
+    let { error } = await client.from("adspy_source_counts").upsert(row, { onConflict });
+    if (error && withScan && MISSING_COLUMN.test(`${error.code ?? ""} ${error.message}`)) {
+      // Older schema: keep the count, drop the scan details.
+      delete row.complete;
+      delete row.stopped_by;
+      ({ error } = await client.from("adspy_source_counts").upsert(row, { onConflict }));
+    }
     if (error && !MISSING_TABLE.test(`${error.code ?? ""} ${error.message}`)) {
       console.warn("[AdSpy source count] write failed", error.message);
     }
@@ -57,6 +72,8 @@ export async function getSourceCounts(input: {
   platform: string;
   country: string;
   scope: SourceScope;
+  /** Called when the read failed (not when there is simply no row). */
+  onError?: () => void;
 }): Promise<SourceCounts | null> {
   try {
     const client = createGlobalServiceClient();
@@ -71,6 +88,7 @@ export async function getSourceCounts(input: {
     if (error) {
       if (!MISSING_TABLE.test(`${error.code ?? ""} ${error.message}`)) {
         console.warn("[AdSpy source count] read failed", error.message);
+        input.onError?.();
       }
       return null;
     }
@@ -84,6 +102,7 @@ export async function getSourceCounts(input: {
     };
     return { scopeType: input.scope.scopeType, active: pick("active"), all: pick("all") };
   } catch {
+    input.onError?.();
     return null;
   }
 }

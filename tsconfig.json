@@ -44,6 +44,8 @@
     "**/*-backup-*/**",
     "**/*-backup*/**",
     "zwirk-*/**",
-    ".adspy-backup-*/**"
+    ".adspy-backup-*/**",
+    "zooptrack-3d-package",
+    "**/zooptrack-3d-package/**"
   ]
 }

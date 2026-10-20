@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { TodayShell } from "@/components/today/TodayShell";
 import type {
@@ -145,18 +145,30 @@ export default function BrandVaultPage() {
 
   useEffect(() => { void load("week"); }, [load]);
 
+  const collecting = useMemo(
+    () => analytics.competitors.some((item) => item.collectionState === "collecting"),
+    [analytics.competitors],
+  );
+  // Survives re-renders (each poll returns a new analytics object), so the cap holds.
+  const pollsRef = useRef(0);
+
   useEffect(() => {
-    const collecting = analytics.competitors.some((item) => item.collectionState === "collecting");
-    if (!collecting) return;
-    // Quietly re-check while a rival is collecting; give up after ~10 minutes.
-    let polls = 0;
+    if (!collecting) {
+      pollsRef.current = 0;
+      return;
+    }
+    // Quietly re-check while a rival is collecting; give up after 20 checks (~20 minutes).
     const timer = window.setInterval(() => {
-      polls += 1;
-      if (polls > 20) return window.clearInterval(timer);
+      if (document.hidden) return;
+      if (pollsRef.current >= 20) {
+        window.clearInterval(timer);
+        return;
+      }
+      pollsRef.current += 1;
       void load(period, true);
-    }, 30_000);
+    }, 60_000);
     return () => window.clearInterval(timer);
-  }, [analytics.competitors, load, period]);
+  }, [collecting, load, period]);
 
   const visibleCompetitors = useMemo(() => {
     if (focus === "all") return analytics.competitors;

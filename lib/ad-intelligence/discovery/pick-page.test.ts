@@ -16,9 +16,29 @@ describe("pickExactPage", () => {
     expect(pickExactPage("mars", [moon, cosmetics])?.pageId).toBe("3");
   });
 
-  it("does not guess from unverified prefixes or contains-matches", () => {
-    expect(pickExactPage("mars", [moon, cafe])).toBeNull();
-    expect(pickExactPage("moon", [{ ...moon, verification: null }])).toBeNull();
+  it("accepts a single unverified prefix match", () => {
+    expect(pickExactPage("mars", [moon, cafe])?.pageId).toBe("2");
+    const deconstruct = { pageId: "10", label: "Deconstruct Skincare", verification: null };
+    expect(pickExactPage("Deconstruct", [deconstruct])?.pageId).toBe("10");
+  });
+
+  it("does not guess from contains-matches", () => {
+    expect(pickExactPage("resort", [moon])).toBeNull();
+  });
+
+  it("returns null for two unverified prefix matches", () => {
+    const shop = { pageId: "6", label: "Mars Shop", verification: null };
+    expect(pickExactPage("mars", [cafe, shop])).toBeNull();
+  });
+
+  it("prefers the single verified page among several prefix matches", () => {
+    expect(pickExactPage("mars", [cafe, cosmetics])?.pageId).toBe("3");
+    expect(pickExactPage("mars", [moon, cafe, cosmetics])?.pageId).toBe("3");
+  });
+
+  it("verifiedPrefixOnly keeps the strict rule", () => {
+    expect(pickExactPage("mars", [cafe], { verifiedPrefixOnly: true })).toBeNull();
+    expect(pickExactPage("mars", [cafe, cosmetics], { verifiedPrefixOnly: true })?.pageId).toBe("3");
   });
 
   it("returns null when ambiguous", () => {
@@ -35,7 +55,13 @@ describe("pickExactPage", () => {
   it("rejects invalid page ids and short queries", () => {
     expect(pickExactPage("mars cafe", [{ pageId: "abc", label: "Mars Cafe" }])).toBeNull();
     expect(pickExactPage("m", [cafe])).toBeNull();
-    expect(pickExactPage("not verified", [{ pageId: "9", label: "Not Verified Shop", verification: "NOT_VERIFIED" }])).toBeNull();
+    // NOT_VERIFIED is not "verified": two prefix pages stay ambiguous.
+    expect(
+      pickExactPage("not verified", [
+        { pageId: "9", label: "Not Verified Shop", verification: "NOT_VERIFIED" },
+        { pageId: "8", label: "Not Verified Store", verification: null },
+      ]),
+    ).toBeNull();
   });
 });
 

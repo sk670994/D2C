@@ -6,6 +6,8 @@
  */
 import { classifyOffer, firstSentence, hookKey, OFFER_LABEL, productKey, runningDays, type OfferType } from "@/lib/brand-vault/signals";
 
+import { isLiveAd } from "@/lib/ad-intelligence/live";
+
 import { CHANGE_WEIGHT, changeTitle, type AdChange } from "./changes";
 
 export const DAY = 86_400_000;
@@ -98,7 +100,7 @@ function evidence(ad: TodayAdRow, now: number): EvidenceAd {
     hook: hookOf(ad),
     format: formatOf(ad.creative_type),
     days: runningDays(ad.first_seen_at, ad.last_seen_at, now),
-    active: Boolean(ad.is_currently_active),
+    active: isLiveAd(ad, now),
     thumbnailUrl: ad.thumbnail_url ?? null,
   };
 }
@@ -115,7 +117,7 @@ export function summarizeBrand(pageId: string, rows: TodayAdRow[], now = Date.no
 
   for (const ad of rows) {
     formats[formatOf(ad.creative_type)] += 1;
-    if (ad.is_currently_active) active += 1;
+    if (isLiveAd(ad, now)) active += 1;
     const name = clean(ad.advertiser_name);
     if (name) names.set(name, (names.get(name) ?? 0) + 1);
     const first = ms(ad.first_seen_at);
@@ -132,7 +134,7 @@ export function summarizeBrand(pageId: string, rows: TodayAdRow[], now = Date.no
     if (dayIndex >= 0 && dayIndex < 14) launches14[dayIndex] += 1;
   }
 
-  const offerPool = recent.length ? recent : rows.filter((ad) => ad.is_currently_active);
+  const offerPool = recent.length ? recent : rows.filter((ad) => isLiveAd(ad, now));
   const offerCounts = new Map<OfferType, number>();
   for (const ad of offerPool) {
     for (const type of new Set(classifyOffer(`${clean(ad.offer)} ${clean(ad.headline)} ${clean(ad.primary_text)}`))) {
@@ -156,7 +158,7 @@ export function summarizeBrand(pageId: string, rows: TodayAdRow[], now = Date.no
   }
   const leadHook = Array.from(hooks.values()).sort((a, b) => b.count - a.count)[0] ?? null;
 
-  const liveAds = rows.filter((ad) => ad.is_currently_active && ms(ad.first_seen_at) != null);
+  const liveAds = rows.filter((ad) => isLiveAd(ad, now) && ms(ad.first_seen_at) != null);
   const longest = liveAds
     .map((ad) => evidence(ad, now))
     .sort((a, b) => b.days - a.days)[0] ?? null;

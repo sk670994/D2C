@@ -88,19 +88,6 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
     }
   }
 
-  if (brandRowsByName.size) {
-    // Insert new brands only: rewriting the same rows every batch bloated the table.
-    const { error } = await client.from("ad_intelligence_brands").upsert(Array.from(brandRowsByName.values()), { onConflict: "normalized_name", ignoreDuplicates: true });
-    if (error) throw new Error(`Brand upsert failed: ${error.message}`);
-  }
-
-  const normalizedBrandNames = Array.from(brandRowsByName.keys());
-  const { data: brandRows, error: brandLookupError } = normalizedBrandNames.length
-    ? await client.from("ad_intelligence_brands").select("id,normalized_name").in("normalized_name", normalizedBrandNames)
-    : { data: [], error: null };
-  if (brandLookupError) throw new Error(`Brand lookup failed: ${brandLookupError.message}`);
-  const brandIds = new Map<string, string>((brandRows ?? []).map((row: any) => [row.normalized_name, row.id]));
-
   /*
    * Preserve historical first_seen_at.
    *
@@ -136,27 +123,42 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
   }> = [];
 
   if (externalKeys.length) {
-    const {
-      data,
-      error,
-    } = await client
-      .from("ad_intelligence_creatives")
-      .select(
-        "id,is_currently_active,advertiser_name,creative_type,primary_text,headline,description,call_to_action,landing_page_url,platform,external_ad_key,first_seen_at,last_seen_at,advertiser_id,image_url,thumbnail_url",
-      )
-      .in(
-        "external_ad_key",
-        externalKeys,
-      );
+    /*
+     * One lookup per platform with an explicit platform filter: only then can
+     * Postgres use the unique (platform, external_ad_key) index. Without it
+     * every 25-ad chunk read the whole creatives table (Disk IO, 19 Oct).
+     */
+    const keysByPlatform = new Map<AdPlatform, Set<string>>();
+    for (const ad of ads) {
+      const set = keysByPlatform.get(ad.platform) ?? new Set<string>();
+      set.add(buildExternalKey(ad));
+      keysByPlatform.set(ad.platform, set);
+    }
+    for (const [platform, keys] of keysByPlatform) {
+      const {
+        data,
+        error,
+      } = await client
+        .from("ad_intelligence_creatives")
+        .select(
+          "id,is_currently_active,advertiser_name,creative_type,primary_text,headline,description,call_to_action,landing_page_url,platform,external_ad_key,first_seen_at,last_seen_at,advertiser_id,image_url,thumbnail_url",
+        )
+        .eq("platform", platform)
+        .in(
+          "external_ad_key",
+          Array.from(keys),
+        );
 
-    if (error) {
-      throw new Error(
-        `Creative history lookup failed: ${error.message}`,
+      if (error) {
+        throw new Error(
+          `Creative history lookup failed: ${error.message}`,
+        );
+      }
+
+      existingCreativeHistory.push(
+        ...((data ?? []) as typeof existingCreativeHistory),
       );
     }
-
-    existingCreativeHistory =
-      (data ?? []) as typeof existingCreativeHistory;
   }
 
   const existingCreativeHistoryMap =
@@ -263,6 +265,27 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
   ads = changed;
 
   /*
+   * Brands are only needed for changed/new ads (brand_id on the creative row,
+   * aliases). An all-unchanged chunk returned above without touching them.
+   */
+  const changedBrandNames = new Set(ads.map((ad) => normalize(ad.advertiserName)));
+  for (const key of Array.from(brandRowsByName.keys())) {
+    if (!changedBrandNames.has(key)) brandRowsByName.delete(key);
+  }
+  if (brandRowsByName.size) {
+    // Insert new brands only: rewriting the same rows every batch bloated the table.
+    const { error } = await client.from("ad_intelligence_brands").upsert(Array.from(brandRowsByName.values()), { onConflict: "normalized_name", ignoreDuplicates: true });
+    if (error) throw new Error(`Brand upsert failed: ${error.message}`);
+  }
+
+  const normalizedBrandNames = Array.from(brandRowsByName.keys());
+  const { data: brandRows, error: brandLookupError } = normalizedBrandNames.length
+    ? await client.from("ad_intelligence_brands").select("id,normalized_name").in("normalized_name", normalizedBrandNames)
+    : { data: [], error: null };
+  if (brandLookupError) throw new Error(`Brand lookup failed: ${brandLookupError.message}`);
+  const brandIds = new Map<string, string>((brandRows ?? []).map((row: any) => [row.normalized_name, row.id]));
+
+  /*
    * Ads we already hold keep their stored image: point them at it so the
    * rehost step below only downloads media for ads that are new to us.
    * (A refresh of a big advertiser used to re-download every image.)
@@ -336,7 +359,7 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
     offer: ad.offer ?? null,
     transcript: ad.transcript ?? null,
     transcript_status: ad.transcriptStatus ?? "not_video",
-    metadata: { ...(ad.metadata ?? {}), publisherPlatforms: ad.publisherPlatforms ?? [] },
+    metadata: stableMetadata(ad),
     intelligence: ad.intelligence ?? {},
     /*
      * first_seen_at is monotonic: only an earlier verified date
@@ -399,7 +422,7 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
       city_name: geo.cityName,
       region_name: geo.regionName,
       source: geo.source,
-    })), { onConflict: "geography_key" });
+    })), { onConflict: "geography_key", ignoreDuplicates: true }); // New places only: nothing reads these rows back except the id.
     if (error) throw new Error(`Geography upsert failed: ${error.message}`);
   }
 
@@ -497,27 +520,32 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
   }
   if (aliasRows.size) {
     // One row per alias: Postgres rejects an upsert that touches a row twice.
-    const { error } = await client.from("ad_intelligence_brand_aliases").upsert(Array.from(aliasRows.values()), { onConflict: "brand_id,normalized_alias" });
+    // Insert-only: no reader uses the alias rows' other columns.
+    const { error } = await client.from("ad_intelligence_brand_aliases").upsert(Array.from(aliasRows.values()), { onConflict: "brand_id,normalized_alias", ignoreDuplicates: true });
     if (error) console.warn("[GlobalAdIngest] Alias warning:", error.message);
   }
 
   if (creatorRowsToUpsert.size) {
-    const { data: creators, error } =
-  await client
-    .from("ad_intelligence_creators")
-    .upsert(
-      Array.from(
-        creatorRowsToUpsert.values(),
-      ),
-      {
-        onConflict:
-          "platform,normalized_name",
-      },
-    )
-    .select(
-      "id,platform,normalized_name",
-    );
-    if (!error && creators?.length) {
+    // Insert new creators only (no reader uses their other columns), then
+    // look the ids up: an ignore-duplicates upsert returns only new rows.
+    const creatorValues = Array.from(creatorRowsToUpsert.values());
+    const { error: creatorUpsertError } = await client
+      .from("ad_intelligence_creators")
+      .upsert(creatorValues, { onConflict: "platform,normalized_name", ignoreDuplicates: true });
+    const creatorPlatforms = Array.from(new Set(creatorValues.map((row) => row.platform as string)));
+    const creators: any[] = [];
+    let error = creatorUpsertError;
+    for (const platform of creatorPlatforms) {
+      if (error) break;
+      const lookup = await client
+        .from("ad_intelligence_creators")
+        .select("id,platform,normalized_name")
+        .eq("platform", platform)
+        .in("normalized_name", creatorValues.filter((row) => row.platform === platform).map((row) => row.normalized_name as string));
+      error = lookup.error;
+      creators.push(...(lookup.data ?? []));
+    }
+    if (!error && creators.length) {
       const creatorMap = new Map(creators.map((row: any) => [`${row.platform}:${row.normalized_name}`, row.id]));
       const links: any[] = [];
       for (const ad of ads) {
@@ -526,7 +554,7 @@ export async function ingestGlobalAds(ads: CompetitorAd[]): Promise<{ insertedOr
         const creatorId = creatorMap.get(`${ad.platform}:${normalize(ad.creatorName)}`);
         if (creativeId && creatorId) links.push({ creative_id: creativeId, creator_id: creatorId, relationship_type: ad.partnershipType ?? "creator" });
       }
-      if (links.length) await client.from("ad_intelligence_creative_creators").upsert(links, { onConflict: "creative_id,creator_id" });
+      if (links.length) await client.from("ad_intelligence_creative_creators").upsert(links, { onConflict: "creative_id,creator_id", ignoreDuplicates: true });
     }
   }
 
@@ -559,6 +587,12 @@ async function upsertAdvertiserIndex(
       typeof ad.metadata?.metaPageProfileUri === "string"
         ? (ad.metadata?.metaPageProfileUri as string)
         : null;
+    // One collection saves a page in many 25-ad chunks with the same page
+    // name and profile: write the index row once per process per hour
+    // instead of once per chunk (it only bumps last_seen_at otherwise).
+    const memoKey = [ad.platform, ad.advertiserId!.trim(), ad.advertiserName.trim(), profileUri ?? "", ad.country?.trim().toUpperCase() ?? ""].join("|");
+    const lastWritten = advertiserIndexWrittenAt.get(memoKey);
+    if (lastWritten && Date.now() - lastWritten < ADVERTISER_INDEX_MEMO_MS) continue;
     const { error } = await client.rpc("adspy_upsert_advertiser_v2", {
       p_platform: ad.platform,
       p_page_id: ad.advertiserId!.trim(),
@@ -576,8 +610,27 @@ async function upsertAdvertiserIndex(
     });
     if (error) {
       console.warn("[GlobalAdIngest] Advertiser index warning:", error.message);
+    } else {
+      if (advertiserIndexWrittenAt.size > 5000) advertiserIndexWrittenAt.clear();
+      advertiserIndexWrittenAt.set(memoKey, Date.now());
     }
   }
+}
+
+const ADVERTISER_INDEX_MEMO_MS = 60 * 60_000;
+const advertiserIndexWrittenAt = new Map<string, number>();
+
+/**
+ * Per-scrape keys that change on every collection and that nothing reads back
+ * from the database (the collector reads metaTotalCount from the in-memory ad
+ * before saving). Keeping them made every save rewrite the jsonb (TOAST) value.
+ */
+const VOLATILE_METADATA_KEYS = ["collectedAt", "searchMode", "collectionDepth", "metaTotalCount"] as const;
+
+function stableMetadata(ad: CompetitorAd): Record<string, unknown> {
+  const metadata: Record<string, unknown> = { ...(ad.metadata ?? {}), publisherPlatforms: ad.publisherPlatforms ?? [] };
+  for (const key of VOLATILE_METADATA_KEYS) delete metadata[key];
+  return metadata;
 }
 
 function facebookUsernameFrom(profileUri: string | null): string | null {

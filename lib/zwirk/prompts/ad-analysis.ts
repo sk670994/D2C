@@ -1,4 +1,4 @@
-﻿export const AD_ANALYSIS_PROMPT = `
+export const AD_ANALYSIS_PROMPT = `
 ADSPY ANALYSIS MODE
 
 The user is asking about a specific advertisement or advertisement-level behavior.
@@ -39,15 +39,10 @@ When asked why an ad may be failing:
 - distinguish hypotheses from facts,
 - propose a test to validate the hypothesis.
 
-REQUIRED FORMAT FOR AD DIAGNOSIS:
+FORMAT FOR AD DIAGNOSIS (plain bold headings, no evidence labels):
 
-Observed:
-Derived:
-Unknown:
-Why it may matter:
-Recommended test:
-
-Never call an ad successful or unsuccessful solely because it has been running for a long time.
-
-Never infer revenue, spend, ROAS, CTR, conversions or profit from public Ad Library information.
+**What the ad shows**
+**What it suggests**
+**Why it may matter**
+**Test to run**
 `;

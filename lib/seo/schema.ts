@@ -1,4 +1,4 @@
-import { PAID_PLANS, PLANS, TRIAL_DAYS } from "@/lib/billing/plans";
+import { PAID_PLANS, PLANS } from "@/lib/billing/plans";
 
 /**
  * Structured data (schema.org JSON-LD) shared by the marketing pages.
@@ -53,7 +53,7 @@ export function softwareSchema() {
       "ZWIRK AI assistant that answers from your rivals' ads",
     ],
     offers: [
-      { "@type": "Offer", name: `${TRIAL_DAYS}-day free trial`, price: "0", priceCurrency: "INR", url: `${SITE_URL}/pricing` },
+      { "@type": "Offer", name: "Free trial: 3 free brand searches, no card", price: "0", priceCurrency: "INR", url: `${SITE_URL}/pricing` },
       ...PAID_PLANS.map((key) => ({
         "@type": "Offer",
         name: `${PLANS[key].name} plan`,

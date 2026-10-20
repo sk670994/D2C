@@ -33,7 +33,8 @@ export function RivalPicker({ onChanged, compact = false }: { onChanged: () => v
       try {
         const url = `/api/ad-intelligence/autocomplete?q=${encodeURIComponent(q)}&country=IN`;
         let response = await fetch(url, { cache: "no-store", signal: controller.signal });
-        if (response.status >= 500 && !controller.signal.aborted) response = await fetch(url, { cache: "no-store", signal: controller.signal });
+        // One retry for gateway / cold-start statuses only (not a plain 500).
+        if ([502, 503, 504].includes(response.status) && !controller.signal.aborted) response = await fetch(url, { cache: "no-store", signal: controller.signal });
         const data = (await response.json().catch(() => ({}))) as { advertisers?: Suggestion[] };
         if (!controller.signal.aborted) setResults((data.advertisers ?? []).filter((s) => /^\d+$/.test(String(s.pageId ?? ""))).slice(0, 6));
       } catch {
@@ -41,7 +42,7 @@ export function RivalPicker({ onChanged, compact = false }: { onChanged: () => v
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
-    }, 180);
+    }, 250);
     return () => window.clearTimeout(timer);
   }, [query]);
 

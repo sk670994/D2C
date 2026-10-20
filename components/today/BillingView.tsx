@@ -7,11 +7,18 @@ import type { Entitlement, Plan } from "@/lib/billing/plans";
 
 type BillingData = {
   entitlement: Entitlement;
-  usage: { rivals: number };
+  usage: { rivals: number; trialSearches?: number; trialSearchLimit?: number };
   plans: Plan[];
   checkoutReady: boolean;
   keyId: string | null;
 };
+
+/** Trial copy: searches left, never days ("3 free brand searches, no card"). */
+function trialSearchesLine(usage: BillingData["usage"]): string {
+  const limit = usage.trialSearchLimit ?? 3;
+  const left = Math.max(0, limit - (usage.trialSearches ?? 0));
+  return `${left} of ${limit} free brand ${limit === 1 ? "search" : "searches"} left. No card needed.`;
+}
 
 type RazorpayResponse = { razorpay_payment_id: string; razorpay_subscription_id: string; razorpay_signature: string };
 type RazorpayCtor = new (options: Record<string, unknown>) => { open: () => void; on: (event: string, cb: (payload: unknown) => void) => void };
@@ -159,7 +166,7 @@ export function BillingView() {
             <span style={{ width: `${pct}%` }} />
           </div>
           <span className="zd-muted" style={{ fontSize: 13 }}>
-            {e.trialDaysLeft !== null && e.status === "trialing" ? `${e.trialDaysLeft} ${e.trialDaysLeft === 1 ? "day" : "days"} of your free trial left.` : e.renewsAt ? `Renews ${new Date(e.renewsAt).toLocaleDateString("en-IN", { day: "numeric", month: "long" })}.` : " "}
+            {e.status === "trialing" && !e.admin ? trialSearchesLine(usage) : e.renewsAt ? `Renews ${new Date(e.renewsAt).toLocaleDateString("en-IN", { day: "numeric", month: "long" })}.` : " "}
           </span>
         </div>
         {paid ? (

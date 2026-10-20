@@ -27,11 +27,16 @@ const PAGES: Array<[path: string, priority: number, freq: string]> = [
   ["/cookies", 0.2, "yearly"],
 ];
 
-function entry(path: string, priority: number, freq: string) {
-  return `<url><loc>${SITE}${path}</loc><changefreq>${freq}</changefreq><priority>${priority.toFixed(1)}</priority></url>`;
+function entry(path: string, priority: number, freq: string, lastmod?: string) {
+  return `<url><loc>${SITE}${path}</loc>${lastmod ? `<lastmod>${lastmod}</lastmod>` : ""}<changefreq>${freq}</changefreq><priority>${priority.toFixed(1)}</priority></url>`;
 }
 
 export function GET() {
+  // Data pages are ISR (rebuilt at most every 6 h), so the sitemap's own build
+  // day is their honest lastmod. Excluding seed brands with no data would need
+  // a page look-up per brand here: skipped; those pages are noindex instead.
+  const today = new Date().toISOString().slice(0, 10);
+  const dataSections = new Set(["industry", "research"]);
   const slugs = [
     ...new Set(
       (seed as { brands: string[] }).brands
@@ -54,14 +59,14 @@ export function GET() {
 
     const freq = item.section === "tool" ? "monthly" : "weekly";
 
-    return entry(seoPath(item), priority, freq);
+    return entry(seoPath(item), priority, freq, dataSections.has(item.section) ? today : undefined);
   });
 
   const urls = [
     ...PAGES.map(([p, pr, f]) => entry(p, pr, f)),
     ...seoRows,
-    ...SEASONS.map((s) => entry(`/seasons/${s.slug}`, 0.8, "daily")),
-    ...slugs.map((s) => entry(`/brand/${s}`, 0.7, "daily")),
+    ...SEASONS.map((s) => entry(`/seasons/${s.slug}`, 0.8, "daily", today)),
+    ...slugs.map((s) => entry(`/brand/${s}`, 0.7, "daily", today)),
   ];
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>

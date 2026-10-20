@@ -5,7 +5,6 @@ import { motion, useScroll, useSpring, useTransform } from "framer-motion";
 import { useRef, type ReactNode } from "react";
 import styles from "./ZooptrackSite.module.css";
 import { ZooptrackLogo } from "@/components/brand/ZooptrackLogo";
-import { FAQ } from "./faq";
 import { ProductStory } from "./ProductStory";
 import { HeroReel } from "./HeroReel";
 import { formatInr, FOUNDING_OFFER, PLANS, yearlyPriceInr } from "@/lib/billing/plans";
@@ -70,7 +69,7 @@ function SceneSVG({ scene }: { scene: Scene }) {
             <rect x="160" y="90" width="420" height="270" rx="24" />
             <path d="M205 150H510M205 195H450M205 245H500" />
             <circle cx="205" cy="302" r="12" />
-            <text x="235" y="307">{["FREE","STARTER","GROWTH","PRO"][i]}</text>
+            <text x="235" y="307">{["FREE","STARTER","GROWTH","AGENCY"][i]}</text>
           </g>
         ))}
       </svg>
@@ -230,7 +229,7 @@ export function ZooptrackHome() {
           <Metric label="RIVALS WATCHED" value="5" />
           <Metric label="NEW ADS THIS WEEK" value="61" />
           <Metric label="LONGEST-RUNNING AD" value="64 days" />
-          <Metric label="COVERAGE VS META" value="97%" accent />
+          <Metric label="EXAMPLE COVERAGE CHECK" value="97%" accent />
         </div>
       </section>
 
@@ -293,7 +292,7 @@ export function ZooptrackPricing() {
       scene="ledger"
       eyebrow="PRICING"
       title={<>Simple plans.<br /><em>Cancel any time.</em></>}
-      copy="Start free with 3 brand searches, no card. Plans differ by how many rivals you watch and whether you get big-move alerts."
+      copy="Start free with 3 brand searches, no card. Plans differ by how many rivals you watch (5, 15 or 50); big-move alerts come with Growth and Agency."
     >
       <p role="note" style={{ maxWidth: 760, margin: "0 auto 18px", textAlign: "center", fontWeight: 700 }}>
         Founding price: our first {FOUNDING_OFFER.spots} customers keep this price for {FOUNDING_OFFER.lockMonths} months.
@@ -312,44 +311,6 @@ export function ZooptrackPricing() {
           );
         })}
       </section>
-    </Shell>
-  );
-}
-
-export function ZooptrackFaq() {
-  const items = FAQ.map((f) => [f.q, f.a] as const);
-  return (
-    <Shell
-      scene="unfold"
-      eyebrow="FAQ"
-      title={<>Straight<br /><em>answers.</em></>}
-      copy="Where the data comes from, what it costs, and what we never guess."
-    >
-      <section className={styles.faqWrap}>
-        {items.map(([q,a], i) => (
-          <details key={q} className={styles.faqItem} open={i === 0}>
-            <summary><span>0{i+1}</span><strong>{q}</strong><i>+</i></summary>
-            <p>{a}</p>
-          </details>
-        ))}
-      </section>
-    </Shell>
-  );
-}
-
-export function ZooptrackAdSpyIntro() {
-  return (
-    <section className={styles.adspyIntro}>
-      <div><span className={styles.kicker}>ADSPY / RADAR</span><h1>See what the market is testing.</h1><p>Discover competitors, resolve creatives, collect history and turn raw ads into evidence for your next move.</p></div>
-      <Scene scene="radar" />
-    </section>
-  );
-}
-
-export function ZooptrackLegal({ title, copy }: { title: string; copy: string }) {
-  return (
-    <Shell scene="archive" eyebrow="ZOOPTRACK / ARCHIVE" title={title} copy={copy}>
-      <section className={styles.legalWrap}><span>DOCUMENT INDEX</span><div className={styles.legalRule} />{Array.from({ length: 10 }).map((_, i) => <div key={i} className={styles.legalLine}><small>0{i+1}</small><span>{["Scope","Definitions","Data","Security","Retention","Access","Cookies","Analytics","Changes","Contact"][i]}</span></div>)}</section>
     </Shell>
   );
 }

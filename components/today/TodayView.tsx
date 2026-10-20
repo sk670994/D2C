@@ -101,8 +101,12 @@ export function TodayView() {
   }
 
   const [lead, ...rest] = data.moves;
-  const freshest = data.rivals.map((r) => r.lastSeenAt).filter((v): v is string => Boolean(v)).sort().pop() ?? null;
-  const updated = timeAgo(freshest);
+  // Honest freshness: the OLDEST rival's data, and how many rivals are stale.
+  const seen = data.rivals.map((r) => r.lastSeenAt).filter((v): v is string => Boolean(v)).sort();
+  const oldest = seen[0] ?? null;
+  const updated = timeAgo(oldest);
+  const staleCutoff = Date.now() - 36 * 3_600_000;
+  const stale = data.rivals.filter((r) => !r.lastSeenAt || Date.parse(r.lastSeenAt) < staleCutoff).length;
   const maxNew = Math.max(1, ...data.rivals.map((r) => r.new7));
 
   return (
@@ -116,6 +120,11 @@ export function TodayView() {
               {data.watchedCount} {data.watchedCount === 1 ? "rival" : "rivals"} watched
             </span>
             {updated ? <span>Data updated {updated}</span> : null}
+            {stale > 0 ? (
+              <span>
+                {stale} of {data.rivals.length} rivals not refreshed in 36 h
+              </span>
+            ) : null}
           </p>
           <h1 className="zd-h1" style={{ maxWidth: "24ch" }}>
             {data.headline}

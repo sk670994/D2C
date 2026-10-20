@@ -776,7 +776,7 @@ function mapCreative(
   };
 }
 
-function emptyResult(
+export function emptyResult(
   page: number,
   limit: number,
 ) {
@@ -860,6 +860,7 @@ function emptyResult(
 }
 
 export { AD_SORT_KEYS, parseAdSort, type AdSortKey } from "./sort";
+
 
 /**
  * Creative page for the current filters. "relevant" keeps the proven v4 RPC;

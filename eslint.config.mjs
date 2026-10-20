@@ -23,5 +23,8 @@ export default defineConfig([
     "**/*-backup*/**",
     "zwirk-*/**",
     ".adspy-backup-*/**",
+
+    // Legacy standalone package (not part of the app build)
+    "zooptrack-3d-package/**",
   ]),
 ]);

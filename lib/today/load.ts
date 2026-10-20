@@ -16,15 +16,20 @@ const SELECT =
 const PAGE = 1000;
 const MAX_ROWS = 3000;
 const MAX_RIVALS = 8;
-/** How long a brand's summary is reused across all users (data is refreshed nightly). */
-const SUMMARY_TTL_MS = 15 * 60_000;
+/**
+ * How long a brand's summary is reused across all users. Data changes only
+ * when the brand is collected (nightly, or a user refresh), and the collector
+ * drops these keys when it finishes (forgetBrand in ./cache), so a long TTL is safe.
+ */
+const SUMMARY_TTL_MS = 6 * 60 * 60_000;
 
 /** One brand's summary, shared by every user who watches it. */
 function brandSummary(pageId: string): Promise<BrandSummary> {
+  let degraded = false;
   return cached(`sum:${pageId}`, SUMMARY_TTL_MS, async () => {
     const rows = await loadRows(pageId);
-    return summarizeBrand(pageId, rows, Date.now(), await loadChanges(rows));
-  });
+    return summarizeBrand(pageId, rows, Date.now(), await loadChanges(rows, () => { degraded = true; }));
+  }, { store: () => !degraded });
 }
 
 const CHANGE_WINDOW_DAYS = 7;
@@ -35,21 +40,31 @@ const VERSION_FIELDS = "creative_id,primary_text,headline,call_to_action,landing
  * ads got a new version this week, then the full history of only those ads.
  * Best effort: a failure means "no changes", never a broken page.
  */
-async function loadChanges(rows: TodayAdRow[]): Promise<AdChange[]> {
+async function loadChanges(rows: TodayAdRow[], onError?: () => void): Promise<AdChange[]> {
   try {
     const liveIds = rows.filter((row) => row.is_currently_active).map((row) => row.id).slice(0, 600);
     if (!liveIds.length) return [];
     const client = createGlobalServiceClient();
     const since = new Date(Date.now() - CHANGE_WINDOW_DAYS * 86_400_000).toISOString();
     const touched = new Set<string>();
-    for (let i = 0; i < liveIds.length; i += 150) {
-      const { data, error } = await client
-        .from("ad_intelligence_creative_versions")
-        .select("creative_id")
-        .in("creative_id", liveIds.slice(i, i + 150))
-        .gte("first_observed_at", since)
-        .limit(1000);
-      if (error) return [];
+    // Independent read-only chunks (max 4), fetched together.
+    const chunks: string[][] = [];
+    for (let i = 0; i < liveIds.length; i += 150) chunks.push(liveIds.slice(i, i + 150));
+    const results = await Promise.all(
+      chunks.map((chunk) =>
+        client
+          .from("ad_intelligence_creative_versions")
+          .select("creative_id")
+          .in("creative_id", chunk)
+          .gte("first_observed_at", since)
+          .limit(1000),
+      ),
+    );
+    for (const { data, error } of results) {
+      if (error) {
+        onError?.();
+        return [];
+      }
       for (const row of (data ?? []) as Array<{ creative_id: string }>) touched.add(String(row.creative_id));
     }
     if (!touched.size) return [];
@@ -60,24 +75,39 @@ async function loadChanges(rows: TodayAdRow[]): Promise<AdChange[]> {
       .in("creative_id", ids)
       .order("first_observed_at", { ascending: true })
       .limit(2000);
-    if (error) return [];
+    if (error) {
+      onError?.();
+      return [];
+    }
     return detectChanges((data ?? []) as VersionRow[], Date.parse(since));
   } catch {
+    onError?.();
     return [];
   }
 }
 
 /** Summary + coverage + AI patterns for a brand page, shared across users. */
 function brandCore(pageId: string, country: string): Promise<{ summary: BrandSummary; coverage: SourceCounts | null; patterns: CreativePatterns; landing?: LandingSummary | null }> {
+  // Any sub-read that failed (and fell back to "nothing") marks the result
+  // partial: it is served, but never stored in the shared cache for 6 hours.
+  let degraded = false;
+  const fail = () => {
+    degraded = true;
+  };
   return cached(`core:${pageId}:${country}`, SUMMARY_TTL_MS, async () => {
     const [rows, coverage] = await Promise.all([
       loadRows(pageId),
-      getSourceCounts({ platform: "meta", country, scope: { scopeType: "page", scopeKey: pageId } }),
+      getSourceCounts({ platform: "meta", country, scope: { scopeType: "page", scopeKey: pageId }, onError: fail }),
     ]);
     const live = rows.filter((row) => row.is_currently_active);
-    const landing = await loadLandingSummary(live.map((row) => row.id), new Map(live.map((row) => [row.id, row.offer])));
-    return { summary: summarizeBrand(pageId, rows, Date.now(), await loadChanges(rows)), coverage, patterns: await patternsFor(rows), landing };
-  });
+    // Landing, changes and patterns depend only on rows: fetch them together.
+    const [landing, changes, patterns] = await Promise.all([
+      loadLandingSummary(live.map((row) => row.id), new Map(live.map((row) => [row.id, row.offer])), fail),
+      loadChanges(rows, fail),
+      patternsFor(rows, fail),
+    ]);
+    return { summary: summarizeBrand(pageId, rows, Date.now(), changes), coverage, patterns, landing };
+  }, { store: () => !degraded });
 }
 
 export type WatchedTarget = { pageId: string; name: string; country: string };
@@ -127,9 +157,9 @@ async function loadRows(pageId: string): Promise<TodayAdRow[]> {
 }
 
 /** AI patterns over a brand's live ads (only ads the decoder has labelled). */
-async function patternsFor(rows: TodayAdRow[]): Promise<CreativePatterns> {
+async function patternsFor(rows: TodayAdRow[], onError?: () => void): Promise<CreativePatterns> {
   const live = rows.filter((row) => row.is_currently_active).slice(0, 600);
-  const decodes = await loadDecodes(live.map((row) => row.id));
+  const decodes = await loadDecodes(live.map((row) => row.id), onError);
   return { decoded: decodes.size, live: live.length, top: topPatterns(Array.from(decodes.values()), 2) };
 }
 
@@ -149,12 +179,26 @@ export async function getOwnBrand(userId: string): Promise<{ pageId: string | nu
   };
 }
 
-export async function getBrandOverview(pageId: string, country = "IN", ownPageId: string | null = null): Promise<BrandOverview> {
-  const { summary, coverage, patterns, landing } = await brandCore(pageId, country);
+/**
+ * `own` is either the user's own page id (already known) or a promise of it
+ * (e.g. getOwnBrand still in flight), so the target brand and the user's own
+ * brand are computed in parallel instead of one after the other.
+ */
+export async function getBrandOverview(
+  pageId: string,
+  country = "IN",
+  own: string | null | Promise<string | null> = null,
+): Promise<BrandOverview> {
+  const ownCorePromise = Promise.resolve(own).then((ownPageId) =>
+    ownPageId && ownPageId !== pageId ? brandCore(ownPageId, country).then((core) => ({ ownPageId, core })) : null,
+  );
+  // Never leave a rejection unobserved if the target brand fails first.
+  ownCorePromise.catch(() => undefined);
+  const [{ summary, coverage, patterns, landing }, ownResult] = await Promise.all([brandCore(pageId, country), ownCorePromise]);
 
   let vsYou: VsYou | null = null;
-  if (ownPageId && ownPageId !== pageId) {
-    const ownCore = await brandCore(ownPageId, country);
+  if (ownResult) {
+    const { ownPageId, core: ownCore } = ownResult;
     const own = ownCore.summary;
     vsYou = {
       you: {

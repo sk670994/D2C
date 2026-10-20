@@ -10,7 +10,35 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-export type RememberedPage = { pageId: string; name: string; at: string };
+/**
+ * How the page was matched: "exact" name (never re-checked), "verified"
+ * (Meta-verified page with a clear lead) or "lead" (clear lead on audience).
+ * Non-exact matches are looked up again after RECHECK_AFTER_MS, so a wrong
+ * or outdated pick does not stick for ever.
+ */
+export type MatchReason = "exact" | "verified" | "lead";
+
+export type RememberedPage = {
+  pageId: string;
+  name: string;
+  /** When the entry was first written or last changed. */
+  at: string;
+  reason: MatchReason;
+  /** When the match was last confirmed by a look-up. */
+  checkedAt: string;
+};
+
+export const RECHECK_AFTER_MS = 14 * 24 * 60 * 60_000;
+
+/** Pure: does this entry need a fresh look-up? Old files (no reason) do, once. */
+export function needsRecheck(page: RememberedPage, now = Date.now(), maxAgeMs = RECHECK_AFTER_MS): boolean {
+  if (page.reason === "exact") return false;
+  const checked = new Date(page.checkedAt).getTime();
+  if (!Number.isFinite(checked) || checked <= 0) return true;
+  return now - checked > maxAgeMs;
+}
+
+const REASONS = new Set<MatchReason>(["exact", "verified", "lead"]);
 
 export function pageMemoryPath(env: Record<string, string | undefined> = process.env): string {
   if (env.ADSPY_PAGE_MEMORY_FILE?.trim()) return env.ADSPY_PAGE_MEMORY_FILE.trim();
@@ -27,7 +55,13 @@ export function parsePageMemory(text: string): Record<string, RememberedPage> {
     for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
       const v = value as Partial<RememberedPage> | null;
       const pageId = String(v?.pageId ?? "").trim();
-      if (key && /^\d+$/.test(pageId)) out[key] = { pageId, name: String(v?.name ?? key), at: String(v?.at ?? "") };
+      if (!key || !/^\d+$/.test(pageId)) continue;
+      const at = String(v?.at ?? "");
+      // Entries written before reasons existed: treat as non-exact, last
+      // checked when written (or never), so they are looked up again once.
+      const reason = REASONS.has(v?.reason as MatchReason) ? (v!.reason as MatchReason) : "lead";
+      const checkedAt = typeof v?.checkedAt === "string" && v.checkedAt ? v.checkedAt : at;
+      out[key] = { pageId, name: String(v?.name ?? key), at, reason, checkedAt };
     }
     return out;
   } catch {
@@ -49,15 +83,40 @@ export class PageMemory {
     this.pages = parsePageMemory(text);
   }
 
+  /** The remembered page, fresh or not (no expiry). */
   get(key: string): RememberedPage | null {
     return this.pages[key] ?? null;
   }
 
-  remember(key: string, page: { pageId: string; name: string }, now = new Date()): void {
+  /**
+   * The remembered page plus whether it is due for a re-check (non-exact
+   * and last confirmed more than 14 days ago). A due entry is a cache miss
+   * for the caller, but stays available as a fallback if the look-up fails.
+   */
+  lookup(key: string, now = Date.now()): { page: RememberedPage; recheck: boolean } | null {
+    const page = this.pages[key];
+    if (!page) return null;
+    return { page, recheck: needsRecheck(page, now) };
+  }
+
+  remember(
+    key: string,
+    page: { pageId: string; name: string; reason?: MatchReason },
+    now = new Date(),
+  ): void {
     if (!key || !/^\d+$/.test(page.pageId)) return;
     const prev = this.pages[key];
-    if (prev?.pageId === page.pageId && prev.name === page.name) return;
-    this.pages[key] = { pageId: page.pageId, name: page.name, at: now.toISOString() };
+    const reason: MatchReason = page.reason ?? "lead";
+    const iso = now.toISOString();
+    const same = prev?.pageId === page.pageId && prev.name === page.name;
+    if (same && prev.reason === reason && !needsRecheck(prev, now.getTime())) return;
+    this.pages[key] = {
+      pageId: page.pageId,
+      name: page.name,
+      at: same ? prev.at : iso,
+      reason,
+      checkedAt: iso,
+    };
     this.dirty = true;
   }
 

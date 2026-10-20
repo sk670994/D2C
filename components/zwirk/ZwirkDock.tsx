@@ -1,16 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { buildZwirkContext } from "@/lib/decision/brief";
 import type { CalculatedReport } from "@/lib/types/domain";
-import { Button } from "@/components/ui/button";
+import type { ChatMessage } from "./ZwirkDockPanel";
 
-type ChatMessage = {
-  role: "user" | "assistant";
-  content: string;
-};
+// The panel UI (and the report-context builder) load on first open, so the
+// floating button costs almost nothing on every app page.
+const ZwirkDockPanel = dynamic(
+  () => import("./ZwirkDockPanel").then((m) => m.ZwirkDockPanel),
+  { ssr: false },
+);
 
 function pageContext(pathname: string): string {
   if (pathname.startsWith("/zooplens")) return "ZoopLens · competitor intelligence";
@@ -19,7 +21,7 @@ function pageContext(pathname: string): string {
   return "Command Center · profitability";
 }
 
-function getStoredZwirkContext(): string {
+async function getStoredZwirkContext(): Promise<string> {
   try {
     const raw = sessionStorage.getItem("report");
 
@@ -33,6 +35,7 @@ function getStoredZwirkContext(): string {
       return "";
     }
 
+    const { buildZwirkContext } = await import("@/lib/decision/brief");
     return buildZwirkContext(report);
   } catch {
     return "";
@@ -76,14 +79,13 @@ export function ZwirkDock() {
         },
       ];
 
-      const reportContext = getStoredZwirkContext();
-
       setMessages(nextMessages);
       setInput("");
       setLoading(true);
       setError(null);
 
       try {
+        const reportContext = await getStoredZwirkContext();
         const res = await fetch("/api/zwirk", {
           method: "POST",
           headers: {
@@ -125,10 +127,8 @@ export function ZwirkDock() {
   useEffect(() => {
     const supabase = createClient();
 
-    void supabase.auth.getUser().then(({ data }) => {
-      setAuthed(Boolean(data.user));
-    });
-
+    // onAuthStateChange emits INITIAL_SESSION from local storage straight
+    // away, so no network getUser() round trip is needed to show the dock.
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -139,6 +139,9 @@ export function ZwirkDock() {
       subscription.unsubscribe();
     };
   }, []);
+
+  const closePanel = useCallback(() => setOpen(false), []);
+  const openFull = useCallback(() => router.push("/zwirk"), [router]);
 
   useEffect(() => {
     function onAsk(event: Event) {
@@ -189,81 +192,18 @@ export function ZwirkDock() {
       </button>
 
       {open ? (
-        <div className="zwirk-dock">
-          <header>
-            <div>
-              <strong>✦ ZWIRK</strong>
-              <span>Growth Intelligence Copilot</span>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              aria-label="Close"
-            >
-              ×
-            </button>
-          </header>
-
-          <p className="zwirk-dock-context">
-            Context · {pageContext(pathname)}
-            {entityContext ? " · Entity linked" : ""}
-          </p>
-
-          <div className="zwirk-dock-thread">
-            {messages.length === 0 ? (
-              <p className="muted-text">
-                Ask why profit moved, what to pause, or what to test next. I
-                will not invent metrics.
-              </p>
-            ) : null}
-
-            {messages.map((msg, index) => (
-              <article
-                key={`${msg.role}-${index}`}
-                className={`zwirk-dock-msg ${msg.role}`}
-              >
-                {msg.content}
-              </article>
-            ))}
-
-            {loading ? (
-              <p className="muted-text">Working…</p>
-            ) : null}
-
-            {error ? (
-              <p className="error-text">{error}</p>
-            ) : null}
-          </div>
-
-          <form
-            className="zwirk-dock-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void send(input);
-            }}
-          >
-            <input
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder="Ask ZWIRK…"
-              aria-label="Ask ZWIRK"
-              disabled={loading}
-            />
-
-            <Button type="submit" disabled={loading || !input.trim()}>
-              ↑
-            </Button>
-          </form>
-
-          <button
-            type="button"
-            className="zwirk-dock-full"
-            onClick={() => router.push("/zwirk")}
-          >
-            Open full workspace
-          </button>
-        </div>
+        <ZwirkDockPanel
+          contextLabel={pageContext(pathname)}
+          entityLinked={Boolean(entityContext)}
+          messages={messages}
+          loading={loading}
+          error={error}
+          input={input}
+          onInput={setInput}
+          onSend={send}
+          onClose={closePanel}
+          onOpenFull={openFull}
+        />
       ) : null}
     </>
   );

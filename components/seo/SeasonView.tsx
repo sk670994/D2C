@@ -7,7 +7,8 @@ import { breadcrumbSchema, faqSchema, ORG_ID, SITE_URL } from "@/lib/seo/schema"
 import { SEASONS, type Season } from "@/lib/seo/seasons";
 
 import { Bars, LongAds } from "./MarketBits";
-import { Crumbs, Faqs, FooterCta, RelatedLinks, Shell, updatedLabel } from "./SeoChrome";
+import { Crumbs, DataDate, Faqs, FooterCta, RelatedLinks, Shell } from "./SeoChrome";
+import { dataStamp } from "@/lib/seo/data-date";
 import t from "./Themes.module.css";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -33,7 +34,7 @@ export async function SeasonView({ season }: { season: Season }) {
       {thin ? <meta name="robots" content="noindex,follow" /> : null}
       <JsonLd
         graph={[
-          { "@type": "Article", headline: `${season.name} ads in India`, url: `${SITE_URL}${path}`, inLanguage: "en-IN", dateModified: new Date().toISOString(), author: { "@id": ORG_ID }, publisher: { "@id": ORG_ID } },
+          { "@type": "Article", headline: `${season.name} ads in India`, url: `${SITE_URL}${path}`, inLanguage: "en-IN", dateModified: dataStamp(data.dataDate).iso, author: { "@id": ORG_ID }, publisher: { "@id": ORG_ID } },
           breadcrumbSchema([{ name: "Home", path: "/" }, { name: "Seasons", path: "/seasons" }, { name: season.name, path }]),
           faqSchema(faqs),
         ]}
@@ -51,7 +52,7 @@ export async function SeasonView({ season }: { season: Season }) {
         ) : (
           <p className={t.sentence}>We are still collecting {season.short} ads for this year. Check back soon.</p>
         )}
-        <p className={t.note} style={{ marginTop: 10 }}>Season: {season.when}. Updated {updatedLabel()}.</p>
+        <DataDate date={data.dataDate} style={{ marginTop: 10 }} before={<>Season: {season.when}. </>} />
       </section>
 
       {data.weeks.length ? (

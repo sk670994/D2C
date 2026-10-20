@@ -131,30 +131,54 @@ function extFor(type: string): string {
   return "jpg";
 }
 
-async function rehost(url: string, key: string): Promise<string | null> {
-  if (!/^https:\/\//i.test(url) || isStoredMediaUrl(url)) return null;
+/**
+ * Why a copy failed: "source" = Meta answered but the link is gone/unusable
+ * (4xx, not an image, empty or too big); "transient" = network, timeout, 5xx
+ * or our own storage failed. Only "source" lets media backfill give up on an ad.
+ */
+export type MediaFailure = "source" | "transient";
+
+async function rehost(url: string, key: string, onFailure?: (reason: MediaFailure) => void): Promise<string | null> {
+  if (!/^https:\/\//i.test(url) || isStoredMediaUrl(url)) {
+    if (!isStoredMediaUrl(url)) onFailure?.("source");
+    return null;
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
     const response = await fetch(url, { signal: controller.signal, redirect: "follow" });
     const type = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-    if (!response.ok || !type.startsWith("image/") || type.includes("svg")) return null;
+    if (!response.ok || !type.startsWith("image/") || type.includes("svg")) {
+      onFailure?.(response.status >= 500 ? "transient" : "source");
+      return null;
+    }
     const original = new Uint8Array(await response.arrayBuffer());
-    if (!original.byteLength || original.byteLength > MAX_BYTES) return null;
+    if (!original.byteLength || original.byteLength > MAX_BYTES) {
+      onFailure?.("source");
+      return null;
+    }
 
     const small = await toSmallWebp(original);
     const bytes = small ?? original;
     const contentType = small ? "image/webp" : type;
     const ext = small ? "webp" : extFor(type);
-    if (mediaTarget() === "r2") return await putR2Object(bytes, contentType, ext);
+    if (mediaTarget() === "r2") {
+      const stored = await putR2Object(bytes, contentType, ext);
+      if (!stored) onFailure?.("transient");
+      return stored;
+    }
     const path = `${key}.${ext}`;
     const { error } = await createGlobalServiceClient()
       .storage.from(BUCKET)
       .upload(path, bytes, { contentType, upsert: true, cacheControl: "31536000" });
-    if (error) return null;
+    if (error) {
+      onFailure?.("transient");
+      return null;
+    }
     addedSinceCheck += bytes.byteLength;
     return `${storagePrefix()}${path}`;
   } catch {
+    onFailure?.("transient");
     return null;
   } finally {
     clearTimeout(timer);
@@ -162,7 +186,10 @@ async function rehost(url: string, key: string): Promise<string | null> {
 }
 
 /** Mutates ads in place: imageUrl / thumbnailUrl point at our storage when copied. */
-export async function persistAdMedia(ads: CompetitorAd[]): Promise<number> {
+export async function persistAdMedia(
+  ads: CompetitorAd[],
+  options: { onFailure?: (ad: CompetitorAd, reason: MediaFailure) => void } = {},
+): Promise<number> {
   if (!mediaStoreEnabled() || !ads.length) return 0;
   if (mediaTarget() === "supabase" && !(await ensureBucket())) return 0;
   if (!(await hasMediaRoom())) {
@@ -186,7 +213,7 @@ export async function persistAdMedia(ads: CompetitorAd[]): Promise<number> {
     if (!source) continue;
     jobs.push(async () => {
       if (!(await hasMediaRoom())) return;
-      const next = await rehost(source, base);
+      const next = await rehost(source, base, options.onFailure ? (reason) => options.onFailure!(ad, reason) : undefined);
       if (next) {
         ad.thumbnailUrl = next;
         if (!ad.imageUrl || ad.imageUrl === source) ad.imageUrl = next;

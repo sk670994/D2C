@@ -98,6 +98,8 @@ export async function getOrCreateAdvertiserCollectionJob(input: {
   mode: "advertiser" | "keyword";
   userId: string;
   advertiserPageId?: string | null;
+  /** A person looked this brand up: refresh last_requested_at on an existing row too. */
+  recordLookup?: boolean;
 }): Promise<CollectionJob> {
   const client = createGlobalServiceClient();
   const query = input.query.trim().replace(/\s+/g, " ");
@@ -129,6 +131,21 @@ export async function getOrCreateAdvertiserCollectionJob(input: {
 
   if (insertError && insertError.code !== "23505") {
     throw new Error(`Failed to create collection job: ${insertError.message}`);
+  }
+
+  // Existing job (unique conflict): record this look-up so tonight's prefill
+  // (last_requested_at within 26 h) still reads the brand. Best effort.
+  if (insertError && input.recordLookup !== false) {
+    try {
+      const { error: touchError } = await client
+        .from("ad_intelligence_collection_jobs")
+        .update({ last_requested_at: now })
+        .eq("collection_key", collectionKey)
+        .eq("user_id", input.userId);
+      if (touchError) console.warn("[AdSpy] could not record look-up:", touchError.message);
+    } catch (error) {
+      console.warn("[AdSpy] could not record look-up:", error instanceof Error ? error.message : error);
+    }
   }
 
   const { data, error } = await client

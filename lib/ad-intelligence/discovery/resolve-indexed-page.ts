@@ -11,7 +11,23 @@ type Row = { page_id?: string | number | null; label?: string | null; verificati
  * P-TAL). Only an unambiguous match (pickExactPage) is returned; anything
  * else stays a name search. Never throws.
  */
-export async function resolveIndexedPage(name: string, country: string): Promise<{ pageId: string; label: string } | null> {
+export async function resolveIndexedPage(
+  name: string,
+  country: string,
+  timeoutMs?: number,
+): Promise<{ pageId: string; label: string } | null> {
+  if (timeoutMs && timeoutMs > 0) {
+    // Request paths: never let the look-up itself become the slow part.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), timeoutMs);
+    });
+    try {
+      return await Promise.race([resolveIndexedPage(name, country), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
   const q = String(name ?? "").trim();
   if (q.length < 2) return null;
   try {

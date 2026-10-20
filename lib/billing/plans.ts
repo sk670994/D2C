@@ -106,6 +106,25 @@ function ms(value: string | null | undefined): number {
   return Number.isFinite(t) ? t : NaN;
 }
 
+/**
+ * The billing row could not be read (database error, not a missing table):
+ * fail closed. No paid features until the plan can be checked again.
+ */
+export function unavailableEntitlement(): Entitlement {
+  return {
+    plan: "trial",
+    planName: PLANS.trial.name,
+    status: "expired",
+    active: false,
+    rivalsLimit: PLANS.trial.rivals,
+    alerts: false,
+    trialDaysLeft: null,
+    renewsAt: null,
+    label: "Could not check your plan right now · try again in a minute",
+    admin: false,
+  };
+}
+
 /** What a user may do now, from their subscription row (or none). */
 export function entitlementFor(row: SubscriptionRow | null, now: number = Date.now(), options: { admin?: boolean } = {}): Entitlement {
   if (options.admin) {
@@ -129,7 +148,7 @@ export function entitlementFor(row: SubscriptionRow | null, now: number = Date.n
       alerts: running,
       trialDaysLeft: Math.max(0, left),
       renewsAt: null,
-      label: running ? `Free trial · ${left} ${left === 1 ? "day" : "days"} left` : "Trial ended · choose a plan to keep collecting",
+      label: running ? "Free trial" : "Trial ended · choose a plan to keep collecting",
       admin: false,
     };
   }

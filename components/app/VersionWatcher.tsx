@@ -18,6 +18,8 @@ export function VersionWatcher() {
   useEffect(() => {
     let alive = true;
     const check = async () => {
+      // A hidden tab checks again when it becomes visible (onVisible).
+      if (document.hidden) return;
       try {
         const res = await fetch("/api/version", { cache: "no-store" });
         const { version } = (await res.json()) as { version?: string };

@@ -1,8 +1,8 @@
 name: Media prune (keep Supabase storage under 1 GB)
 
+# Manual runs only: ad media now lives in Backblaze B2, not Supabase Storage,
+# so a daily prune of Supabase storage has nothing useful to do.
 on:
-  schedule:
-    - cron: "30 9 * * *" # 15:00 IST, well clear of the nightly collector
   workflow_dispatch:
 
 concurrency:

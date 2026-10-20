@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getEntitlement } from "@/lib/billing/server";
 import { sendEmail } from "@/lib/email/send";
 import { checkSharedRateLimit } from "@/lib/rate-limit";
 import { createClient } from "@/lib/supabase/server";
@@ -22,6 +23,12 @@ export async function POST() {
 
   if (!process.env.RESEND_API_KEY?.trim() || !process.env.REPORT_FROM_EMAIL?.trim()) {
     return NextResponse.json({ success: false, error: "Email isn't switched on yet. Add the Resend key in Vercel, then try again." }, { status: 503 });
+  }
+
+  // Reports are a paid feature: a running trial or plan is required.
+  const entitlement = await getEntitlement(user.id, user.email);
+  if (!entitlement.active) {
+    return NextResponse.json({ success: false, error: "Reports need an active trial or plan. Choose a plan on /pricing to keep getting them.", code: "plan_required" }, { status: 402 });
   }
 
   const rate = await checkSharedRateLimit(`report-send-now:${user.id}`, 5, 3_600_000);

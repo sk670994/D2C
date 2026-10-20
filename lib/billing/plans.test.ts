@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canWatchMore, entitlementFor, isAdminEmail, isPaidPlan, statusFromRazorpay, PLANS, yearlyPriceInr } from "./plans";
+import { canWatchMore, entitlementFor, isAdminEmail, isPaidPlan, statusFromRazorpay, unavailableEntitlement, PLANS, yearlyPriceInr } from "./plans";
 
 const now = Date.parse("2026-10-01T00:00:00Z");
 const days = (n: number) => new Date(now + n * 86_400_000).toISOString();
@@ -78,5 +78,18 @@ describe("launch pricing", () => {
   it("is ₹999 / ₹2,999 / ₹7,999 a month and 10x that a year", () => {
     expect([PLANS.starter.priceInr, PLANS.growth.priceInr, PLANS.agency.priceInr]).toEqual([999, 2999, 7999]);
     expect(yearlyPriceInr("growth")).toBe(29990);
+  });
+});
+
+describe("unavailableEntitlement", () => {
+  it("fails closed: no paid features, no alerts, not admin", () => {
+    const e = unavailableEntitlement();
+    expect(e.active).toBe(false);
+    expect(e.alerts).toBe(false);
+    expect(e.admin).toBe(false);
+  });
+
+  it("differs from a brand-new user, who still gets the trial", () => {
+    expect(entitlementFor(null, now).active).toBe(true);
   });
 });

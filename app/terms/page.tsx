@@ -21,7 +21,7 @@ const sections = [
   {
     title: "Payments",
     body:
-      "New accounts get a 7-day free trial. Paid plans are billed monthly in advance through Razorpay, in INR. Prices shown are the full amount you pay. You can cancel any time from Plan & billing and keep access until the end of the period you paid for. Fees already paid are not refunded, except where the law requires it."
+      "New accounts get a free trial of 3 brand searches; no card is required. Paid plans are billed monthly in advance through Razorpay, in INR. Prices shown are the full amount you pay. You can cancel any time from Plan & billing and keep access until the end of the period you paid for. Fees already paid are not refunded, except where the law requires it."
   },
   {
     title: "Acceptable Use",
@@ -55,7 +55,7 @@ export default function TermsPage() {
         <p className="muted-text">
           These terms govern use of the Zooptrack service (competitor ad intelligence and the related tools). Please read them carefully.
         </p>
-        <p className="policy-meta">Effective date: March 10, 2026</p>
+        <p className="policy-meta">Last updated: 20 October 2026</p>
       </header>
       <section className="policy-grid">
         {sections.map((section) => (

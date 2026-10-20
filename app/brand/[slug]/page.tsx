@@ -2,10 +2,14 @@
 import { fitTitle } from "@/lib/seo/site";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { notFound } from "next/navigation";
+import { cache } from "react";
 
 import { BrandLogo } from "@/components/app/BrandLogo";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
-import { getSearchFacets, type FacetResult } from "@/lib/ad-intelligence/global/facets";
+import { getSearchFacets } from "@/lib/ad-intelligence/global/facets";
+import { queryFor, resolveBrandPages, seedBrandFor } from "@/lib/ad-intelligence/discovery/resolve-brand-pages";
+import { dataStamp } from "@/lib/seo/data-date";
 import { brandSlug } from "@/lib/ad-intelligence/brand-slug";
 import seed from "@/scripts/adspy-seed-brands.json";
 import t from "@/components/seo/Themes.module.css";
@@ -21,7 +25,8 @@ import { getCreativeMix, getLongestRunning, type LongAd, type MixRow } from "@/l
 // Public, cached teaser page (SEO). Refreshed every 6 hours.
 export const revalidate = 21600;
 
-type Advertiser = { pageId: string; name: string };
+type Advertiser = { pageId: string; name: string; pageIds: string[] };
+type PageFresh = { pageId: string; name: string | null; lastSeenAt: string | null };
 type SampleAd = {
   id: string;
   headline: string | null;
@@ -35,59 +40,88 @@ type SampleAd = {
 
 const COUNTRY = "IN";
 
-function nameFromSlug(slug: string): string {
-  return decodeURIComponent(slug).replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
-}
-
 function norm(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
-async function findAdvertiser(name: string): Promise<Advertiser | null> {
-  if (name.length < 2) return null;
-  const { data } = await createGlobalServiceClient().rpc("adspy_autocomplete_advertisers", {
-    p_query: name,
-    p_platform: "meta",
-    p_country: COUNTRY,
-    p_limit: 8,
-  });
-  const rows = ((data ?? []) as Array<{ page_id?: string | number | null; label?: string | null }>)
-    .filter((r) => r.page_id && r.label)
-    .map((r) => ({ pageId: String(r.page_id), name: String(r.label) }));
-  const want = norm(name);
-  return rows.find((r) => norm(r.name) === want) ?? rows.find((r) => norm(r.name).startsWith(want)) ?? null;
+/**
+ * Newest last_seen_at (the data date) and page name for one page. Index-
+ * friendly: (platform, advertiser_id, is_currently_active, last_seen_at).
+ * Throws on a database error.
+ */
+async function pageFreshness(pageId: string): Promise<PageFresh> {
+  const client = createGlobalServiceClient();
+  const newest = async (active: boolean) => {
+    const { data, error } = await client
+      .from("ad_intelligence_creatives")
+      .select("advertiser_name,last_seen_at")
+      .eq("platform", "meta")
+      .eq("advertiser_id", pageId)
+      .eq("is_currently_active", active)
+      .not("last_seen_at", "is", null)
+      .order("last_seen_at", { ascending: false })
+      .limit(1);
+    if (error) throw new Error(`Brand freshness failed: ${error.message}`);
+    return ((data ?? []) as Array<{ advertiser_name: string | null; last_seen_at: string | null }>)[0] ?? null;
+  };
+  const row = (await newest(true)) ?? (await newest(false));
+  return { pageId, name: row?.advertiser_name ?? null, lastSeenAt: row?.last_seen_at ?? null };
 }
 
-async function load(slug: string) {
-  const advertiser = await findAdvertiser(nameFromSlug(slug)).catch(() => null);
-  if (!advertiser) return { advertiser: null, facets: null, ads: [] as SampleAd[] };
+/** Same post (copy + image) captured more than once: show it once. */
+function dedupeAds(ads: SampleAd[]): SampleAd[] {
+  const seen = new Set<string>();
+  return ads.filter((a) => {
+    const key = `${(a.primary_text ?? "").replace(/\s+/g, " ").trim().toLowerCase()}|${a.thumbnail_url ?? a.image_url ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
-  const [facets, adsResult] = await Promise.all([
-    getSearchFacets({ query: advertiser.name, country: COUNTRY, platform: "meta", mode: "advertiser", pageId: advertiser.pageId }).catch(
-      () => null as FacetResult | null,
-    ),
+/**
+ * Everything the page needs, shared by generateMetadata and the page (React
+ * cache). Real database errors THROW so ISR keeps the last good page; only a
+ * confirmed "no page" / zero rows renders the empty state.
+ */
+const load = cache(async (slug: string) => {
+  const seedName = seedBrandFor(slug);
+  const fallbackName = seedName ?? queryFor(slug);
+  const pages = await resolveBrandPages(slug, { country: COUNTRY });
+  if (!pages) return { known: Boolean(seedName), fallbackName, advertiser: null, facets: null, ads: [] as SampleAd[], dataDate: null as string | null, others: [] as PageFresh[] };
+  const advertiser: Advertiser = { pageId: pages.primaryPageId, name: pages.name, pageIds: pages.pageIds };
+
+  const [facets, adsResult, fresh] = await Promise.all([
+    getSearchFacets({ query: advertiser.name, country: COUNTRY, platform: "meta", mode: "advertiser", pageId: advertiser.pageId }),
     createGlobalServiceClient()
       .from("ad_intelligence_creatives")
       .select("id,headline,primary_text,thumbnail_url,image_url,creative_type,is_currently_active,first_seen_at")
       .eq("platform", "meta")
-      .eq("advertiser_id", advertiser.pageId)
+      .in("advertiser_id", advertiser.pageIds)
       .order("first_seen_at", { ascending: false, nullsFirst: false })
       .limit(24),
+    Promise.all(advertiser.pageIds.map(pageFreshness)),
   ]);
+  if (adsResult.error) throw new Error(`Brand ads failed: ${adsResult.error.message}`);
 
-  const ads = ((adsResult.data ?? []) as SampleAd[])
-    .filter((a) => a.thumbnail_url || a.image_url)
-    // Only stored copies (Supabase or R2): Meta's own image links expire, which would leave blank tiles on a cached page.
-    .filter((a) => isStoredMediaUrl(a.thumbnail_url ?? a.image_url))
-    .slice(0, 8);
+  const ads = dedupeAds(
+    ((adsResult.data ?? []) as SampleAd[])
+      .filter((a) => a.thumbnail_url || a.image_url)
+      // Only stored copies (Supabase or R2): Meta's own image links expire, which would leave blank tiles on a cached page.
+      .filter((a) => isStoredMediaUrl(a.thumbnail_url ?? a.image_url)),
+  ).slice(0, 8);
 
-  return { advertiser, facets, ads };
-}
+  // Figures come from the primary page, so its date is the data date.
+  const dataDate = fresh[0]?.lastSeenAt ?? null;
+  const others = fresh.slice(1);
+  return { known: true, fallbackName, advertiser, facets, ads, dataDate, others };
+});
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
-  const { advertiser, facets } = await load(slug);
-  const name = advertiser?.name ?? nameFromSlug(slug);
+  const { advertiser, facets, fallbackName, known } = await load(slug);
+  if (!known) return { title: "Brand not found", robots: { index: false, follow: true } };
+  const name = advertiser?.name ?? fallbackName;
   const count = facets?.total ? `${facets.total.toLocaleString("en-IN")} ` : "";
   const title = `${name} Ads on Facebook & Instagram`;
   const description = `See ${count}${name} ads running on Meta in India: hooks, offers, languages and new launches per week. Free competitor ad research for D2C brands.`;
@@ -96,6 +130,8 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     title: fitTitle(title),
     description,
     alternates: { canonical: url },
+    // No collected ads yet: a thin page, keep it out of the index.
+    ...(facets?.total ? {} : { robots: { index: false, follow: true } }),
     openGraph: { type: "website", siteName: "Zooptrack", locale: "en_IN", url, title: `${title} | Zooptrack`, description, images: [{ url: "/opengraph-image", width: 1200, height: 630 }] },
     twitter: { card: "summary_large_image", title: `${title} | Zooptrack`, description },
   };
@@ -131,8 +167,9 @@ function Mix({ title, rows }: { title: string; rows: MixRow[] }) {
 
 export default async function BrandPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const { advertiser, facets, ads } = await load(slug);
-  const name = advertiser?.name ?? nameFromSlug(slug);
+  const { advertiser, facets, ads, known, fallbackName, dataDate, others } = await load(slug);
+  if (!known) notFound();
+  const name = advertiser?.name ?? fallbackName;
   const path = `/brand/${brandSlug(name)}`;
   const next = advertiser ? `/zooplens?q=${encodeURIComponent(advertiser.name)}&pid=${advertiser.pageId}` : `/zooplens?q=${encodeURIComponent(name)}`;
   const signup = `/login?next=${encodeURIComponent(next)}`;
@@ -142,12 +179,12 @@ export default async function BrandPage({ params }: { params: Promise<{ slug: st
   const languages = (facets?.language ?? []).slice(0, 3).map((l) => l.label).join(", ") || "–";
   const weeks = facets?.momentum.weeks ?? [];
   const launched30d = facets?.momentum.launched30d ?? 0;
-  const industry = industryOfBrand(name) ?? industryOfBrand(nameFromSlug(slug));
+  const industry = industryOfBrand(name) ?? industryOfBrand(fallbackName);
   const peers = (industry?.brands ?? (seed as { brands: string[] }).brands).filter((b) => norm(b) !== norm(name)).slice(0, 24);
   const [longest, mix] = advertiser
-    ? await Promise.all([getLongestRunning([{ pageId: advertiser.pageId, name: advertiser.name }], 6), getCreativeMix(advertiser.pageId)])
+    ? await Promise.all([getLongestRunning([{ pageId: advertiser.pageId, name: advertiser.name, pageIds: advertiser.pageIds }], 6), getCreativeMix(advertiser.pageId)])
     : [[] as LongAd[], null];
-  const updated = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Kolkata" });
+  const stamp = dataStamp(dataDate);
   const busiest = weeks.reduce<{ weekStart: string; launched: number } | null>((b, w) => (!b || w.launched > b.launched ? w : b), null);
 
   // Plain-English read of the numbers: unique per brand and true on the day it renders.
@@ -173,7 +210,7 @@ export default async function BrandPage({ params }: { params: Promise<{ slug: st
     <Shell theme="brand" path={path} dark>
       <JsonLd
         graph={[
-          { "@type": "WebPage", url: `${SITE_URL}${path}`, name: `${name} Facebook & Instagram ads`, inLanguage: "en-IN", dateModified: new Date().toISOString(), about: { "@type": "Brand", name } },
+          { "@type": "WebPage", url: `${SITE_URL}${path}`, name: `${name} Facebook & Instagram ads`, inLanguage: "en-IN", dateModified: stamp.iso, about: { "@type": "Brand", name } },
           breadcrumbSchema([{ name: "Home", path: "/" }, { name: "Brand ads", path: "/brand" }, ...(industry ? [{ name: industry.name, path: `/industries/${industry.slug}` }] : []), { name, path }]),
           ...(facts.length ? [faqSchema(facts)] : []),
         ]}
@@ -188,7 +225,7 @@ export default async function BrandPage({ params }: { params: Promise<{ slug: st
             <h1 className={t.brandName}>{name}</h1>
             <p className={t.brandSub}>
               {total
-                ? `Facebook and Instagram ads in India, collected from Meta's Ad Library. Updated ${updated}.`
+                ? `Facebook and Instagram ads in India, collected from Meta's Ad Library. ${stamp.text}${stamp.pending ? " · refresh pending" : ""}.`
                 : `We have not collected ${name}'s ads yet. Sign up and search ${name}: Zooptrack collects its public ads in about a minute.`}
             </p>
           </div>
@@ -201,6 +238,18 @@ export default async function BrandPage({ params }: { params: Promise<{ slug: st
             </dl>
           )}
         </section>
+        {others.length > 0 && (
+          <p className={t.brandSub}>
+            Figures are for {name}&apos;s main page. Also runs:{" "}
+            {others.map((o, i) => (
+              <span key={o.pageId}>
+                {i ? ", " : ""}
+                <Link href={`/zooplens?q=${encodeURIComponent(o.name ?? name)}&pid=${o.pageId}`}>{o.name ?? `page ${o.pageId}`}</Link>
+              </span>
+            ))}
+            .
+          </p>
+        )}
         {longest.length > 0 && (
           <div className={t.sheet} aria-label={`${name}'s longest-running live ads`}>
             {longest.map((ad) => <AdTile key={ad.id} ad={ad} eager showBrand={false} />)}

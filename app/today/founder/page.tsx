@@ -8,7 +8,7 @@ import { loadOps } from "@/lib/admin/ops-server";
 import { activityByUser, funnel, nextStep, topBrands, trialDaysLeft, TRIAL_SEARCHES } from "@/lib/admin/users";
 import { loadUserActivity } from "@/lib/admin/users-server";
 import { isAdminEmail } from "@/lib/billing/plans";
-import { createClient } from "@/lib/supabase/server";
+import { getVerifiedUser } from "@/lib/supabase/user";
 
 export const metadata: Metadata = { title: "Founder dashboard", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -68,12 +68,8 @@ function Stat({ value, label, tone }: { value: string | number; label: string; t
 
 /** Founder-only scoreboard: signups, trials, paying customers, MRR and data health. */
 export default async function FounderPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-  if (error || !user) redirect("/login?next=/today/founder");
+  const user = await getVerifiedUser();
+  if (!user) redirect("/login?next=/today/founder");
   const adminList = process.env.ZOOPTRACK_ADMIN_EMAILS;
   if (!isAdminEmail(user.email, adminList)) notFound();
 
