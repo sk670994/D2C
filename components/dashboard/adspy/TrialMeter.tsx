@@ -45,7 +45,7 @@ export function TrialMeter({ refreshKey }: { refreshKey: string }) {
       <strong>
         {left} of {limit} new-brand searches left
       </strong>
-      {e.trialDaysLeft != null ? ` · ${e.trialDaysLeft} trial days left` : ""}. Brands you&apos;ve already searched are free to open again.{" "}
+      . Brands you&apos;ve already searched are free to open again.{" "}
       {left === 0 ? (
         <Link href="/today/billing" className="azs-link">
           See plans

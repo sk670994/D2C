@@ -5,7 +5,7 @@
  * have not re-collected is not evidence that the ad is still running.
  * SQL readers keep their own filters.
  */
-export const LIVE_WINDOW_HOURS = 48;
+export const LIVE_WINDOW_HOURS = 72;
 
 const LIVE_WINDOW_MS = LIVE_WINDOW_HOURS * 60 * 60 * 1000;
 
