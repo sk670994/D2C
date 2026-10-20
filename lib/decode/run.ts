@@ -304,12 +304,21 @@ export async function decodePendingAds(options: { limit?: number; deadlineAt?: n
 export async function loadDecodes(creativeIds: string[], onError?: () => void): Promise<Map<string, Decoded>> {
   const client = createGlobalServiceClient();
   const out = new Map<string, Decoded>();
-  for (let i = 0; i < creativeIds.length; i += 150) {
-    const { data, error } = await client
-      .from("ad_creative_decodes")
-      .select("creative_id,elements")
-      .eq("status", "done")
-      .in("creative_id", creativeIds.slice(i, i + 150));
+  // Read-only chunks are independent, so they run together (callers cap the
+  // list at 600 ids = 4 requests). Results are applied in order and stop at
+  // the first failed chunk, exactly like the old sequential loop.
+  const chunks: string[][] = [];
+  for (let i = 0; i < creativeIds.length; i += 150) chunks.push(creativeIds.slice(i, i + 150));
+  const results = await Promise.all(
+    chunks.map((chunk) =>
+      client
+        .from("ad_creative_decodes")
+        .select("creative_id,elements")
+        .eq("status", "done")
+        .in("creative_id", chunk),
+    ),
+  );
+  for (const { data, error } of results) {
     if (error) {
       if (!/42P01|PGRST205|does not exist/i.test(error.message)) {
         console.warn("[decode] load failed", error.message);

@@ -228,3 +228,11 @@ export function provenanceOf(ad: Ad, field: string): string | null {
   const value = (ad.dataProvenance ?? {})[field];
   return typeof value === "string" ? value : null;
 }
+
+/**
+ * Facet responses shared by the workspace and CompareView (module scope, so
+ * opening Compare reuses what the workspace already fetched). Keyed by
+ * `${stateKey(target, filters, 0)}|v${dataVersion}`.
+ */
+export const FACET_CACHE_TTL_MS = 30_000;
+export const facetCache = new Map<string, { at: number; data: Facets | null }>();

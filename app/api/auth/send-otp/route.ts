@@ -22,8 +22,14 @@ export async function POST(request: NextRequest) {
   const signup = body.mode === "signup";
 
   const ip = (request.headers.get("x-forwarded-for") ?? "").split(",")[0]?.trim() || "unknown";
-  const rate = await checkSharedRateLimit(`send-otp:${ip}`, 8, 10 * 60_000);
-  if (!rate.allowed) {
+  // Two limits: 5 codes per email from one address per 10 minutes (stops
+  // hammering one inbox), and a looser 30 per address (offices / shared NAT
+  // send for many different people).
+  const [perEmail, perIp] = await Promise.all([
+    email ? checkSharedRateLimit(`send-otp:${ip}|${email}`, 5, 10 * 60_000) : Promise.resolve({ allowed: true }),
+    checkSharedRateLimit(`send-otp:${ip}`, 30, 10 * 60_000),
+  ]);
+  if (!perEmail.allowed || !perIp.allowed) {
     return NextResponse.json({ ok: false, error: "Too many attempts. Please wait a few minutes and try again." }, { status: 429 });
   }
 

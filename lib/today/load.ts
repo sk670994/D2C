@@ -47,13 +47,20 @@ async function loadChanges(rows: TodayAdRow[], onError?: () => void): Promise<Ad
     const client = createGlobalServiceClient();
     const since = new Date(Date.now() - CHANGE_WINDOW_DAYS * 86_400_000).toISOString();
     const touched = new Set<string>();
-    for (let i = 0; i < liveIds.length; i += 150) {
-      const { data, error } = await client
-        .from("ad_intelligence_creative_versions")
-        .select("creative_id")
-        .in("creative_id", liveIds.slice(i, i + 150))
-        .gte("first_observed_at", since)
-        .limit(1000);
+    // Independent read-only chunks (max 4), fetched together.
+    const chunks: string[][] = [];
+    for (let i = 0; i < liveIds.length; i += 150) chunks.push(liveIds.slice(i, i + 150));
+    const results = await Promise.all(
+      chunks.map((chunk) =>
+        client
+          .from("ad_intelligence_creative_versions")
+          .select("creative_id")
+          .in("creative_id", chunk)
+          .gte("first_observed_at", since)
+          .limit(1000),
+      ),
+    );
+    for (const { data, error } of results) {
       if (error) {
         onError?.();
         return [];
@@ -93,8 +100,13 @@ function brandCore(pageId: string, country: string): Promise<{ summary: BrandSum
       getSourceCounts({ platform: "meta", country, scope: { scopeType: "page", scopeKey: pageId }, onError: fail }),
     ]);
     const live = rows.filter((row) => row.is_currently_active);
-    const landing = await loadLandingSummary(live.map((row) => row.id), new Map(live.map((row) => [row.id, row.offer])), fail);
-    return { summary: summarizeBrand(pageId, rows, Date.now(), await loadChanges(rows, fail)), coverage, patterns: await patternsFor(rows, fail), landing };
+    // Landing, changes and patterns depend only on rows: fetch them together.
+    const [landing, changes, patterns] = await Promise.all([
+      loadLandingSummary(live.map((row) => row.id), new Map(live.map((row) => [row.id, row.offer])), fail),
+      loadChanges(rows, fail),
+      patternsFor(rows, fail),
+    ]);
+    return { summary: summarizeBrand(pageId, rows, Date.now(), changes), coverage, patterns, landing };
   }, { store: () => !degraded });
 }
 
@@ -167,12 +179,26 @@ export async function getOwnBrand(userId: string): Promise<{ pageId: string | nu
   };
 }
 
-export async function getBrandOverview(pageId: string, country = "IN", ownPageId: string | null = null): Promise<BrandOverview> {
-  const { summary, coverage, patterns, landing } = await brandCore(pageId, country);
+/**
+ * `own` is either the user's own page id (already known) or a promise of it
+ * (e.g. getOwnBrand still in flight), so the target brand and the user's own
+ * brand are computed in parallel instead of one after the other.
+ */
+export async function getBrandOverview(
+  pageId: string,
+  country = "IN",
+  own: string | null | Promise<string | null> = null,
+): Promise<BrandOverview> {
+  const ownCorePromise = Promise.resolve(own).then((ownPageId) =>
+    ownPageId && ownPageId !== pageId ? brandCore(ownPageId, country).then((core) => ({ ownPageId, core })) : null,
+  );
+  // Never leave a rejection unobserved if the target brand fails first.
+  ownCorePromise.catch(() => undefined);
+  const [{ summary, coverage, patterns, landing }, ownResult] = await Promise.all([brandCore(pageId, country), ownCorePromise]);
 
   let vsYou: VsYou | null = null;
-  if (ownPageId && ownPageId !== pageId) {
-    const ownCore = await brandCore(ownPageId, country);
+  if (ownResult) {
+    const { ownPageId, core: ownCore } = ownResult;
     const own = ownCore.summary;
     vsYou = {
       you: {

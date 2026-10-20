@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import {
   ArrowUpRight,
@@ -57,6 +57,7 @@ import {
   readUrlState,
   runningLabel,
   safeExternalUrl,
+  facetCache,
   stateKey,
   statusLabel,
   writeUrlState,
@@ -68,13 +69,19 @@ import {
   type RecentItem,
   type SearchTarget,
 } from "./workspace-utils";
-import { CompareView } from "./CompareView";
+import dynamic from "next/dynamic";
+// Compare is opened rarely: load it on first use.
+const CompareView = dynamic(() => import("./CompareView").then((m) => m.CompareView), { ssr: false });
 import popularBrands from "@/scripts/adspy-seed-brands.json";
 
 const POPULAR: string[] = (popularBrands as { brands: string[] }).brands;
 
 const PAGE_SIZE = 25;
-const SUGGEST_DEBOUNCE_MS = 90;
+const SUGGEST_DEBOUNCE_MS = 250;
+/** Shorter queries are answered locally (popular brands + cache) only. */
+const SUGGEST_MIN_CHARS = 2;
+/** Only gateway/cold-start statuses are worth one quiet retry. */
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
 const SUGGEST_CACHE_TTL_MS = 5 * 60_000;
 const RESULT_CACHE_TTL_MS = 30_000;
 /** An exact advertiser whose newest observation is older than this is re-collected on visit. */
@@ -93,7 +100,6 @@ const COUNTRIES: Array<[string, string]> = [
 
 const suggestCache = new Map<string, { at: number; items: AutocompleteAdvertiser[] }>();
 const resultCache = new Map<string, { at: number; data: SearchResponse }>();
-const facetCache = new Map<string, { at: number; data: Facets | null }>();
 
 /**
  * Users never see raw technical errors (timeouts, fetch failures, SQL text).
@@ -301,6 +307,11 @@ export function AdSpyWorkspace() {
       }
     }
 
+    if (q.length < SUGGEST_MIN_CHARS) {
+      setSuggestLoading(false);
+      return;
+    }
+
     setSuggestLoading(true);
     const timer = window.setTimeout(async () => {
       suggestAbort.current?.abort();
@@ -310,9 +321,16 @@ export function AdSpyWorkspace() {
         const url = new URL("/api/ad-intelligence/autocomplete", window.location.origin);
         url.searchParams.set("q", q);
         url.searchParams.set("country", country);
-        let response = await fetch(url, { cache: "no-store", signal: controller.signal });
-        if (response.status >= 500 && !controller.signal.aborted) {
-          // Cold function on the first keystroke: retry once instead of showing nothing.
+        // Gateway / cold start / network blip: retry once instead of showing nothing.
+        // A plain 500 or 4xx is not retried: it would only double the wait.
+        let response: Response;
+        try {
+          response = await fetch(url, { cache: "no-store", signal: controller.signal });
+        } catch (first) {
+          if (controller.signal.aborted || !(first instanceof TypeError)) throw first;
+          response = await fetch(url, { cache: "no-store", signal: controller.signal });
+        }
+        if (RETRYABLE_STATUS.has(response.status) && !controller.signal.aborted) {
           response = await fetch(url, { cache: "no-store", signal: controller.signal });
         }
         const data = (await response.json().catch(() => ({ success: false }))) as { success: boolean; advertisers?: AutocompleteAdvertiser[] };
@@ -718,14 +736,22 @@ export function AdSpyWorkspace() {
     url.searchParams.set("q", q);
     url.searchParams.set("country", target.country);
     // One retry: the first call of a session can hit a cold function (504).
-    const lookup = (attempt: number): Promise<{ success?: boolean; advertisers?: AutocompleteAdvertiser[] }> =>
-      fetch(url, { cache: "no-store", signal: controller.signal }).then((response) => {
-        if (response.ok) return response.json();
-        if (attempt === 0 && !controller.signal.aborted) {
-          return new Promise((resolve) => window.setTimeout(resolve, 1200)).then(() => lookup(1));
-        }
-        return { success: false };
-      });
+    // Retried only for 502/503/504 or a network error.
+    const lookup = (attempt: number): Promise<{ success?: boolean; advertisers?: AutocompleteAdvertiser[] }> => {
+      const again = () => new Promise((resolve) => window.setTimeout(resolve, 1200)).then(() => lookup(1));
+      const canRetry = () => attempt === 0 && !controller.signal.aborted;
+      return fetch(url, { cache: "no-store", signal: controller.signal }).then(
+        (response) => {
+          if (response.ok) return response.json();
+          if (RETRYABLE_STATUS.has(response.status) && canRetry()) return again();
+          return { success: false };
+        },
+        (reason: unknown) => {
+          if (reason instanceof TypeError && canRetry()) return again();
+          throw reason;
+        },
+      );
+    };
     lookup(0)
       .then((data) => {
         if (controller.signal.aborted || !data.success) return;
@@ -778,6 +804,20 @@ export function AdSpyWorkspace() {
     setPage(next);
     resultsTop.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
+
+  // Stable handlers: memoised ad cards/rows skip re-rendering on each
+  // keystroke, and AdDetail / CompareView keep their focus + key effects.
+  const closeAd = useCallback(() => setSelectedAd(null), []);
+  const closeCompare = useCallback(() => setCompareOpen(false), []);
+  const openAdvertiserFromAd = useCallback(
+    (ad: Ad) => {
+      if (!ad.advertiserId || !ad.advertiserName) return;
+      setInput(ad.advertiserName);
+      setMode("advertiser");
+      go({ query: ad.advertiserName, pageId: ad.advertiserId, mode: "advertiser", country });
+    },
+    [country, go],
+  );
 
   /* ------------------------------- derived ------------------------------ */
   const ads = result?.ads ?? [];
@@ -988,13 +1028,8 @@ export function AdSpyWorkspace() {
           }}
           onFocusSearch={() => inputRef.current?.focus()}
           country={country}
-          onOpenAd={(ad) => setSelectedAd(ad)}
-          onAdvertiser={(ad) => {
-            if (!ad.advertiserId || !ad.advertiserName) return;
-            setInput(ad.advertiserName);
-            setMode("advertiser");
-            go({ query: ad.advertiserName, pageId: ad.advertiserId, mode: "advertiser", country });
-          }}
+          onOpenAd={setSelectedAd}
+          onAdvertiser={openAdvertiserFromAd}
         />
       ) : (
         <div className="azs-main">
@@ -1195,7 +1230,7 @@ export function AdSpyWorkspace() {
               ) : ads.length ? (
                 <div className={`azs-grid ${loading ? "is-refreshing" : ""}`}>
                   {ads.map((ad) => (
-                    <AdCard key={`${ad.platform}-${ad.id}`} ad={ad} onOpen={() => setSelectedAd(ad)} />
+                    <AdCard key={`${ad.platform}-${ad.id}`} ad={ad} onOpen={setSelectedAd} />
                   ))}
                 </div>
               ) : (
@@ -1226,7 +1261,7 @@ export function AdSpyWorkspace() {
         </div>
       )}
 
-      {selectedAd && <AdDetail ad={selectedAd} onClose={() => setSelectedAd(null)} />}
+      {selectedAd && <AdDetail ad={selectedAd} onClose={closeAd} />}
 
       {compare.length > 0 && !compareOpen && (
         <div className="azs-tray" role="region" aria-label="Brands to compare">
@@ -1253,7 +1288,7 @@ export function AdSpyWorkspace() {
         </div>
       )}
       {compareOpen && compare.length > 0 && (
-        <CompareView targets={compare} onClose={() => setCompareOpen(false)} onRemove={(t) => toggleCompare(t)} />
+        <CompareView targets={compare} onClose={closeCompare} onRemove={toggleCompare} />
       )}
     </section>
   );
@@ -1866,15 +1901,16 @@ function AdMedia({ ad, large = false, onFail }: { ad: Ad; large?: boolean; onFai
   );
 }
 
-function AdCard({
+/** Memoised: handlers receive the ad, so parents pass stable callbacks. */
+const AdCard = memo(function AdCard({
   ad,
   onOpen,
   onAdvertiser,
   hideIfBroken = false,
 }: {
   ad: Ad;
-  onOpen: () => void;
-  onAdvertiser?: () => void;
+  onOpen: (ad: Ad) => void;
+  onAdvertiser?: (ad: Ad) => void;
   hideIfBroken?: boolean;
 }) {
   const hook = hookOf(ad);
@@ -1929,11 +1965,11 @@ function AdCard({
       data-media={hasMedia ? "yes" : "no"}
       data-long={longRunning ? "yes" : undefined}
       tabIndex={0}
-      onClick={onOpen}
+      onClick={() => onOpen(ad)}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          onOpen();
+          onOpen(ad);
         }
       }}
     >
@@ -1971,7 +2007,7 @@ function AdCard({
             className="azs-post-name"
             onClick={(event) => {
               event.stopPropagation();
-              onAdvertiser();
+              onAdvertiser(ad);
             }}
           >
             {name}
@@ -2020,7 +2056,7 @@ function AdCard({
       </div>
     </article>
   );
-}
+});
 
 function shortDate(value?: string | null): string | null {
   if (!value) return null;
@@ -2057,7 +2093,7 @@ function StatStrip({ summary, facets, loading }: { summary: Summary | null; face
   );
 }
 
-function AdRow({
+const AdRow = memo(function AdRow({
   kind,
   title,
   subtitle,
@@ -2082,7 +2118,10 @@ function AdRow({
     if (!row) return;
     const update = () => {
       const max = row.scrollWidth - row.clientWidth;
-      setEdges({ left: row.scrollLeft > 4, right: row.scrollLeft < max - 4 });
+      const left = row.scrollLeft > 4;
+      const right = row.scrollLeft < max - 4;
+      // Scroll fires per frame: only re-render when an arrow actually changes.
+      setEdges((prev) => (prev.left === left && prev.right === right ? prev : { left, right }));
     };
     update();
     row.addEventListener("scroll", update, { passive: true });
@@ -2138,12 +2177,12 @@ function AdRow({
               </div>
             ))
           : ads.map((ad) => (
-              <AdCard key={ad.id} ad={ad} hideIfBroken onOpen={() => onOpenAd(ad)} onAdvertiser={() => onAdvertiser(ad)} />
+              <AdCard key={ad.id} ad={ad} hideIfBroken onOpen={onOpenAd} onAdvertiser={onAdvertiser} />
             ))}
       </div>
     </section>
   );
-}
+});
 
 function Provenance({ value }: { value: string | null }) {
   if (!value) return null;
@@ -2152,6 +2191,10 @@ function Provenance({ value }: { value: string | null }) {
   const label = tone === "source" ? "Meta" : tone === "derived" ? "Derived" : tone === "heuristic" ? "Heuristic" : "Unavailable";
   return <span className={`azs-prov is-${tone}`}>{label}</span>;
 }
+
+/** Decoder labels per creative row, kept for the session (re-opening an ad is instant). */
+const decodeCache = new Map<string, Decoded | null>();
+const DECODE_CACHE_MAX = 300;
 
 function AdDetail({ ad, onClose }: { ad: Ad; onClose: () => void }) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
@@ -2174,14 +2217,27 @@ function AdDetail({ ad, onClose }: { ad: Ad; onClose: () => void }) {
 
   // AI labels (hook type, angle, persona …) when the decoder has read this ad.
   const creativeRowId = typeof ad.metadata?.creativeRowId === "string" ? ad.metadata.creativeRowId : null;
-  const [ai, setAi] = useState<Decoded | null>(null);
+  const [ai, setAi] = useState<Decoded | null>(() => (creativeRowId ? decodeCache.get(creativeRowId) ?? null : null));
   useEffect(() => {
+    if (!creativeRowId) {
+      setAi(null);
+      return;
+    }
+    if (decodeCache.has(creativeRowId)) {
+      setAi(decodeCache.get(creativeRowId) ?? null);
+      return;
+    }
     setAi(null);
-    if (!creativeRowId) return;
     let alive = true;
     fetch(`/api/ad-intelligence/decode/${encodeURIComponent(creativeRowId)}`, { cache: "no-store" })
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((data: { decoded?: Decoded | null }) => {
+        // Cache answers (including "not decoded yet"), never errors.
+        if (decodeCache.size >= DECODE_CACHE_MAX) {
+          const oldest = decodeCache.keys().next().value;
+          if (oldest !== undefined) decodeCache.delete(oldest);
+        }
+        decodeCache.set(creativeRowId, data.decoded ?? null);
         if (alive && data.decoded) setAi(data.decoded);
       })
       .catch(() => undefined);

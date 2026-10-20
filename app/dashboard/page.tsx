@@ -407,8 +407,29 @@ export default function DashboardPage() {
           return;
         }
 
-        await syncProfileToDatabase(supabase, id, email, fullName.trim(), phone.trim());
-        const profile = await loadProfileFromDatabase(supabase, id);
+        // Profile and workspace are independent reads: fetch them together.
+        const [existingProfile, workspace] = await Promise.all([
+          loadProfileFromDatabase(supabase, id),
+          loadWorkspaceFromDatabase(supabase, id),
+        ]);
+        if (!active) return;
+        // Auth metadata is the source of truth (saveProfileDetails writes it
+        // first). Only write user_profiles when the row is missing or stale.
+        const wanted = {
+          user_email: email.toLowerCase(),
+          full_name: fullName.trim() || null,
+          phone: phone.trim() || null
+        };
+        let profile = existingProfile;
+        if (
+          !existingProfile ||
+          (existingProfile.user_email ?? "").toLowerCase() !== wanted.user_email ||
+          (existingProfile.full_name ?? null) !== wanted.full_name ||
+          (existingProfile.phone ?? null) !== wanted.phone
+        ) {
+          await syncProfileToDatabase(supabase, id, email, fullName.trim(), phone.trim());
+          profile = { ...(existingProfile ?? {}), user_id: id, ...wanted } as UserProfileRow;
+        }
         if (active) {
           const resolvedName = (profile?.full_name ?? fullName).trim();
           const resolvedPhone = (profile?.phone ?? phone).trim();
@@ -420,7 +441,6 @@ export default function DashboardPage() {
           }
         }
 
-        const workspace = await loadWorkspaceFromDatabase(supabase, id);
         if (active && workspace?.latest_report_input) {
           const nextInput = workspace.latest_report_input;
           const calculated = calculateReport(nextInput);
@@ -445,25 +465,43 @@ export default function DashboardPage() {
       }
     };
 
+    // Hydrate exactly once from the local session (no network round trip;
+    // the proxy already verified and refreshed it). The listener only reacts
+    // to a different user signing in, or a sign-out. INITIAL_SESSION,
+    // TOKEN_REFRESHED, USER_UPDATED and the SIGNED_IN that supabase-js
+    // re-emits on tab focus no longer reload the profile and workspace.
+    let hydratedUserId: string | null = null;
+    let hydrated = false;
+
     async function hydrateUserContext() {
       try {
         const { data: sessionData } = await supabase.auth.getSession();
-        if (sessionData.session?.user) {
-          await applyUserContext(sessionData.session.user);
-          return;
-        }
-        const { data } = await supabase.auth.getUser();
-        await applyUserContext(data.user);
+        const user = sessionData.session?.user ?? null;
+        hydrated = true;
+        hydratedUserId = user?.id ?? null;
+        await applyUserContext(user);
       } catch {
         if (!active) return;
+        hydrated = true;
         setUserEmail("");
         setUserId("");
         setUserName("");
+        setAuthChecked(true);
       }
     }
 
     void hydrateUserContext();
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!hydrated) return;
+      if (event === "SIGNED_OUT") {
+        hydratedUserId = null;
+        void applyUserContext(null);
+        return;
+      }
+      if (event !== "SIGNED_IN") return;
+      const nextId = session?.user?.id ?? null;
+      if (!nextId || nextId === hydratedUserId) return;
+      hydratedUserId = nextId;
       void applyUserContext(session?.user ?? null);
     });
 
@@ -1137,8 +1175,10 @@ setReport(merged);
     setAdMetricsLoading(true);
     try {
       // Load connected accounts
-      const accountsRes = await fetch("/api/integrations/meta-ads/accounts");
-      const googleAccountsRes = await fetch("/api/integrations/google-ads/accounts");
+      const [accountsRes, googleAccountsRes] = await Promise.all([
+        fetch("/api/integrations/meta-ads/accounts"),
+        fetch("/api/integrations/google-ads/accounts")
+      ]);
 
       const [metaAccounts, googleAccounts] = await Promise.all([
         accountsRes.ok ? accountsRes.json() : { accounts: [] },
@@ -1155,7 +1195,9 @@ setReport(merged);
 
       const { data: metrics, error } = await supabase
         .from("ad_metrics")
-        .select("*")
+        // Only the columns the table and the per-platform totals use. The
+        // limit stays at 100: the performance cards total every row.
+        .select("platform,ad_id,ad_name,campaign_id,campaign_name,date,impressions,clicks,spend,ctr,roas")
         .eq("user_id", userId)
         .gte("date", thirtyDaysAgo.toISOString().split('T')[0])
         .order("date", { ascending: false })

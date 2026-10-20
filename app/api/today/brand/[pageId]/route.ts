@@ -20,8 +20,12 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pag
   const country = /^[A-Z]{2}$/.test(countryParam) ? countryParam : "IN";
 
   try {
-    const own = await getOwnBrand(userId);
-    const overview = await getBrandOverview(pageId, country, own.pageId);
+    // The target brand is computed while the user's own page id is looked up.
+    const ownPageId = getOwnBrand(userId).then(
+      (own) => own.pageId,
+      () => null,
+    );
+    const overview = await getBrandOverview(pageId, country, ownPageId);
     return NextResponse.json({ success: true, overview }, { headers: { "Cache-Control": "private, max-age=30" } });
   } catch (error) {
     console.error("[Today brand]", error);

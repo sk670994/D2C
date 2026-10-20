@@ -12,8 +12,27 @@ const SCENES = [
   { id: "moh", label: "Match or hold", url: "zooptrack.com/match-or-hold", ms: 7000 },
 ] as const;
 const HOLD = 600;
-const TICK = 50;
 const END = 1e9; // "show the final frame"
+
+/**
+ * Times (ms into a scene) at which its picture changes, taken from the
+ * thresholds in the scene components below. The reel re-renders only at
+ * these moments (plus the scene end) instead of every 50 ms.
+ */
+const range = (n: number, at: (i: number) => number) => Array.from({ length: n }, (_, i) => at(i));
+const KEYFRAMES: Record<(typeof SCENES)[number]["id"], number[]> = {
+  // typed letters every 120 ms, dropdown 970-1670, thumbs from 1700, coverage 2600
+  finder: [...range(6, (i) => (i + 1) * 120), 970, 1670, ...range(6, (i) => 1700 + i * 110), 2600],
+  // three 2400 ms phases; rows at 150/330/510, bars at 300/480/660 in each
+  vault: range(3, (p) => p * 2400).flatMap((base) => [0, 150, 300, 330, 480, 510, 660].map((x) => base + x)).filter((x) => x > 0),
+  moves: range(4, (i) => 200 + i * 650),
+  decode: range(5, (i) => 1300 + i * 330),
+  // two cases 3500 ms apart; offer 100, marker 600, verdict 1400 in each
+  moh: [0, 3500].flatMap((base) => [0, 100, 600, 1400].map((x) => base + x)).filter((x) => x > 0),
+};
+const SORTED_KEYFRAMES = Object.fromEntries(
+  Object.entries(KEYFRAMES).map(([id, list]) => [id, Array.from(new Set(list)).sort((a, b) => a - b)]),
+) as Record<string, number[]>;
 
 const cx = (...c: Array<string | false | undefined>) => c.filter(Boolean).join(" ");
 const show = (on: boolean, hid = s.hidden) => cx(s.a, !on && hid);
@@ -25,7 +44,18 @@ export function HeroReel() {
   const [visible, setVisible] = useState(true);
   const ref = useRef<HTMLDivElement | null>(null);
   const tRef = useRef(0);
+  // Bumped whenever the scene restarts, so a stale effect cleanup cannot
+  // overwrite the reset progress.
+  const epochRef = useRef(0);
   const [run, setRun] = useState(0);
+  const [pageHidden, setPageHidden] = useState(false);
+
+  useEffect(() => {
+    const sync = () => setPageHidden(document.hidden);
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => document.removeEventListener("visibilitychange", sync);
+  }, []);
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -43,23 +73,43 @@ export function HeroReel() {
     return () => io.disconnect();
   }, []);
 
+  const running = !reduced && visible && !pageHidden;
+
   useEffect(() => {
-    if (reduced || !visible) return;
-    let local = tRef.current;
-    const id = window.setInterval(() => {
-      if (document.hidden) return;
-      local += TICK;
-      if (local >= SCENES[idx].ms + HOLD) {
-        tRef.current = 0;
-        setT(0);
-        setIdx((idx + 1) % SCENES.length);
-        return;
-      }
-      tRef.current = local;
-      setT(local);
-    }, TICK);
-    return () => window.clearInterval(id);
-  }, [idx, run, reduced, visible]);
+    if (!running) return;
+    const scene = SCENES[idx];
+    const end = scene.ms + HOLD;
+    const frames = SORTED_KEYFRAMES[scene.id] ?? [];
+    const base = tRef.current;
+    const startedAt = performance.now();
+    const epoch = epochRef.current;
+    let timer = 0;
+
+    const schedule = () => {
+      const now = base + (performance.now() - startedAt);
+      const next = frames.find((kf) => kf > now) ?? end;
+      timer = window.setTimeout(() => {
+        const at = Math.max(next, base + (performance.now() - startedAt));
+        if (at >= end) {
+          epochRef.current += 1;
+          tRef.current = 0;
+          setT(0);
+          setIdx((idx + 1) % SCENES.length);
+          return;
+        }
+        tRef.current = at;
+        setT(at);
+        schedule();
+      }, Math.max(0, next - now));
+    };
+    schedule();
+
+    return () => {
+      window.clearTimeout(timer);
+      // Paused (scrolled away / tab hidden): keep the progress for resume.
+      if (epochRef.current === epoch) tRef.current = Math.min(end, base + (performance.now() - startedAt));
+    };
+  }, [idx, run, running]);
 
   const scene = SCENES[idx];
   const time = reduced ? END : t;
@@ -74,10 +124,16 @@ export function HeroReel() {
             role="tab"
             className={s.tab}
             aria-selected={i === idx}
-            onClick={() => { tRef.current = 0; setT(0); setIdx(i); setRun((r: number) => r + 1); }}
+            onClick={() => { epochRef.current += 1; tRef.current = 0; setT(0); setIdx(i); setRun((r: number) => r + 1); }}
           >
             {sc.label}
-            {i === idx && !reduced ? <span className={s.fill} style={{ width: `${Math.min(100, (t / (sc.ms + HOLD)) * 100)}%` }} /> : null}
+            {i === idx && !reduced ? (
+              <span
+                key={`${idx}-${run}`}
+                className={s.fill}
+                style={{ animationDuration: `${sc.ms + HOLD}ms`, animationPlayState: running ? "running" : "paused" }}
+              />
+            ) : null}
           </button>
         ))}
       </div>

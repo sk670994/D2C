@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 
 import { ReportScheduleCard } from "@/components/today/ReportScheduleCard";
 import { TodayShell } from "@/components/today/TodayShell";
-import { createClient } from "@/lib/supabase/server";
+import { getVerifiedUser } from "@/lib/supabase/user";
 import { getToday } from "@/lib/today/load";
 import { getReportPrefs } from "@/lib/today/report-prefs-store";
 import { renderReportEmail, reportSubject } from "@/lib/today/report-email";
@@ -14,12 +14,8 @@ export const metadata: Metadata = { title: "Your report", robots: { index: false
 export const dynamic = "force-dynamic";
 
 export default async function ReportPreviewPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-  if (error || !user) redirect("/login?next=/today/report");
+  const user = await getVerifiedUser();
+  if (!user) redirect("/login?next=/today/report");
 
   const [today, prefs] = await Promise.all([getToday(user.id), getReportPrefs(user.id)]);
   const appUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.zooptrack.co.in").trim();

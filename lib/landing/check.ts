@@ -147,8 +147,13 @@ export async function loadLandingSummary(liveIds: string[], offers: Map<string, 
     if (!liveIds.length) return null;
     const client = createGlobalServiceClient();
     const rows: Array<{ creative_id: string; url_key: string; offers_overlap: boolean | null; jev_match: number | null }> = [];
-    for (let i = 0; i < Math.min(liveIds.length, 600); i += 150) {
-      const { data, error } = await client.from("ad_landing_checks").select("creative_id,url_key,offers_overlap,jev_match").in("creative_id", liveIds.slice(i, i + 150));
+    // Independent read-only chunks (max 4), fetched together.
+    const chunks: string[][] = [];
+    for (let i = 0; i < Math.min(liveIds.length, 600); i += 150) chunks.push(liveIds.slice(i, Math.min(i + 150, 600)));
+    const results = await Promise.all(
+      chunks.map((chunk) => client.from("ad_landing_checks").select("creative_id,url_key,offers_overlap,jev_match").in("creative_id", chunk)),
+    );
+    for (const { data, error } of results) {
       if (error) {
         if (!/42P01|PGRST205|does not exist/i.test(error.message)) onError?.();
         return null;

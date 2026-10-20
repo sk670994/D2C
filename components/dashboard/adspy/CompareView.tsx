@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Sparkles, TrendingUp, X } from "lucide-react";
 
-import { applyTargetParams, formatInt, type Facets, type SearchTarget } from "./workspace-utils";
+import { FACET_CACHE_TTL_MS, NO_FILTERS, applyTargetParams, facetCache, formatInt, stateKey, type Facets, type SearchTarget } from "./workspace-utils";
 
 type Column = { target: SearchTarget; facets: Facets | null; error?: boolean };
 
@@ -68,11 +68,20 @@ export function CompareView({ targets, onClose, onRemove }: { targets: SearchTar
     let alive = true;
     setColumns(targets.map((target) => ({ target, facets: null })));
     targets.forEach((target, index) => {
+      // Reuse the workspace's unfiltered facets for exact pages (same request).
+      const cacheKey = target.pageId ? `${stateKey(target, NO_FILTERS, 0)}|v0` : null;
+      const hit = cacheKey ? facetCache.get(cacheKey) : undefined;
+      if (hit && hit.data && Date.now() - hit.at < FACET_CACHE_TTL_MS) {
+        const facets = hit.data;
+        setColumns((cols) => cols.map((c, i) => (i === index ? { ...c, facets } : c)));
+        return;
+      }
       const url = new URL("/api/ad-intelligence/facets", window.location.origin);
       applyTargetParams(url, target);
       fetch(url, { cache: "no-store" })
         .then((r) => r.json())
         .then((data: { success?: boolean; facets?: Facets | null }) => {
+          if (cacheKey && data.success && data.facets) facetCache.set(cacheKey, { at: Date.now(), data: data.facets });
           if (!alive) return;
           setColumns((cols) => cols.map((c, i) => (i === index ? { ...c, facets: data.facets ?? { total: 0, capped: false, status: [], format: [], language: [], region: [], momentum: { weeks: [], launched7d: 0, launched30d: 0, datedCreatives: 0 } }, error: !data.success } : c)));
         })

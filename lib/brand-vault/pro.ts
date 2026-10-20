@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 
 import { cached } from "@/lib/today/cache";
 
@@ -195,27 +196,38 @@ async function loadAds(competitor: BrandVaultCompetitor): Promise<{ rows: RawAd[
   return { rows, identity: rows.length ? "name" : "none", pageId };
 }
 
+/** Language chunks are read-only and independent: fetch a few at a time. */
+const LANGUAGE_CONCURRENCY = 5;
+
 async function loadLanguages(creativeIds: string[]): Promise<Map<string, string[]>> {
   const result = new Map<string, string[]>();
   if (!creativeIds.length) return result;
   const service = createGlobalServiceClient();
-  for (let i = 0; i < creativeIds.length; i += ID_CHUNK) {
-    const chunk = creativeIds.slice(i, i + ID_CHUNK);
-    const { data, error } = await service
-      .from("ad_intelligence_languages")
-      .select("creative_id,language_code")
-      .in("creative_id", chunk)
-      .limit(PAGE_SIZE);
-    if (error) {
-      console.warn("[BrandVault] language lookup failed", error.message);
-      return result;
-    }
-    for (const row of (data ?? []) as Array<{ creative_id: string; language_code: string | null }>) {
-      const code = normalize(row.language_code);
-      if (!code) continue;
-      const list = result.get(row.creative_id) ?? [];
-      if (!list.includes(code)) list.push(code);
-      result.set(row.creative_id, list);
+  const chunks: string[][] = [];
+  for (let i = 0; i < creativeIds.length; i += ID_CHUNK) chunks.push(creativeIds.slice(i, i + ID_CHUNK));
+  for (let start = 0; start < chunks.length; start += LANGUAGE_CONCURRENCY) {
+    const results = await Promise.all(
+      chunks.slice(start, start + LANGUAGE_CONCURRENCY).map((chunk) =>
+        service
+          .from("ad_intelligence_languages")
+          .select("creative_id,language_code")
+          .in("creative_id", chunk)
+          .limit(PAGE_SIZE),
+      ),
+    );
+    // Applied in order; stop at the first failed chunk, as the sequential loop did.
+    for (const { data, error } of results) {
+      if (error) {
+        console.warn("[BrandVault] language lookup failed", error.message);
+        return result;
+      }
+      for (const row of (data ?? []) as Array<{ creative_id: string; language_code: string | null }>) {
+        const code = normalize(row.language_code);
+        if (!code) continue;
+        const list = result.get(row.creative_id) ?? [];
+        if (!list.includes(code)) list.push(code);
+        result.set(row.creative_id, list);
+      }
     }
   }
   return result;
@@ -594,24 +606,68 @@ function buildCounterBrief(brandName: string, competitors: CompetitorAnalytics[]
   ].join("\n\n");
 }
 
-export async function getBrandVaultAnalytics(input: {
+type AnalyticsInput = {
   userId: string;
   competitors: BrandVaultCompetitor[];
   period: BrandVaultPeriod;
   economics: BrandEconomics;
   brandName: string;
   heroProduct?: string;
-}): Promise<BrandVaultAnalytics> {
+};
+
+/** Whole-page analytics cache: Brand Vault opens and polls reuse one result. */
+const ANALYTICS_TTL_MS = 5 * 60_000;
+
+/**
+ * Brand Vault analytics for one user + period, cached for 5 minutes. The key
+ * also covers every input (rivals, economics, brand fields), so an edit in
+ * Brand Vault is visible on the next load. While a rival is still being
+ * collected the result is not stored in the shared table (memory only, ~2
+ * min), so the page's poll picks up freshly collected ads.
+ */
+export async function getBrandVaultAnalytics(input: AnalyticsInput): Promise<BrandVaultAnalytics> {
+  const fingerprint = createHash("sha1")
+    .update(
+      JSON.stringify([
+        input.competitors.map((c) => [c.slot, c.name, c.advertiserPageId ?? null, c.country ?? null]),
+        input.economics,
+        input.brandName,
+        input.heroProduct ?? "",
+      ]),
+    )
+    .digest("hex")
+    .slice(0, 16);
+  let collecting = false;
+  return cached(
+    `bvpro:${input.userId}:${input.period}:${fingerprint}`,
+    ANALYTICS_TTL_MS,
+    async () => {
+      const value = await computeBrandVaultAnalytics(input);
+      collecting = value.competitors.some((item) => item.collectionState === "collecting");
+      return value;
+    },
+    { store: () => !collecting },
+  );
+}
+
+async function computeBrandVaultAnalytics(input: AnalyticsInput): Promise<BrandVaultAnalytics> {
   const { breakEvenPrice, targetMarginPrice, contributionBeforeAds } = calculateBreakEven(input.economics);
   const settled = await Promise.allSettled(
-    input.competitors.map((competitor) =>
+    input.competitors.map((competitor) => {
+      let collecting = false;
       // Reads up to thousands of ads per rival: compute once per 15 min, not per page view.
-      cached(
+      // A rival still being collected is kept briefly in memory only, so new ads show up.
+      return cached(
         `bv:${input.userId}:${competitor.advertiserPageId ?? competitor.name}:${competitor.country ?? ""}:${input.period}:${Math.round(Number(breakEvenPrice ?? 0))}`,
         15 * 60_000,
-        () => analyzeCompetitor({ competitor, period: input.period, breakEvenPrice, userId: input.userId }),
-      ),
-    ),
+        async () => {
+          const value = await analyzeCompetitor({ competitor, period: input.period, breakEvenPrice, userId: input.userId });
+          collecting = value.collectionState === "collecting";
+          return value;
+        },
+        { store: () => !collecting },
+      );
+    }),
   );
   const competitors = settled
     .map((result, i) => {

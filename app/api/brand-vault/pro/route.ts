@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getVerifiedUserFrom } from "@/lib/supabase/user";
 import { getBrandVaultAnalytics, normalizeEconomics } from "@/lib/brand-vault/pro";
 import type { BrandVaultPeriod } from "@/lib/brand-vault/types";
 
 export const runtime = "nodejs";
+// Run next to the Supabase database (ap-southeast-2 / Sydney).
+export const preferredRegion = "syd1";
 export const dynamic = "force-dynamic";
 
 const validPeriod = (value: string | null): BrandVaultPeriod =>
@@ -11,7 +14,7 @@ const validPeriod = (value: string | null): BrandVaultPeriod =>
 
 export async function GET(request: NextRequest) {
   const auth = await createClient();
-  const { data: { user } } = await auth.auth.getUser();
+  const user = await getVerifiedUserFrom(auth);
   if (!user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
   const period = validPeriod(request.nextUrl.searchParams.get("period"));

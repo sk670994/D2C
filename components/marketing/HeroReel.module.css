@@ -9,7 +9,8 @@
 .tab { all: unset; cursor: pointer; position: relative; overflow: hidden; font-size: 0.8rem; font-weight: 600; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 99px; padding: 5px 12px; }
 .tab[aria-selected="true"] { color: var(--blue); border-color: var(--blue); }
 .tab:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-.fill { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--blue); }
+.fill { position: absolute; left: 0; bottom: 0; height: 2px; width: 0; background: var(--blue); animation-name: reelFill; animation-timing-function: linear; animation-fill-mode: forwards; }
+@keyframes reelFill { from { width: 0%; } to { width: 100%; } }
 .stage { position: relative; width: 100%; aspect-ratio: 5 / 4; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 30px 60px -36px rgba(27, 38, 41, 0.45); overflow: hidden; font-size: clamp(11px, 1.25vw, 14px); }
 .bar { display: flex; align-items: center; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 0.85em; color: var(--muted); }
 .bar i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); display: inline-block; }

@@ -24,7 +24,9 @@ export async function GET() {
       return NextResponse.json({ ok: false, status: "unhealthy", db: "error", latencyMs }, { status: 503, headers: { "Cache-Control": "no-store" } });
     }
     const status = latencyMs > SLOW_MS ? "degraded" : "healthy";
-    return NextResponse.json({ ok: true, status, db: "reachable", latencyMs }, { headers: { "Cache-Control": "no-store" } });
+    // Successful answers are shared at the CDN for a minute, so uptime probes
+    // and dashboards do not each hit the database. Failures are never cached.
+    return NextResponse.json({ ok: true, status, db: "reachable", latencyMs }, { headers: { "Cache-Control": "public, s-maxage=60" } });
   } catch {
     return NextResponse.json(
       { ok: false, status: "unhealthy", db: "timeout", latencyMs: Date.now() - startedAt },

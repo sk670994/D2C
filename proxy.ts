@@ -21,5 +21,7 @@ export const config = {
   "/records/:path*",
   "/zwirk/:path*",
   "/today/:path*",
+  "/zooplens",
+  "/zooplens/:path*",
 ],
 };
