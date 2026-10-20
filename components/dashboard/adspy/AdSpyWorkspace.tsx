@@ -120,6 +120,11 @@ const TONIGHT_NOTICE =
 /** Status polling: give up (and point to tonight's run) after this long. */
 const POLL_MAX_MS = 10 * 60_000;
 const POLL_MAX_DELAY_MS = 15_000;
+/** While a live read is young, check every 3 s (ads stream in); then back off. */
+const POLL_FAST_MS = 3_000;
+const POLL_FAST_WINDOW_MS = 2 * 60_000;
+/** Paid live source on, but this read did not finish: no promise of tonight. */
+const LIVE_RETRY_NOTICE = "We couldn't finish reading this brand live just now. Press Refresh data in a few minutes to continue.";
 
 /** Only failures where the server never answered properly are worth a retry. */
 class RetryableSearchError extends Error {}
@@ -128,13 +133,16 @@ function isJobActive(job?: Job | null) {
   return Boolean(job && ACTIVE_JOB.has(job.status));
 }
 
-function jobCopy(job: Job | null): string {
+function jobCopy(job: Job | null, metaTotal: number | null = null): string {
   switch (job?.status) {
     case "queued":
       return "Queued — the collector will start in a few seconds";
     case "scraping":
-    case "deep":
-      return "Reading Meta Ad Library";
+    case "deep": {
+      const saved = Number(job?.persistedAds ?? 0);
+      const of = metaTotal && metaTotal > 0 ? ` of ${formatInt(Math.max(metaTotal, saved))}` : "";
+      return `Reading live from Meta… ${formatInt(saved)}${of} ads`;
+    }
     case "normalizing":
     case "enriching":
     case "finalizing":
@@ -211,6 +219,8 @@ export function AdSpyWorkspace() {
   const pollStartedAt = useRef<{ id: string; at: number } | null>(null);
   const lastPersisted = useRef(-1);
   const lastBump = useRef(0);
+  // Server reported a paid live source (look-ups run now, not tonight).
+  const liveSource = useRef(false);
   const resultsTop = useRef<HTMLDivElement | null>(null);
 
   /* ------------------------- initial URL restore ------------------------ */
@@ -589,10 +599,13 @@ export function AdSpyWorkspace() {
           error?: string;
           message?: string | null;
           outcome?: string;
+          liveSource?: boolean;
         };
         if (!response.ok || !data.success) throw new Error(data.error || "Could not start collection.");
+        liveSource.current = Boolean(data.liveSource);
         if (data.job) setJob(data.job);
-        if (data.message) setNotice(friendly(data.message));
+        // Automatic check found everything already here: nothing to announce.
+        if (data.message && !(reason === "auto" && data.outcome === "up_to_date")) setNotice(friendly(data.message));
         else if (reason === "manual" && data.outcome === "dispatched") setNotice("Collecting the latest public ads. New creatives appear here automatically.");
       } catch (reasonError) {
         setError(friendly(reasonError instanceof Error ? reasonError.message : "", "We couldn't start reading this brand right now. Try again in a minute."));
@@ -611,8 +624,14 @@ export function AdSpyWorkspace() {
     const lastSeen = result.lastUpdatedAt ? Date.parse(result.lastUpdatedAt) : NaN;
     const stale = Boolean(target.pageId) && Number.isFinite(lastSeen) && Date.now() - lastSeen > STALE_AFTER_MS;
     // Exact page with far fewer ads than Meta shows: finish collecting it.
-    const meta = result.metaSource?.scopeType === "page" ? (result.metaSource.all?.total ?? result.metaSource.active?.total ?? null) : null;
-    const incomplete = Boolean(target.pageId) && typeof meta === "number" && meta > 0 && Number(result.total ?? 0) < meta * 0.9;
+    // Live count vs live ads held when Meta's live total is known, else all vs all.
+    const pageMeta = result.metaSource?.scopeType === "page" ? result.metaSource : null;
+    const activeMeta = pageMeta?.active?.total ?? null;
+    const allMeta = pageMeta?.all?.total ?? null;
+    const incomplete =
+      typeof activeMeta === "number" && activeMeta > 0
+        ? Number(result.summary?.activeAds ?? 0) < activeMeta * 0.9
+        : typeof allMeta === "number" && allMeta > 0 && Number(result.total ?? 0) < allMeta * 0.9;
     if ((Number(result.total ?? 0) > 0 && !stale && !incomplete) || isJobActive(job)) return;
     if (autoCollected.current.has(baseKey)) return;
     autoCollected.current.add(baseKey);
@@ -634,7 +653,7 @@ export function AdSpyWorkspace() {
     const started = previous && previous.id === jobId ? previous : { id: jobId, at: Date.now() };
     pollStartedAt.current = started;
     const startedAt = started.at;
-    let delay = 1500;
+    let delay = POLL_FAST_MS;
     let alive = true;
     let inFlight = false;
 
@@ -652,8 +671,10 @@ export function AdSpyWorkspace() {
     const giveUp = () => {
       alive = false;
       setJob((current) => (current && current.id === jobId ? { ...current, status: "stale" } : current));
-      setNotice(TONIGHT_NOTICE);
+      setNotice(liveSource.current ? LIVE_RETRY_NOTICE : TONIGHT_NOTICE);
     };
+    // ~3 s while the read is young (first 2 minutes), then the slower pace.
+    const young = () => Date.now() - startedAt < POLL_FAST_WINDOW_MS;
 
     const tick = async () => {
       if (!alive || inFlight) return;
@@ -674,26 +695,39 @@ export function AdSpyWorkspace() {
           const next = data.job;
           if (next.persistedAds !== lastPersisted.current) {
             lastPersisted.current = next.persistedAds;
-            delay = 1500;
+            delay = young() ? POLL_FAST_MS : 1500;
             // Refresh results while ads land, but at most every 4 seconds.
             if (next.persistedAds > 0 && Date.now() - lastBump.current > 4000) {
               lastBump.current = Date.now();
               setDataVersion((v) => v + 1);
             }
           } else {
-            delay = Math.min(5000, Math.round(delay * 1.4));
+            delay = young() ? POLL_FAST_MS : Math.min(5000, Math.round(delay * 1.4));
           }
           if (next.stale || next.deferred) {
             alive = false;
             setJob({ ...next, status: "stale" });
-            setNotice(TONIGHT_NOTICE);
+            // "Queued for tonight" only when the read was really deferred.
+            setNotice(next.deferred || !liveSource.current ? TONIGHT_NOTICE : LIVE_RETRY_NOTICE);
             return;
           }
           setJob(next);
           if (!ACTIVE_JOB.has(next.status)) {
             alive = false;
             setDataVersion((v) => v + 1);
-            if (next.status === "failed") setNotice(friendly(next.errorMessage, "We couldn't finish reading this brand just now. Its full ad library is read in tonight's collection and will be here by 9 AM IST."));
+            if (next.status === "failed") {
+              setNotice(
+                liveSource.current
+                  ? LIVE_RETRY_NOTICE
+                  : friendly(next.errorMessage, "We couldn't finish reading this brand just now. Its full ad library is read in tonight's collection and will be here by 9 AM IST."),
+              );
+            } else if (next.status === "stale") {
+              // Paid balance reached its floor mid-read: the rest is read tonight.
+              setNotice(friendly(next.errorMessage, TONIGHT_NOTICE));
+            } else if (next.status === "exhausted" || next.status === "complete") {
+              const saved = Number(next.persistedAds ?? 0);
+              setNotice(saved > 0 ? `Complete. ${formatInt(saved)} ads ${liveSource.current ? "read live from Meta" : "collected"}.` : "Complete. Meta shows no live ads for this search right now.");
+            }
             return;
           }
         }
@@ -1055,11 +1089,16 @@ export function AdSpyWorkspace() {
             <div className="azs-banner azs-banner-live" role="status">
               <Loader2 size={15} className="azs-spin" />
               <div>
-                <strong>{jobCopy(job)}</strong>
+                <strong>
+                  {jobCopy(
+                    job,
+                    result?.metaSource?.scopeType === "page" ? (result.metaSource.active?.total ?? result.metaSource.all?.total ?? null) : null,
+                  )}
+                </strong>
                 <span>
                   {collectingHint(
                     job?.persistedAds ?? 0,
-                    result?.metaSource?.scopeType === "page" ? (result.metaSource.all?.total ?? result.metaSource.active?.total ?? null) : null,
+                    result?.metaSource?.scopeType === "page" ? (result.metaSource.active?.total ?? result.metaSource.all?.total ?? null) : null,
                     total,
                   )}
                 </span>
@@ -1328,10 +1367,8 @@ function Avatar({ src, label, size = 34 }: { src?: string | null; label: string;
  */
 function collectingHint(saved: number, metaTotal: number | null, indexed: number): string {
   const ready = indexed > 0 ? ` The ${formatInt(indexed)} ads below are ready to use meanwhile.` : "";
-  if (saved > 0) {
-    const of = metaTotal && metaTotal > saved ? ` of about ${formatInt(metaTotal)}` : "";
-    return `${formatInt(saved)}${of} ads checked so far. New ones appear below as they land.`;
-  }
+  // The count itself is in the title ("Reading live from Meta… N of M ads").
+  if (saved > 0) return "New ads appear below as they are saved. You can keep browsing.";
   if (metaTotal && metaTotal > 150) {
     const minutes = Math.min(15, Math.max(2, Math.round(metaTotal / 120)));
     return `Meta shows about ${formatInt(metaTotal)} ads for this page, so a full check takes around ${minutes} minutes. You can keep browsing.${ready}`;
@@ -2427,7 +2464,7 @@ function EmptyState({
       <div className="azs-empty">
         <Loader2 size={22} className="azs-spin" />
         <h3>Collecting public ads from Meta</h3>
-        <p>New creatives appear here automatically as they are saved. This usually takes under a minute.</p>
+        <p>Reading live from Meta. New creatives appear here as they are saved — usually 30–90 seconds.</p>
       </div>
     );
   }

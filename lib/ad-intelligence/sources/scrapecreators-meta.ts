@@ -39,7 +39,8 @@ type ScResponse = {
   searchResultsCount?: number | null;
   totalCount?: number | null;
   total_count?: number | null;
-  credits_remaining?: number | null;
+  credits_remaining?: number | string | null;
+  creditsRemaining?: number | string | null;
 };
 
 /** Request for one page: exact page (company ads) or a keyword search. */
@@ -69,11 +70,15 @@ export function scrapeCreatorsRequest(
 export function parseScrapeCreatorsPage(json: ScResponse | null, ms: number): SearchApiPage {
   const list = json?.results ?? json?.searchResults ?? json?.ads ?? [];
   const total = Number(json?.searchResultsCount ?? json?.totalCount ?? json?.total_count);
+  // Balance after this call (feeds the credit floor, credit-guard.ts).
+  const rawCredits = json?.credits_remaining ?? json?.creditsRemaining;
+  const credits = rawCredits == null || rawCredits === "" ? NaN : Number(rawCredits);
   return {
     ads: Array.isArray(list) ? list.filter(Boolean) : [],
     totalResults: Number.isFinite(total) && total >= 0 ? total : null,
     nextPageToken: json?.cursor || json?.next_cursor || null,
     ms,
+    creditsRemaining: Number.isFinite(credits) && credits >= 0 ? credits : null,
   };
 }
 

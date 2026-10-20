@@ -269,6 +269,15 @@ export default async function FounderPage() {
               tone={ops?.credits != null && ops.credits >= ops.creditCap * 0.8 ? "warn" : undefined}
             />
             <Stat
+              value={ops?.balance ? ops.balance.remaining.toLocaleString("en-IN") : dash}
+              label={
+                ops?.balance
+                  ? `ScrapeCreators credits left (${ops.balance.source === "api" ? "reported by the API" : "estimated"}) · live look-ups stop at ${ops.creditFloor.toLocaleString("en-IN")}`
+                  : "ScrapeCreators credits left (no balance seen yet)"
+              }
+              tone={ops?.balance && ops.balance.remaining <= ops.creditFloor * 1.5 ? "warn" : undefined}
+            />
+            <Stat
               value={ops?.ai ? ops.ai.calls.toLocaleString("en-IN") : dash}
               label={ops?.ai ? `AI calls today (ZWIRK + insights) by ${ops.ai.users} users` : "AI calls today (ZWIRK + insights)"}
             />

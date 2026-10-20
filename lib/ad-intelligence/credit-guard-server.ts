@@ -3,7 +3,16 @@ import "server-only";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { checkSharedRateLimit } from "@/lib/rate-limit";
 import { getEntitlement } from "@/lib/billing/server";
-import { istDayKey, istDayStart, trialBrandKey, userBrandLimit } from "./credit-guard";
+import {
+  atCreditFloor,
+  creditsRemainingFrom,
+  istDayKey,
+  istDayStart,
+  paidCreditFloor,
+  paidCreditStart,
+  trialBrandKey,
+  userBrandLimit,
+} from "./credit-guard";
 
 /** Paid-source credits spent since IST midnight (1 credit = 1 API page call). */
 export async function apiCreditsUsedToday(): Promise<number> {
@@ -24,6 +33,75 @@ export async function apiCreditsUsedToday(): Promise<number> {
     if (Number.isFinite(calls) && calls > 0) total += calls;
   }
   return total;
+}
+
+/** Credits billed by paid collections finished after `sinceIso` (same count as above). */
+async function paidCallsSince(sinceIso: string, excludeId?: string): Promise<number | null> {
+  let query = createGlobalServiceClient()
+    .from("adspy_requests")
+    .select("id,result")
+    .gt("updated_at", sinceIso)
+    .in("result->>source", ["scrapecreators", "searchapi"]);
+  if (excludeId) query = query.neq("id", excludeId);
+  const { data, error } = await query.limit(20000);
+  if (error) return null;
+  let total = 0;
+  for (const row of (data ?? []) as Array<{ result: { searchApiCalls?: unknown } | null }>) {
+    const calls = Number(row.result?.searchApiCalls);
+    if (Number.isFinite(calls) && calls > 0) total += calls;
+  }
+  return total;
+}
+
+/**
+ * ScrapeCreators credits left. Each paid collection saves the balance the
+ * API reported on its last response (adspy_requests.result.creditsRemaining);
+ * calls billed after that one are subtracted. Without any reported balance,
+ * ADSPY_PAID_CREDIT_START minus our spend since ADSPY_PAID_CREDIT_START_AT.
+ * Null = unknown (the floor is not applied; the daily cap still is).
+ */
+export async function paidCreditsRemaining(): Promise<{ remaining: number; source: "api" | "estimate"; observedAt: string | null } | null> {
+  try {
+    const { data, error } = await createGlobalServiceClient()
+      .from("adspy_requests")
+      .select("id,result,updated_at")
+      .eq("result->>source", "scrapecreators")
+      .not("result->>creditsRemaining", "is", null)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+    const latest = !error ? ((data ?? [])[0] as { id: string; result: { creditsRemaining?: unknown } | null; updated_at: string } | undefined) : undefined;
+    const observed = latest ? Number(latest.result?.creditsRemaining) : NaN;
+    if (latest && Number.isFinite(observed)) {
+      const after = await paidCallsSince(latest.updated_at, latest.id);
+      const value = creditsRemainingFrom({ observed, spentSinceObserved: after ?? 0, start: null, spentSinceStart: null });
+      return value ? { ...value, observedAt: latest.updated_at } : null;
+    }
+    const start = paidCreditStart();
+    if (!start) return null;
+    const spent = await paidCallsSince(start.at);
+    const value = creditsRemainingFrom({ observed: null, start: start.start, spentSinceStart: spent });
+    return value ? { ...value, observedAt: start.at } : null;
+  } catch (error) {
+    console.warn("[AdSpy credits] could not read the paid balance:", error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+let floorLogged = false;
+/** True (and logged once per instance) when paid reads must stop at the floor. */
+export async function paidCreditFloorReached(): Promise<{ reached: boolean; remaining: number | null }> {
+  const balance = await paidCreditsRemaining();
+  const floor = paidCreditFloor();
+  const reached = atCreditFloor(balance?.remaining, floor);
+  if (reached && !floorLogged) {
+    floorLogged = true;
+    console.warn("[AdSpy credits] paid balance at the floor: live look-ups now wait for tonight's PC run", {
+      remaining: balance?.remaining,
+      floor,
+      source: balance?.source,
+    });
+  }
+  return { reached, remaining: balance?.remaining ?? null };
 }
 
 /**

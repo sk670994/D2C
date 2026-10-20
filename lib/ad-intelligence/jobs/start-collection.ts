@@ -19,7 +19,18 @@ import {
 } from "@/lib/ad-intelligence/durable-run";
 import { dispatchAdSpyCollection, getAdSpyDispatchMode } from "./dispatch-adspy-collection";
 import { REQUEST_LEASE_MS, RUN_STALE_AFTER_MS, isRunStale } from "./stale-run";
-import { apiMinIntervalMs, dailyCreditCap, DEFERRED_MESSAGE, paidMetaSourceActive, TRIAL_LIMIT_MESSAGE } from "@/lib/ad-intelligence/credit-guard";
+import {
+  apiMinIntervalMs,
+  dailyCreditCap,
+  decideLookup,
+  DEFERRED_MESSAGE,
+  lookupMaxPages,
+  paidCreditFloor,
+  paidMetaSourceActive,
+  quickPages,
+  trialBrandKey,
+  TRIAL_LIMIT_MESSAGE,
+} from "@/lib/ad-intelligence/credit-guard";
 
 /**
  * The ONE entry point that starts an AdSpy collection.
@@ -77,7 +88,9 @@ export type StartCollectionResult = {
     /** Paid live-fetch budget used up: the PC collects this brand tonight. */
     | "deferred"
     /** Free trial's 3 brand look-ups are used up. */
-    | "trial_limit";
+    | "trial_limit"
+    /** Paid source: stored data is complete and fresh, nothing to buy. */
+    | "up_to_date";
   collectionKey: string;
 };
 
@@ -179,6 +192,43 @@ async function recordLookup(job: CollectionJob): Promise<void> {
   } catch (error) {
     console.warn("[AdSpy] could not record look-up:", error instanceof Error ? error.message : error);
   }
+}
+
+/**
+ * What we hold for a page vs what Meta showed at the last scan (paid look-up
+ * decision). Errors read as "nothing known", which can only mean a full read.
+ */
+async function pageCoverage(pageId: string, country: string): Promise<{
+  storedActive: number;
+  metaActiveTotal: number | null;
+  lastCompleteScanAt: number | null;
+}> {
+  const client = createGlobalServiceClient();
+  const [stored, counts] = await Promise.all([
+    client
+      .from("ad_intelligence_creatives")
+      .select("id", { count: "exact", head: true })
+      .eq("platform", "meta")
+      .eq("advertiser_id", pageId)
+      .eq("is_currently_active", true),
+    client
+      .from("adspy_source_counts")
+      .select("meta_total, observed_at, complete")
+      .eq("platform", "meta")
+      .eq("country", country)
+      .eq("scope_type", "page")
+      .eq("scope_key", pageId)
+      .eq("status_scope", "active")
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  const row = (counts.error ? null : counts.data) as { meta_total?: number | null; observed_at?: string | null; complete?: boolean | null } | null;
+  const observed = row?.observed_at ? new Date(row.observed_at).getTime() : NaN;
+  return {
+    storedActive: stored.error ? 0 : Number(stored.count ?? 0),
+    metaActiveTotal: row?.meta_total != null ? Number(row.meta_total) : null,
+    lastCompleteScanAt: row?.complete === true && Number.isFinite(observed) ? observed : null,
+  };
 }
 
 async function findActiveRunForKey(collectionKey: string): Promise<{ id: string; collection_job_id: string } | null> {
@@ -298,12 +348,16 @@ export async function startAdSpyCollection(input: {
     }
   }
 
-  // Paid source (credits): user searches get a quick first look at most,
-  // within a daily budget; the free PC collector reads the full library.
+  // Paid source (credits): a person's look-up of a brand page we don't hold
+  // completely gets a full live read (bounded, within a daily budget); keyword
+  // searches a quick first look. Scheduled runs never come here: the free PC
+  // collector reads tracked brands at night.
   const creditGuarded = paidMetaSourceActive() && (input.reason === "user" || input.reason === "track");
 
   // 4. Respect the minimum interval between collections.
-  const minInterval = Math.max(0, input.minIntervalMs ?? 0, creditGuarded ? apiMinIntervalMs() : 0);
+  //    Paid brand-page look-ups use the page-level full-read window in 4b
+  //    instead (any user), so an earlier quick read never blocks a full one.
+  const minInterval = Math.max(0, input.minIntervalMs ?? 0, creditGuarded && input.mode === "keyword" ? apiMinIntervalMs() : 0);
   // Only finished collections count. last_requested_at records every
   // look-up (for tonight's prefill), so it must not reset this window: a
   // look-up would otherwise block the next refresh and tonight's full read.
@@ -320,22 +374,70 @@ export async function startAdSpyCollection(input: {
     return { job, run: ownRun, dispatched: false, outcome: "recently_collected", collectionKey };
   }
 
-  // 4b. Credit budget: site-wide daily ceiling, then the user's daily allowance.
+  // 4b. Credit budget: what this look-up needs (full / quick / nothing),
+  //     the site-wide daily ceiling, then the user's daily allowance.
   let depth = input.depth ?? defaultCollectionDepth();
+  let apiMaxPages: number | undefined;
   // What the slot cost, refunded if the collection then fails to start.
   const slotReceipt: { counterKey?: string; brandKeys?: string[] } = {};
   if (creditGuarded) {
-    if (process.env.ADSPY_API_USER_DEPTH !== "deep") depth = "quick";
-    const { apiCreditsUsedToday, takeUserBrandSlot } = await import("@/lib/ad-intelligence/credit-guard-server");
-    const used = await apiCreditsUsedToday();
-    const slot = used < dailyCreditCap() ? await takeUserBrandSlot(input.userId, { pageId, name: query }, slotReceipt) : false;
+    const { apiCreditsUsedToday, paidCreditFloorReached, takeUserBrandSlot } = await import("@/lib/ad-intelligence/credit-guard-server");
+    const [used, balance] = await Promise.all([apiCreditsUsedToday(), paidCreditFloorReached()]);
+    const coverage = pageId
+      ? await pageCoverage(pageId, country).catch(() => ({ storedActive: 0, metaActiveTotal: null, lastCompleteScanAt: null }))
+      : { storedActive: 0, metaActiveTotal: null, lastCompleteScanAt: null };
+    // One full live read per page (any user) per minimum interval.
+    const fullKey = input.mode === "advertiser" ? `adspy-full:${pageId ? `page-${pageId}` : trialBrandKey(query)}:${country}` : "";
+    let fullReadRecently = false;
+    if (fullKey) {
+      const { data: seen } = await createGlobalServiceClient().from("rate_limits")
+        .select("key")
+        .eq("key", fullKey)
+        .gte("window_start", new Date(Date.now() - apiMinIntervalMs()).toISOString())
+        .limit(1);
+      fullReadRecently = Boolean(seen?.length);
+    }
+    const decision = decideLookup({
+      mode: input.mode,
+      ...coverage,
+      fullReadRecently,
+      creditsUsedToday: used,
+      dailyCap: dailyCreditCap(),
+      maxPages: lookupMaxPages(),
+      quickPages: quickPages(),
+      creditsRemaining: balance.remaining,
+      creditFloor: paidCreditFloor(),
+    });
+    if (decision.action === "none") {
+      if (lookup) await recordLookup(job);
+      return {
+        job,
+        run: ownRun,
+        dispatched: false,
+        outcome: decision.reason === "fresh" ? "up_to_date" : "recently_collected",
+        collectionKey,
+      };
+    }
+    if (decision.action === "full") {
+      depth = "deep";
+      apiMaxPages = decision.pages;
+    } else if (process.env.ADSPY_API_USER_DEPTH !== "deep") {
+      depth = "quick";
+    }
+    const slot = decision.action !== "deferred" ? await takeUserBrandSlot(input.userId, { pageId, name: query }, slotReceipt) : false;
     if (slot === "trial_limit") {
       // Trial look-ups used up: not queued for the night run either.
       job = await updateCollectionJob(job.id, { status: "stale", stage: "stale", errorMessage: TRIAL_LIMIT_MESSAGE });
       return { job, run: ownRun, dispatched: false, outcome: "trial_limit", collectionKey };
     }
     if (!slot) {
-      console.info("[AdSpy credits] deferred to the night run", { query, pageId, creditsUsedToday: used });
+      console.info("[AdSpy credits] deferred to the night run", {
+        query,
+        pageId,
+        creditsUsedToday: used,
+        creditsRemaining: balance.remaining,
+        reason: decision.action === "deferred" ? decision.reason : "user_allowance",
+      });
       job = await updateCollectionJob(job.id, {
         status: "stale",
         stage: "stale",
@@ -343,6 +445,13 @@ export async function startAdSpyCollection(input: {
         lastRequestedAt: new Date().toISOString(),
       });
       return { job, run: ownRun, dispatched: false, outcome: "deferred", collectionKey };
+    }
+    if (decision.action === "full" && fullKey) {
+      // Rate-limit rows expire with their window; refunded below if the
+      // collection then fails to start.
+      const { checkSharedRateLimit } = await import("@/lib/rate-limit");
+      await checkSharedRateLimit(fullKey, 1, apiMinIntervalMs()).catch(() => undefined);
+      slotReceipt.brandKeys = [...(slotReceipt.brandKeys ?? []), fullKey];
     }
   }
 
@@ -385,6 +494,9 @@ export async function startAdSpyCollection(input: {
       collectionDepth: depth,
       advertiserPageId: pageId,
       runId: run.id,
+      ...(apiMaxPages ? { apiMaxPages } : {}),
+      // Only people's look-ups may spend paid credits (see drain.ts).
+      ...(creditGuarded ? { paidLookup: true } : {}),
     };
 
     const request = await enqueueAdSpyRequest({
@@ -400,7 +512,7 @@ export async function startAdSpyCollection(input: {
     return { run, payload, requestId: request.id };
   };
   const queued = await queue().catch(async (error: unknown) => {
-    if (slotReceipt.counterKey) {
+    if (slotReceipt.counterKey || slotReceipt.brandKeys?.length) {
       const { refundUserBrandSlot } = await import("@/lib/ad-intelligence/credit-guard-server");
       await refundUserBrandSlot(slotReceipt);
     }

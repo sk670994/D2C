@@ -2,7 +2,7 @@
 
 import type { MetaScrapeOutcome } from "@/lib/ad-intelligence/providers/deep-meta";
 import { markStoppedAds } from "@/lib/ad-intelligence/global/mark-stopped";
-import { dailyCreditCap, pagesAllowed, quickPages } from "@/lib/ad-intelligence/credit-guard";
+import { DEFERRED_MESSAGE, dailyCreditCap, pagesAllowed, paidCreditFloor, quickPages } from "@/lib/ad-intelligence/credit-guard";
 
 import type { AdPlatform, CompetitorAd } from "@/lib/ad-intelligence/types";
 import type {
@@ -117,8 +117,12 @@ export type CollectionEvent = {
   /** API sources: page token to continue a big brand where the last run stopped. */
   apiCursor?: string | null;
   apiPagesSoFar?: number;
+  /** API sources: most pages this collection may read in total (user full look-ups). */
+  apiMaxPages?: number;
   /** When the first slice of a chained API scan started (for marking stopped ads). */
   apiScanStartedAt?: string | null;
+  /** A person's look-up that may spend paid credits (set by startAdSpyCollection). */
+  paidLookup?: boolean;
 };
 
 type State = {
@@ -265,6 +269,12 @@ export async function collectAdIntelligence(
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   // Billed SearchApi calls for this collection (cost tracking).
   let searchApiCalls = 0;
+  // Paid balance the provider last reported (credit floor), and whether the
+  // floor stopped this read (the rest waits for tonight's free PC run).
+  let creditsRemaining: number | null = null;
+  let creditFloorHit = false;
+  // The first Meta total of a paid full read is saved at once (see onBatch).
+  let earlyCountWritten = false;
   let continuation: { cursor: string; pagesSoFar: number; pageId: string | null; scanStartedAt: string } | null = null;
   // Browser scan outcome (null = not a browser scan or not known).
   let scanComplete: boolean | null = null;
@@ -423,16 +433,27 @@ export async function collectAdIntelligence(
             }));
 
       // Credit guard: quick = Meta's first pages only; never past the day's budget.
-      const { apiCreditsUsedToday } = await import("@/lib/ad-intelligence/credit-guard-server");
+      const { apiCreditsUsedToday, paidCreditFloorReached } = await import("@/lib/ad-intelligence/credit-guard-server");
       const creditsUsedToday = await apiCreditsUsedToday();
-      const maxPages = pagesAllowed({
-        phase,
-        perRunPages: PER_RUN_PAGES,
-        totalPagesLeft: TOTAL_PAGES - Number(data.apiPagesSoFar ?? 0),
-        creditsUsedToday,
-        dailyCap: dailyCreditCap(),
-        quickPages: quickPages(),
-      });
+      const totalPages = Math.min(TOTAL_PAGES, Number(data.apiMaxPages) > 0 ? Number(data.apiMaxPages) : TOTAL_PAGES);
+      // Balance at the floor (also checked for every continuation slice): no paid call.
+      const floor = paidCreditFloor();
+      const balance = await paidCreditFloorReached();
+      creditFloorHit = balance.reached;
+      const floorPages = balance.remaining != null ? Math.max(0, Math.floor(balance.remaining - floor)) : Number.POSITIVE_INFINITY;
+      const maxPages = creditFloorHit
+        ? 0
+        : Math.min(
+            floorPages,
+            pagesAllowed({
+              phase,
+              perRunPages: PER_RUN_PAGES,
+              totalPagesLeft: totalPages - Number(data.apiPagesSoFar ?? 0),
+              creditsUsedToday,
+              dailyCap: dailyCreditCap(),
+              quickPages: quickPages(),
+            }),
+          );
 
       // Brand name -> one exact Meta page (1 call). Ambiguous names stay a
       // name search, filtered to advertisers carrying that name.
@@ -452,9 +473,9 @@ export async function collectAdIntelligence(
       const apiScanStartedAt = data.apiScanStartedAt ?? new Date().toISOString();
       // Live ads only (as the browser path); stopped ads are marked below.
       const apiActiveStatus = phase === "deep" && process.env.ADSPY_DEEP_STATUS === "all" ? "all" : "active";
-      if (maxPages <= 0) console.info("[AdSpy credits] daily budget used; skipping paid fetch", { query: data.query, creditsUsedToday });
+      if (maxPages <= 0) console.info("[AdSpy credits] budget or credit floor reached; skipping paid fetch", { query: data.query, creditsUsedToday, creditFloorHit });
       const outcome = maxPages <= 0
-        ? { calls: 0, ads: 0, totalResults: null, stoppedBy: "max_pages" as const, ms: 0, nextToken: null }
+        ? { calls: 0, ads: 0, totalResults: null, stoppedBy: "max_pages" as const, ms: 0, nextToken: null, creditsRemaining: null }
         : await api.collect(
         {
           query: data.query,
@@ -467,20 +488,42 @@ export async function collectAdIntelligence(
           deadlineAt,
           startToken: data.apiCursor ?? null,
           maxPages,
+          stopAtCredits: floor,
           // Quick refresh: stop once pages bring nothing new (saves credits).
           ...(phase === "quick" && scrapePageId ? { isKnown: await knownAdIds(scrapePageId), stopAfterKnownPages: 2 } : {}),
         },
         async (batch) => {
           await persist(batch);
+          // Meta's total as soon as the first page tells us, so an open page
+          // can show "N of M ads" while the read goes on (final count below).
+          const firstTotal = metaTotalCount as number | null;
+          if (!earlyCountWritten && phase === "deep" && firstTotal != null) {
+            earlyCountWritten = true;
+            const scope = sourceScopeFor({ mode: data.mode, query: data.query, pageId: scrapePageId });
+            if (scope) {
+              await recordSourceCount({
+                platform: data.platform,
+                country: data.country,
+                scope,
+                statusScope: apiActiveStatus === "active" ? "active" : "all",
+                metaTotal: firstTotal,
+                collectedAds: state.discoveredAds,
+                complete: null,
+                stoppedBy: null,
+              });
+            }
+          }
         },
       );
       searchApiCalls = outcome.calls + resolveCalls;
+      if (outcome.creditsRemaining != null) creditsRemaining = outcome.creditsRemaining;
+      if (outcome.stoppedBy === "credit_floor") creditFloorHit = true;
       // Big brand, time or page budget used up: continue in a fresh run.
       if (
         phase === "deep" &&
         outcome.nextToken &&
         (outcome.stoppedBy === "deadline" || outcome.stoppedBy === "max_pages") &&
-        pagesSoFar + outcome.calls < TOTAL_PAGES
+        pagesSoFar + outcome.calls < totalPages
       ) {
         continuation = { cursor: outcome.nextToken, pagesSoFar: pagesSoFar + outcome.calls, pageId: scrapePageId, scanStartedAt: apiScanStartedAt };
       }
@@ -520,9 +563,14 @@ export async function collectAdIntelligence(
           platform: data.platform,
           country: data.country,
           scope,
-          statusScope: statusScopeForDepth(phase),
+          // Live-only reads are compared with Meta's live count.
+          statusScope: apiActiveStatus === "active" ? "active" : statusScopeForDepth(phase),
           metaTotal: observedTotal,
           collectedAds: state.discoveredAds,
+          // A full read that reached Meta's end is "complete" (fresh for 24 h);
+          // quick reads and unfinished slices are not.
+          complete: phase === "deep" && outcome.stoppedBy === "exhausted",
+          stoppedBy: outcome.stoppedBy,
         });
       }
     } else if (data.platform === "meta") {
@@ -654,6 +702,10 @@ export async function collectAdIntelligence(
           phase: "quick",
           metaTotalCount,
           resolvedPageId,
+          // Counted by apiCreditsUsedToday (paid quick reads cost credits too).
+          source: data.platform === "meta" ? metaSource() : null,
+          searchApiCalls,
+          creditsRemaining,
           discoveredAds:
             state.discoveredAds,
           normalizedAds:
@@ -671,8 +723,10 @@ export async function collectAdIntelligence(
       await updateCollectionJob(
         data.jobId,
         {
-          status: "exhausted",
-          stage: "complete",
+          // Credit floor: what was read is kept; the rest waits for tonight.
+          status: creditFloorHit ? "stale" : "exhausted",
+          stage: creditFloorHit ? "stale" : "complete",
+          ...(creditFloorHit ? { errorMessage: DEFERRED_MESSAGE } : {}),
           discoveredAds:
             state.discoveredAds,
           normalizedAds:
@@ -723,7 +777,7 @@ export async function collectAdIntelligence(
     // Meta's total) is saved but not "completed": no completed_at, so the
     // minimum-interval checks (completed_at only) let it run again soon, and
     // tonight's oldest-first order puts it at the front next time.
-    const partialScan = scanComplete === false;
+    const partialScan = scanComplete === false || creditFloorHit;
     await completeAdSpyRequest({
       requestId: data.requestId,
       result: {
@@ -734,6 +788,7 @@ export async function collectAdIntelligence(
         stoppedBy: scanStoppedBy,
         source: data.platform === "meta" ? metaSource() : null,
         searchApiCalls,
+        creditsRemaining,
         discoveredAds:
           state.discoveredAds,
         normalizedAds:
@@ -753,8 +808,9 @@ export async function collectAdIntelligence(
       data.jobId,
       {
         // A continuation follows: keep the job "collecting" so open pages keep polling.
-        status: continuation ? "deep" : "exhausted",
-        stage: continuation ? "deep" : "exhausted",
+        // Credit floor: saved ads stay; the rest is read by tonight's free PC run.
+        status: continuation ? "deep" : creditFloorHit ? "stale" : "exhausted",
+        stage: continuation ? "deep" : creditFloorHit ? "stale" : "exhausted",
         discoveredAds:
           state.discoveredAds,
         normalizedAds:
@@ -762,7 +818,7 @@ export async function collectAdIntelligence(
         persistedAds:
           state.persistedAds,
         completedAt: continuation || partialScan ? null : new Date().toISOString(),
-        errorMessage: null,
+        errorMessage: creditFloorHit && !continuation ? DEFERRED_MESSAGE : null,
       },
     );
 

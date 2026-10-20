@@ -8,6 +8,7 @@ import { pickRunnable, type Candidate } from "@/worker/worker-core";
 
 import { collectAdIntelligence, type CollectionEvent } from "./collect-ad-intelligence";
 import { recoverStaleRuns } from "./start-collection";
+import { drainMayRun } from "@/lib/ad-intelligence/credit-guard";
 
 /**
  * Serverless collector: the Vercel replacement for the PC worker's loop.
@@ -63,7 +64,7 @@ export async function drainAdSpyQueue(input: { deadlineAt: number; maxJobs?: num
       result.remaining = true;
       break;
     }
-    const next = pickRunnable((await candidates()).filter((c) => !tried.has(c.id)));
+    const next = pickRunnable((await candidates()).filter((c) => !tried.has(c.id) && drainMayRun(c.payload as { paidLookup?: boolean } | null)));
     if (!next) break;
     tried.add(next.id);
 
