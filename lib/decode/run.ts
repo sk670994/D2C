@@ -3,9 +3,10 @@ import "server-only";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { askJev, JevError, jevKey } from "@/lib/ai/jev";
 import { createLedger } from "@/lib/ai/ledger";
+import { jsonGenerationConfig } from "@/lib/ai/gemini-config";
 
 import { hasText, jevQuestions, jevState, labelsFromJev, mergeDecodes, needsVisualRead, type JevLabels } from "./jev-labels";
-import { cleanEnvValue, decodePrompt, isKeyError, isRetryableError, normalizeDecoded, parseModelJson, shouldSkipDecode, TAXONOMY_VERSION, type Decoded } from "./taxonomy";
+import { cleanEnvValue, decodePrompt, isKeyError, isRetryableError, normalizeDecoded, parseModelJson, shouldSkipDecode, TAXONOMY_VERSION, visualFailedRecently, visualRetryHours, type Decoded } from "./taxonomy";
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -71,23 +72,25 @@ export async function decodeCreativeWithUsage(ad: CreativeForDecode, apiKey: str
   ];
   if (image) parts.push({ inline_data: { mime_type: image.mimeType, data: image.data } });
 
-  const response = await fetch(`${GEMINI_BASE}/models/${encodeURIComponent(decodeModel())}:generateContent`, {
+  const model = decodeModel();
+  const response = await fetch(`${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify({
       contents: [{ role: "user", parts }],
-      generationConfig: { temperature: 0.1, maxOutputTokens: 600, responseMimeType: "application/json" },
+      // Thinking off: thought tokens used to eat the budget and cut the JSON short.
+      generationConfig: jsonGenerationConfig(model, { temperature: 0.1, maxOutputTokens: 900 }),
     }),
     signal: AbortSignal.timeout(60_000),
   });
   if (!response.ok) throw new Error(`Gemini ${response.status}: ${(await response.text().catch(() => "")).slice(0, 200)}`);
   const body = (await response.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> }; finishReason?: string }>;
     usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
   };
   const text = body.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
   const parsed = parseModelJson(text);
-  if (!parsed) throw new Error("Model did not return JSON.");
+  if (!parsed) throw new Error(body.candidates?.[0]?.finishReason === "MAX_TOKENS" ? "Model reply was cut short (MAX_TOKENS)." : "Model did not return JSON.");
   return {
     elements: normalizeDecoded(parsed),
     inputTokens: Number(body.usageMetadata?.promptTokenCount ?? 0),
@@ -226,9 +229,11 @@ export async function decodePendingAds(options: { limit?: number; deadlineAt?: n
   // ---- 2. Gemini: visual read for triaged ads (or all ads when Jev is off) ----
   if (geminiKey && !past()) {
     const model = decodeModel();
+    const retryHours = visualRetryHours();
     const todo = await loadCandidates((ad, row) => {
       const jevOnly = row && row.status === "done" && isJevOnly(row.model);
       if (row && !jevOnly && shouldSkipDecode(row, now)) return false; // already read, or failed recently
+      if (jevOnly && visualFailedRecently(row?.elements, now, retryHours)) return false; // visual read failed recently
       if (!jevOn) return true; // previous behaviour: every ad
       const jev = jevFromRow(row);
       const pass = needsVisualRead({
@@ -280,8 +285,18 @@ export async function decodePendingAds(options: { limit?: number; deadlineAt?: n
         failed += 1;
         // Rate limits: stop this batch and try again next run.
         if (/Gemini 429|RESOURCE_EXHAUSTED/i.test(message)) break;
-        // Keep Jev's labels if we had them; only a fresh ad gets a failed row.
-        if (!row) {
+        // Keep Jev's labels if we had them, but mark the failed visual read so
+        // the ad is not picked first again on every run (see visualRetryHours).
+        if (row && row.status === "done" && isJevOnly(row.model)) {
+          const elements = row.elements && typeof row.elements === "object" ? (row.elements as Record<string, unknown>) : {};
+          await client
+            .from("ad_creative_decodes")
+            .update({ elements: { ...elements, _visualFailedAt: new Date().toISOString() }, error: message.slice(0, 300) })
+            .eq("creative_id", ad.id)
+            .then(() => undefined, () => undefined);
+        } else if (!row || row.status === "failed") {
+          // A fresh ad (or one that failed before) gets a failed row with a new
+          // timestamp, so the 6-hour cool-down restarts.
           await client.from("ad_creative_decodes").upsert({
             creative_id: ad.id,
             advertiser_id: ad.advertiser_id,

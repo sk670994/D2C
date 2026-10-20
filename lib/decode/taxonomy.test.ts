@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { cleanEnvValue, decodePrompt, isKeyError, isRetryableError, normalizeDecoded, parseModelJson, shouldSkipDecode, topPatterns, valueLabel } from "./taxonomy";
+import { cleanEnvValue, decodePrompt, isKeyError, isRetryableError, normalizeDecoded, parseModelJson, shouldSkipDecode, topPatterns, valueLabel, visualFailedRecently, visualRetryHours } from "./taxonomy";
 
 describe("normalizeDecoded", () => {
   it("keeps only values from the taxonomy", () => {
@@ -87,5 +87,16 @@ describe("decode housekeeping", () => {
     expect(isRetryableError("The operation was aborted due to timeout")).toBe(true);
     expect(isRetryableError("Gemini 503: overloaded")).toBe(true);
     expect(isRetryableError("Gemini 400: bad image")).toBe(false);
+  });
+
+  it("holds back ads whose visual read failed recently", () => {
+    const now = Date.parse("2026-10-19T12:00:00Z");
+    expect(visualRetryHours(undefined)).toBe(72);
+    expect(visualRetryHours("24")).toBe(24);
+    expect(visualRetryHours("junk")).toBe(72);
+    expect(visualFailedRecently({ hookType: "offer", _visualFailedAt: "2026-10-18T12:00:00Z" }, now, 72)).toBe(true);
+    expect(visualFailedRecently({ _visualFailedAt: "2026-10-15T11:00:00Z" }, now, 72)).toBe(false);
+    expect(visualFailedRecently({ hookType: "offer" }, now, 72)).toBe(false);
+    expect(visualFailedRecently(null, now, 72)).toBe(false);
   });
 });

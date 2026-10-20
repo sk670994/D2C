@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Markdown } from "./Markdown";
 
 export type ChatMessage = {
   role: "user" | "assistant";
@@ -65,7 +66,7 @@ export function ZwirkDockPanel({
             key={`${msg.role}-${index}`}
             className={`zwirk-dock-msg ${msg.role}`}
           >
-            {msg.content}
+            {msg.role === "assistant" ? <Markdown text={msg.content} /> : msg.content}
           </article>
         ))}
 

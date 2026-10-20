@@ -3929,6 +3929,22 @@ body:has(.zt-app-shell) .site-footer-global {
   white-space: pre-wrap;
 }
 
+/* ZWIRK markdown replies (components/zwirk/Markdown.tsx) */
+.zw-md > * { margin: 0; }
+.zw-md > * + * { margin-top: 0.6em; }
+.zw-md h3, .zw-md h4, .zw-md h5 { font-weight: 700; line-height: 1.3; }
+.zw-md h3 { font-size: 1.1em; }
+.zw-md h4 { font-size: 1.05em; }
+.zw-md h5 { font-size: 1em; }
+.zw-md ul, .zw-md ol { padding-left: 1.3em; }
+.zw-md ul { list-style: disc; }
+.zw-md ol { list-style: decimal; }
+.zw-md li + li { margin-top: 0.25em; }
+.zw-md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; padding: 0.05em 0.3em; border-radius: 4px; background: color-mix(in srgb, currentColor 10%, transparent); }
+.zw-md pre { overflow-x: auto; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, currentColor 8%, transparent); white-space: pre; }
+.zw-md pre code { padding: 0; background: none; }
+.zw-md a { text-decoration: underline; text-underline-offset: 2px; }
+
 .zwirk-dock-msg.user {
   background: color-mix(in srgb, var(--brand) 14%, transparent);
 }

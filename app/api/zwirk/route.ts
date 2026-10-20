@@ -4,10 +4,10 @@ import { takeAiCall } from "@/lib/ai/limits-server";
 import { sanitizeZwirkInput } from "@/lib/zwirk/input-limits";
 import { routeZwirkIntent } from "@/lib/zwirk/reasoning/intent-router";
 import { buildSpecializedZwirkPrompt } from "@/lib/zwirk/prompts/context-prompt";
-import {
-  buildZwirkContext,
-  serializeZwirkContext,
-} from "@/lib/zwirk/context/context-builder";
+import { buildZwirkContext } from "@/lib/zwirk/context/context-builder";
+import { thinkingConfigFor } from "@/lib/ai/gemini-config";
+import { finalizeZwirkReply, type GeminiCandidate } from "@/lib/zwirk/reply";
+import { loadRivalContext } from "@/lib/zwirk/rivals-server";
 
 import {
   createClient as createServerAuthClient,
@@ -19,13 +19,7 @@ type ChatMessage = {
 };
 
 type GeminiGenerateResponse = {
-  candidates?: Array<{
-    content?: {
-      parts?: Array<{
-        text?: string;
-      }>;
-    };
-  }>;
+  candidates?: GeminiCandidate[];
 };
 
 type ProofOfWork = {
@@ -89,249 +83,12 @@ function formatBrandVault(
     : "No brand vault data provided.";
 }
 
-function buildPrompt(
-  messages: ChatMessage[],
-  context?: string,
-  competitorContext?: string,
-  brandVault?: BrandVaultRow,
-  adSpyContext?: string
-) {
-  const trimmed = messages
+/** The last 12 turns as plain "User:" / "ZWIRK:" lines (the system prompt carries everything else). */
+function formatConversation(messages: ChatMessage[]) {
+  return messages
     .slice(-12)
-    .map((msg) => {
-      const role =
-        msg.role === "assistant"
-          ? "ZWIRK"
-          : "User";
-
-      return `${role}: ${msg.content.trim()}`;
-    });
-
-  const lockedContext =
-    context &&
-    context.trim().length > 0
-      ? context.trim()
-      : "No dashboard context provided.";
-
-  const lockedVault =
-    brandVault
-      ? formatBrandVault(
-          brandVault
-        )
-      : "No brand vault data provided.";
-
-  const lockedCompetitors =
-    brandVault?.competitor_focus
-      ?.trim().length
-      ? brandVault.competitor_focus.trim()
-      : "No competitor focus provided.";
-
-  const lockedAdSpy =
-    adSpyContext &&
-    adSpyContext.trim().length > 0
-      ? adSpyContext.trim()
-      : "No ZoopLens intelligence is currently available.";
-
-  return [
-    "You are ZWIRK, a sharp virtual assistant for DTC operators.",
-
-    "Goal: Provide outcome-focused, specific, practical guidance that a founder can implement.",
-
-    "",
-
-    "CORE BEHAVIOR:",
-
-    "Use the metrics available in the Context block first.",
-
-    "Use the ZoopLens intelligence when the question involves competitors, competitor ads, creative strategy, offers, hooks, creators, positioning, creative longevity, market patterns, or what the brand should test next.",
-
-    "Combine first-party business performance with competitor intelligence whenever both are relevant.",
-
-    "Do not stop and ask the user for missing metrics if a useful recommendation can still be made.",
-
-    "Only ask for additional metrics when they are absolutely required to answer the question accurately.",
-
-    "If a metric such as AOV or order volume is unavailable, explicitly state that it is unavailable and continue using the available dashboard metrics.",
-
-    "Never refuse to provide a useful analysis or plan merely because one or more metrics are missing.",
-
-    "Clearly distinguish dashboard facts, ZoopLens observations, and assumptions.",
-
-    "Do not invent dashboard metrics, campaign performance, revenue, CAC, ROAS, margins, orders, clicks, CTR, impressions, or other business data.",
-
-    "When data is unavailable, say 'not available' or make a clearly labeled reasonable assumption.",
-
-    "Use INR formatting when discussing Indian currency.",
-
-    "",
-
-    "DECISION PRINCIPLES:",
-
-    "Prioritize profitability over vanity metrics.",
-
-    "Use contribution margin, allowable CAC, blended CAC, ROAS, revenue, and net profit when available.",
-
-    "When recommending scaling, do not recommend aggressive scaling if CAC is above allowable CAC or profitability is deteriorating.",
-
-    "When recommending budget increases, prioritize proven profitable campaigns before expanding into unproven campaigns.",
-
-    "When data suggests a problem, identify the likely root cause before recommending actions.",
-
-    "Give concrete actions rather than generic marketing advice.",
-
-    "",
-
-    "ADSPY INTERPRETATION RULES:",
-
-    "ZoopLens contains public competitor intelligence observed from the Meta Ad Library.",
-
-    "ZoopLens creative score, longevity score, relevance score, and engagement potential are estimates or derived signals unless explicitly stated otherwise.",
-
-    "Never describe engagement potential as actual engagement, clicks, CTR, impressions, spend, conversions, revenue, ROAS, or profit.",
-
-    "Treat running days as an observed longevity signal, not proof that a competitor ad is profitable.",
-
-    "Treat recurring offers, hooks, creators, products, formats, and creative families as market patterns.",
-
-    "Do not recommend copying competitor creatives verbatim.",
-
-    "Recommend differentiated tests based on observed patterns.",
-
-    "When comparing competitor ads, cite the specific product, offer, hook, format, creator, longevity or score that supports the recommendation.",
-
-    "",
-
-    "Context (locked):",
-    lockedContext,
-
-    "",
-
-    "Brand Vault (locked):",
-    lockedVault,
-
-    "",
-
-    "Competitor Focus (locked):",
-    lockedCompetitors,
-
-    "",
-
-    "Competitive radar (locked):",
-    competitorContext ??
-      "No competitor radar data provided.",
-
-    "",
-
-    "ZoopLens intelligence (locked):",
-    lockedAdSpy,
-
-    "",
-
-    "RESPONSE STYLE:",
-
-    "Be concise, direct, and founder-friendly.",
-
-    "Do not include role labels such as 'ZWIRK:' or 'User:'.",
-
-    "Do not repeat the user's question.",
-
-    "Do not fabricate certainty.",
-
-    "Tag material statements as FACT, DERIVED, OBSERVED, ASSUMPTION, or RECOMMENDATION.",
-
-    "If you make an assumption, clearly label it.",
-
-    "",
-
-    "RESPONSE STRUCTURE:",
-
-    "Start with:",
-
-    "Summary:",
-
-    "- 2-3 bullets containing the main diagnosis or answer.",
-
-    "",
-
-    "If the user asks for a plan, include:",
-
-    "30-Day Plan:",
-
-    "Week 1:",
-
-    "- concrete actions",
-
-    "Week 2:",
-
-    "- concrete actions",
-
-    "Week 3:",
-
-    "- concrete actions",
-
-    "Week 4:",
-
-    "- concrete actions",
-
-    "",
-
-    "If the user asks for analysis, diagnosis, comparison, or explanation rather than a plan, do not force a 30-day plan.",
-
-    "",
-
-    "When relevant, finish with:",
-
-    "Metrics to Monitor:",
-
-    "- 4-6 important metrics.",
-
-    "",
-
-    "Use actual numbers from the Context whenever available.",
-
-    "Use actual ZoopLens observations whenever relevant.",
-
-    "Explain why each major recommendation matters.",
-
-    "",
-
-    ...trimmed,
-
-    "Answer:",
-  ].join("\n");
-}
-
-function extractReply(
-  data: GeminiGenerateResponse
-) {
-  const parts =
-    data.candidates?.[0]?.content
-      ?.parts ?? [];
-
-  const rawReply =
-    parts
-      .map(
-        (part) =>
-          part.text ?? ""
-      )
-      .join("")
-      .trim() ||
-    "No response generated.";
-
-  return {
-    reply: rawReply
-      .replace(
-        /^ZWIRK:\s*/i,
-        ""
-      )
-      .replace(
-        /\nUser:.*$/s,
-        ""
-      )
-      .trim(),
-
-    raw: rawReply,
-  };
+    .map((msg) => `${msg.role === "assistant" ? "ZWIRK" : "User"}: ${msg.content.trim()}`)
+    .join("\n");
 }
 
 function detectAssumptions(
@@ -444,6 +201,9 @@ export async function POST(
      * 3. Load Brand Vault
      * --------------------------------------------------
      */
+    // Rival ads load in parallel (cached per user 10 min; "" on any failure).
+    const rivalAdsPromise = loadRivalContext(user.id);
+
     const {
       data: brandVault,
       error: brandVaultError,
@@ -512,15 +272,7 @@ export async function POST(
      * 5. Build prompt
      * --------------------------------------------------
      */
-    const basePrompt =
-      buildPrompt(
-        messages,
-        contextValue,
-        competitorContext,
-        brandVault ??
-          undefined,
-        adSpyContext
-      );
+    const rivalAds = await rivalAdsPromise;
     const zwirkPageType =
       pagePath.startsWith("/zooplens")
         ? "adspy"
@@ -617,6 +369,10 @@ export async function POST(
           adSpyContext ??
           null,
 
+        rivalAds:
+          rivalAds ||
+          null,
+
         history:
           null,
 
@@ -638,19 +394,13 @@ export async function POST(
         zwirkContext
       );
 
-    const canonicalContext =
-      serializeZwirkContext(
-        zwirkContext
-      );
-
+    // Context is written once (inside the specialized prompt), then the conversation.
     const prompt = [
       specializedPrompt,
       "",
-      "CANONICAL ZWIRK CONTEXT:",
-      canonicalContext,
-      "",
-      "LEGACY OPERATING PROMPT:",
-      basePrompt,
+      "CONVERSATION:",
+      formatConversation(messages),
+      "ZWIRK:",
     ].join("\n");
 
     /*
@@ -720,7 +470,7 @@ export async function POST(
     const endpoint =
       `${baseUrl}/v1beta/models/${encodeURIComponent(modelName)}:generateContent`;
 
-    const callGemini = async (generationConfig: { maxOutputTokens: number }) => {
+    const callGemini = async (generationConfig: Record<string, unknown>) => {
       const payload = {
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig,
@@ -760,7 +510,13 @@ export async function POST(
      * 8. Primary Gemini request
      * --------------------------------------------------
      */
-    const res = await callGemini({ maxOutputTokens: 1200 });
+    // Thinking tokens count against maxOutputTokens: off for flash, minimum for pro.
+    const thinkingConfig = thinkingConfigFor(modelName);
+    const res = await callGemini({
+      maxOutputTokens: 2048,
+      temperature: 0.4,
+      ...(thinkingConfig ? { thinkingConfig } : {}),
+    });
 
     /*
      * --------------------------------------------------
@@ -792,8 +548,9 @@ export async function POST(
     const data =
       (await res.json()) as GeminiGenerateResponse;
 
+    // Strips leftover evidence tags; notes when the answer hit MAX_TOKENS.
     const result =
-      extractReply(data);
+      finalizeZwirkReply(data.candidates?.[0]);
 
     const reply =
       result.reply;

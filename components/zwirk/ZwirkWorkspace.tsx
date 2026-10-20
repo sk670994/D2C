@@ -2,6 +2,8 @@
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
+import { Markdown } from "./Markdown";
+
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
 /** Each mode is a working shortcut: it drafts a prompt the user can edit before sending. */
@@ -150,7 +152,7 @@ export function ZwirkWorkspace() {
           {messages.map((m, i) => (
             <article key={i} className={`zw-msg zw-msg-${m.role}`}>
               <span className="zw-who">{m.role === "user" ? "You" : "ZWIRK"}</span>
-              <div className="zw-text">{m.content}</div>
+              {m.role === "assistant" ? <Markdown text={m.content} className="zw-text" /> : <div className="zw-text">{m.content}</div>}
             </article>
           ))}
           {busy ? (

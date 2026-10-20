@@ -157,3 +157,22 @@ export function isRetryableError(message: string): boolean {
 export function isKeyError(message: string): boolean {
   return /API key not valid|API_KEY_INVALID|PERMISSION_DENIED|Gemini 40[13]|Gemini 404|is not found for API version|models\/[^ ]+ is not found/i.test(message);
 }
+
+/**
+ * Hours a visual read that failed on an ad already labelled by Jev is not
+ * retried (env DECODE_RETRY_HOURS, default 72). Without this the same broken
+ * ads were picked first on every run and starved the queue.
+ */
+export function visualRetryHours(env: string | undefined = process.env.DECODE_RETRY_HOURS): number {
+  const n = Number(env);
+  return Number.isFinite(n) && n > 0 ? n : 72;
+}
+
+/** True when elements._visualFailedAt is set and younger than the retry window. */
+export function visualFailedRecently(elements: unknown, now: number = Date.now(), hours: number = visualRetryHours()): boolean {
+  if (!elements || typeof elements !== "object") return false;
+  const raw = (elements as Record<string, unknown>)._visualFailedAt;
+  const at = typeof raw === "string" ? Date.parse(raw) : NaN;
+  if (!Number.isFinite(at)) return false;
+  return now - at < hours * 3_600_000;
+}
