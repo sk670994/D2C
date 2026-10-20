@@ -46,13 +46,13 @@ function RivalsScreen() {
 function CoverageScreen() {
   return (
     <div className={styles.screen}>
-      <small className={styles.label}>META AD LIBRARY SHOWS</small>
+      <small className={styles.label}>EXAMPLE · META AD LIBRARY SHOWS</small>
       <strong className={styles.big}>1,240 live ads</strong>
       <div className={styles.bar}>
         <motion.span variants={{ hidden: { width: "0%" }, shown: { width: "97%", transition: { duration: 1.2, ease: EASE, delay: 0.2 } } }} />
       </div>
       <div className={styles.barMeta}>
-        <span>Zooptrack holds 1,203 · 97%</span>
+        <span>Zooptrack holds 1,203 · 97% (example)</span>
         <span className={styles.ok}>Source-checked</span>
       </div>
       <div className={styles.nights}>

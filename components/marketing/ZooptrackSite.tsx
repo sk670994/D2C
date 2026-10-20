@@ -70,7 +70,7 @@ function SceneSVG({ scene }: { scene: Scene }) {
             <rect x="160" y="90" width="420" height="270" rx="24" />
             <path d="M205 150H510M205 195H450M205 245H500" />
             <circle cx="205" cy="302" r="12" />
-            <text x="235" y="307">{["FREE","STARTER","GROWTH","PRO"][i]}</text>
+            <text x="235" y="307">{["FREE","STARTER","GROWTH","AGENCY"][i]}</text>
           </g>
         ))}
       </svg>
@@ -230,7 +230,7 @@ export function ZooptrackHome() {
           <Metric label="RIVALS WATCHED" value="5" />
           <Metric label="NEW ADS THIS WEEK" value="61" />
           <Metric label="LONGEST-RUNNING AD" value="64 days" />
-          <Metric label="COVERAGE VS META" value="97%" accent />
+          <Metric label="EXAMPLE COVERAGE CHECK" value="97%" accent />
         </div>
       </section>
 
@@ -293,7 +293,7 @@ export function ZooptrackPricing() {
       scene="ledger"
       eyebrow="PRICING"
       title={<>Simple plans.<br /><em>Cancel any time.</em></>}
-      copy="Start free with 3 brand searches, no card. Plans differ by how many rivals you watch and whether you get big-move alerts."
+      copy="Start free with 3 brand searches, no card. Plans differ by how many rivals you watch (5, 15 or 50); big-move alerts come with Growth and Agency."
     >
       <p role="note" style={{ maxWidth: 760, margin: "0 auto 18px", textAlign: "center", fontWeight: 700 }}>
         Founding price: our first {FOUNDING_OFFER.spots} customers keep this price for {FOUNDING_OFFER.lockMonths} months.

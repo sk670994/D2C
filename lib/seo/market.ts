@@ -4,18 +4,28 @@ import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase
 import { getSearchFacets, type FacetBucket, type FacetResult } from "@/lib/ad-intelligence/global/facets";
 import { brandSlug } from "@/lib/ad-intelligence/brand-slug";
 import { fastMediaUrl, isStoredMediaUrl } from "@/lib/ad-intelligence/global/media-store";
+import { PAGE_OVERRIDES, resolveBrandPages } from "@/lib/ad-intelligence/discovery/resolve-brand-pages";
+import { newestDate } from "@/lib/seo/data-date";
+
+export { PAGE_OVERRIDES };
 
 /**
  * Live market numbers for the public SEO pages (brand, industry, research).
  * Everything here is read from the ads we collect from Meta's public Ad
- * Library: nothing is estimated. Every call fails soft (empty result) so a
- * public page never breaks because the database is slow.
+ * Library: nothing is estimated. A real database error THROWS (these pages
+ * are ISR: a throw keeps the last good version cached instead of caching an
+ * empty page); an empty result means the database confirmed zero rows.
  */
 
 const COUNTRY = "IN";
 const DAY_MS = 86_400_000;
 
-export type Advertiser = { pageId: string; name: string };
+export type Advertiser = {
+  pageId: string;
+  name: string;
+  /** Every pinned page of the brand, primary first. */
+  pageIds?: string[];
+};
 
 export type BrandStat = {
   /** The name we searched for (our list), which can differ from the Page name. */
@@ -30,6 +40,8 @@ export type BrandStat = {
   carousel: number;
   languages: FacetBucket[];
   launched30d: number;
+  /** When the summary behind these numbers was computed (null: counted live). */
+  computedAt: string | null;
 };
 
 export type LongAd = {
@@ -44,53 +56,15 @@ export type LongAd = {
 
 const norm = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, "");
 
-/** Brand name -> its Meta page, via the same autocomplete the app uses. */
-/** Checked by hand against the Ad Library (11 Oct): look-alike pages won. */
-const PAGE_OVERRIDES: Record<string, Advertiser> = {
-  thewholetruth: { pageId: "108531977179455", name: "The Whole Truth Foods" },
-};
-
+/**
+ * Brand name -> its Meta page(s): seed pins, then hand overrides, then the
+ * autocomplete pick (lib/ad-intelligence/discovery/resolve-brand-pages.ts).
+ * Null = no match; throws when the look-up itself fails.
+ */
 export async function resolveAdvertiser(name: string): Promise<Advertiser | null> {
   if (name.trim().length < 2) return null;
-  const override = PAGE_OVERRIDES[norm(name)];
-  if (override) return override;
-  try {
-    const { data } = await createGlobalServiceClient().rpc("adspy_autocomplete_advertisers", {
-      p_query: name,
-      p_platform: "meta",
-      p_country: COUNTRY,
-      p_limit: 8,
-    });
-    type Row = { page_id?: string | number | null; label?: string | null; verification?: string | null; likes?: number | null; ig_followers?: number | null };
-    const rows = ((data ?? []) as Row[])
-      .filter((r) => r.page_id && r.label)
-      .map((r) => ({
-        pageId: String(r.page_id),
-        name: String(r.label),
-        verified: String(r.verification ?? "").toUpperCase() === "VERIFIED",
-        reach: Number(r.likes ?? 0) + Number(r.ig_followers ?? 0),
-      }));
-    const want = norm(name);
-    // Brands often have look-alike pages ("The Whole Truth", 0 ads, next to
-    // the real "The Whole Truth Foods"). A verified page wins over an
-    // unverified one; a longer name is only accepted with a generic suffix
-    // ("Foods", "India", "Inc"), so "Plum" never becomes "Plumbing World".
-    const SUFFIX = /^(s|foods?|india|in|inc|official|store|shop|co|company|brand|global|life|beauty|wellness|health|nutrition|ayurveda)?$/;
-    const rank = (r: (typeof rows)[number]) => {
-      const n = norm(r.name);
-      const exact = n === want;
-      if (!n.startsWith(want)) return -1;
-      if (!exact && !SUFFIX.test(n.slice(want.length))) return -0.5; // old prefix fallback, last resort
-      return (r.verified ? 2 : 0) + (exact ? 1 : 0);
-    };
-    const best = rows
-      .map((r) => ({ r, score: rank(r) }))
-      .filter((x) => x.score > -1)
-      .sort((a, b) => b.score - a.score || b.r.reach - a.r.reach)[0]?.r;
-    return best ? { pageId: best.pageId, name: best.name } : null;
-  } catch {
-    return null;
-  }
+  const pages = await resolveBrandPages(name, { country: COUNTRY });
+  return pages ? { pageId: pages.primaryPageId, name: pages.name, pageIds: pages.pageIds } : null;
 }
 
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -109,7 +83,7 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 
 const count = (buckets: FacetBucket[] | undefined, value: string) => buckets?.find((b) => b.value === value)?.count ?? 0;
 
-function statFrom(adv: Advertiser & { query: string }, facets: FacetResult | null): BrandStat | null {
+function statFrom(adv: Advertiser & { query: string }, facets: FacetResult | null, computedAt: string | null): BrandStat | null {
   if (!facets || !facets.total) return null;
   return {
     query: adv.query,
@@ -123,6 +97,7 @@ function statFrom(adv: Advertiser & { query: string }, facets: FacetResult | nul
     carousel: count(facets.format, "carousel"),
     languages: facets.language ?? [],
     launched30d: facets.momentum?.launched30d ?? 0,
+    computedAt,
   };
 }
 
@@ -142,69 +117,72 @@ export async function getBrandStats(names: string[]): Promise<BrandStat[]> {
   if (!advertisers.length) return [];
 
   // Precomputed per-advertiser summaries: one query for the whole list.
-  const summaries = new Map<string, FacetResult>();
-  try {
-    const { data } = await createGlobalServiceClient()
-      .from("adspy_advertiser_summaries")
-      .select("advertiser_id,facets")
-      .eq("platform", "meta")
-      .eq("country", COUNTRY)
-      .in("advertiser_id", advertisers.map((a) => a.pageId));
-    for (const row of (data ?? []) as Array<{ advertiser_id: string; facets: FacetResult }>) summaries.set(String(row.advertiser_id), row.facets);
-  } catch {
-    /* fall through to per-brand facets */
+  const summaries = new Map<string, { facets: FacetResult; computedAt: string | null }>();
+  const { data, error } = await createGlobalServiceClient()
+    .from("adspy_advertiser_summaries")
+    .select("advertiser_id,facets,computed_at")
+    .eq("platform", "meta")
+    .eq("country", COUNTRY)
+    .in("advertiser_id", advertisers.map((a) => a.pageId));
+  if (error) throw new Error(`Advertiser summaries failed: ${error.message}`);
+  for (const row of (data ?? []) as Array<{ advertiser_id: string; facets: FacetResult; computed_at: string | null }>) {
+    summaries.set(String(row.advertiser_id), { facets: row.facets, computedAt: row.computed_at ?? null });
   }
 
+  // No summary yet: count live (getSearchFacets throws on a database error).
   const stats = await mapLimit(advertisers, 6, async (adv) => {
-    const facets =
-      summaries.get(adv.pageId) ??
-      (await getSearchFacets({ query: adv.name, country: COUNTRY, platform: "meta", mode: "advertiser", pageId: adv.pageId }).catch(() => null));
-    return statFrom(adv, facets);
+    const summary = summaries.get(adv.pageId);
+    if (summary) return statFrom(adv, summary.facets, summary.computedAt);
+    const facets = await getSearchFacets({ query: adv.name, country: COUNTRY, platform: "meta", mode: "advertiser", pageId: adv.pageId });
+    return statFrom(adv, facets, null);
   });
   return stats.filter((s): s is BrandStat => Boolean(s)).sort((a, b) => b.active - a.active || b.total - a.total);
 }
 
+/** Data date of a set of stats: the newest summary computed_at among them (null if all were counted live). */
+export function statsDataDate(stats: Array<Pick<BrandStat, "computedAt">>): string | null {
+  return newestDate(stats.map((s) => s.computedAt));
+}
+
 /** Ads that are still live and started longest ago: the likely winners. */
-export async function getLongestRunning(advertisers: Array<Pick<BrandStat, "pageId" | "name">>, limit = 6): Promise<LongAd[]> {
+export async function getLongestRunning(advertisers: Array<Pick<BrandStat, "pageId" | "name"> & { pageIds?: string[] }>, limit = 6): Promise<LongAd[]> {
   if (!advertisers.length) return [];
-  const names = new Map(advertisers.map((a) => [a.pageId, a.name]));
-  try {
-    const { data } = await createGlobalServiceClient()
-      .from("ad_intelligence_creatives")
-      .select("id,advertiser_id,headline,primary_text,thumbnail_url,image_url,creative_type,first_seen_at")
-      .eq("platform", "meta")
-      .eq("is_currently_active", true)
-      .in("advertiser_id", [...names.keys()])
-      .not("first_seen_at", "is", null)
-      .order("first_seen_at", { ascending: true })
-      .limit(limit * 6);
-    const now = Date.now();
-    const perBrand = new Map<string, number>();
-    const out: LongAd[] = [];
-    for (const row of (data ?? []) as Array<Record<string, string | null>>) {
-      const media = row.thumbnail_url || row.image_url;
-      const brand = names.get(String(row.advertiser_id));
-      if (!media || !brand || !isStoredMediaUrl(media)) continue;
-      // At most 2 per brand, so one advertiser cannot fill the whole list.
-      const seen = perBrand.get(brand) ?? 0;
-      if (seen >= 2 && advertisers.length > 1) continue;
-      perBrand.set(brand, seen + 1);
-      const raw = (row.primary_text || row.headline || "").replace(/\s+/g, " ").trim();
-      out.push({
-        id: String(row.id),
-        advertiser: brand,
-        advertiserSlug: brandSlug(brand),
-        text: /^started running on\b/i.test(raw) ? "" : raw.slice(0, 140),
-        media: fastMediaUrl(media),
-        format: (row.creative_type ?? "ad").toLowerCase(),
-        days: Math.max(1, Math.floor((now - new Date(String(row.first_seen_at)).getTime()) / DAY_MS)),
-      });
-      if (out.length >= limit) break;
-    }
-    return out;
-  } catch {
-    return [];
+  // Every pinned page of a brand counts as that brand.
+  const names = new Map(advertisers.flatMap((a) => (a.pageIds?.length ? a.pageIds : [a.pageId]).map((id) => [id, a.name] as const)));
+  const { data, error } = await createGlobalServiceClient()
+    .from("ad_intelligence_creatives")
+    .select("id,advertiser_id,headline,primary_text,thumbnail_url,image_url,creative_type,first_seen_at")
+    .eq("platform", "meta")
+    .eq("is_currently_active", true)
+    .in("advertiser_id", [...names.keys()])
+    .not("first_seen_at", "is", null)
+    .order("first_seen_at", { ascending: true })
+    .limit(limit * 6);
+  if (error) throw new Error(`Longest-running ads failed: ${error.message}`);
+  const now = Date.now();
+  const perBrand = new Map<string, number>();
+  const out: LongAd[] = [];
+  for (const row of (data ?? []) as Array<Record<string, string | null>>) {
+    const media = row.thumbnail_url || row.image_url;
+    const brand = names.get(String(row.advertiser_id));
+    if (!media || !brand || !isStoredMediaUrl(media)) continue;
+    // At most 2 per brand, so one advertiser cannot fill the whole list.
+    const seen = perBrand.get(brand) ?? 0;
+    if (seen >= 2 && advertisers.length > 1) continue;
+    perBrand.set(brand, seen + 1);
+    const raw = (row.primary_text || row.headline || "").replace(/\s+/g, " ").trim();
+    out.push({
+      id: String(row.id),
+      advertiser: brand,
+      advertiserSlug: brandSlug(brand),
+      text: /^started running on\b/i.test(raw) ? "" : raw.slice(0, 140),
+      media: fastMediaUrl(media),
+      format: (row.creative_type ?? "ad").toLowerCase(),
+      days: Math.max(1, Math.floor((now - new Date(String(row.first_seen_at)).getTime()) / DAY_MS)),
+    });
+    if (out.length >= limit) break;
   }
+  return out;
 }
 
 export type MarketTotals = {
@@ -313,29 +291,26 @@ function topShares(values: Array<string | null | undefined>, n = 4): MixRow[] {
  * when too few ads are decoded to say anything honest.
  */
 export async function getCreativeMix(pageId: string, minimum = 12): Promise<CreativeMix | null> {
-  try {
-    const { data } = await createGlobalServiceClient()
-      .from("ad_creative_decodes")
-      .select("elements")
-      .eq("advertiser_id", pageId)
-      .eq("status", "done")
-      .order("decoded_at", { ascending: false })
-      .limit(300);
-    const rows = ((data ?? []) as Array<{ elements: Record<string, unknown> | null }>).map((r) => r.elements ?? {});
-    if (rows.length < minimum) return null;
-    const str = (v: unknown) => (typeof v === "string" ? v : null);
-    const offers = rows.filter((r) => typeof r.offerPresent === "boolean");
-    return {
-      decoded: rows.length,
-      offerShare: pct(offers.filter((r) => r.offerPresent === true).length, offers.length),
-      hooks: topShares(rows.map((r) => str(r.hookType))),
-      angles: topShares(rows.map((r) => str(r.angle))),
-      visuals: topShares(rows.map((r) => str(r.visualStyle))),
-      languages: topShares(rows.map((r) => str(r.language)), 3),
-    };
-  } catch {
-    return null;
-  }
+  const { data, error } = await createGlobalServiceClient()
+    .from("ad_creative_decodes")
+    .select("elements")
+    .eq("advertiser_id", pageId)
+    .eq("status", "done")
+    .order("decoded_at", { ascending: false })
+    .limit(300);
+  if (error) throw new Error(`Creative mix failed: ${error.message}`);
+  const rows = ((data ?? []) as Array<{ elements: Record<string, unknown> | null }>).map((r) => r.elements ?? {});
+  if (rows.length < minimum) return null;
+  const str = (v: unknown) => (typeof v === "string" ? v : null);
+  const offers = rows.filter((r) => typeof r.offerPresent === "boolean");
+  return {
+    decoded: rows.length,
+    offerShare: pct(offers.filter((r) => r.offerPresent === true).length, offers.length),
+    hooks: topShares(rows.map((r) => str(r.hookType))),
+    angles: topShares(rows.map((r) => str(r.angle))),
+    visuals: topShares(rows.map((r) => str(r.visualStyle))),
+    languages: topShares(rows.map((r) => str(r.language)), 3),
+  };
 }
 
 export type SeasonData = {
@@ -347,6 +322,8 @@ export type SeasonData = {
   videoShare: number;
   offers: Array<{ label: string; share: number }>;
   ads: LongAd[];
+  /** Newest last_seen_at among the matched ads (the data date). */
+  dataDate: string | null;
 };
 
 const OFFER_PATTERNS: Array<[string, RegExp]> = [
@@ -370,91 +347,89 @@ function weekKey(d: Date): string {
  * longest-running live ads. Fails soft to an empty result.
  */
 export async function getSeasonData(keywords: string[], limit = 2500): Promise<SeasonData> {
-  const empty: SeasonData = { matched: 0, active: 0, brandCount: 0, brands: [], weeks: [], videoShare: 0, offers: [], ads: [] };
+  const empty: SeasonData = { matched: 0, active: 0, brandCount: 0, brands: [], weeks: [], videoShare: 0, offers: [], ads: [], dataDate: null };
   const safe = keywords.map((k) => k.replace(/["\\,()%*]/g, "").trim()).filter(Boolean);
   if (!safe.length) return empty;
   const filter = safe.flatMap((k) => [`primary_text.ilike."%${k}%"`, `headline.ilike."%${k}%"`]).join(",");
   const since = new Date(Date.now() - 400 * DAY_MS).toISOString();
-  try {
-    const { data } = await createGlobalServiceClient()
-      .from("ad_intelligence_creatives")
-      .select("id,advertiser_id,advertiser_name,headline,primary_text,thumbnail_url,image_url,creative_type,is_currently_active,first_seen_at")
-      .eq("platform", "meta")
-      .gte("first_seen_at", since)
-      .or(filter)
-      .order("first_seen_at", { ascending: false })
-      .limit(limit);
-    const rows = (data ?? []) as Array<Record<string, string | boolean | null>>;
-    if (!rows.length) return empty;
+  const { data, error } = await createGlobalServiceClient()
+    .from("ad_intelligence_creatives")
+    .select("id,advertiser_id,advertiser_name,headline,primary_text,thumbnail_url,image_url,creative_type,is_currently_active,first_seen_at,last_seen_at")
+    .eq("platform", "meta")
+    .gte("first_seen_at", since)
+    .or(filter)
+    .order("first_seen_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`Season ads failed: ${error.message}`);
+  const rows = (data ?? []) as Array<Record<string, string | boolean | null>>;
+  if (!rows.length) return empty;
 
-    const now = Date.now();
-    const byBrand = new Map<string, { name: string; count: number; active: number }>();
-    const weekCounts = new Map<string, number>();
-    const offerHits = new Map<string, number>();
-    let active = 0;
-    let video = 0;
-    for (const r of rows) {
-      const name = String(r.advertiser_name ?? "").trim();
-      if (!name) continue;
-      const b = byBrand.get(name) ?? { name, count: 0, active: 0 };
-      b.count += 1;
-      if (r.is_currently_active) { b.active += 1; active += 1; }
-      byBrand.set(name, b);
-      if (String(r.creative_type ?? "").toLowerCase() === "video") video += 1;
-      if (r.first_seen_at) {
-        const k = weekKey(new Date(String(r.first_seen_at)));
-        weekCounts.set(k, (weekCounts.get(k) ?? 0) + 1);
-      }
-      const text = `${r.headline ?? ""} ${r.primary_text ?? ""}`;
-      for (const [label, re] of OFFER_PATTERNS) if (re.test(text)) offerHits.set(label, (offerHits.get(label) ?? 0) + 1);
+  const now = Date.now();
+  const byBrand = new Map<string, { name: string; count: number; active: number }>();
+  const weekCounts = new Map<string, number>();
+  const offerHits = new Map<string, number>();
+  let active = 0;
+  let video = 0;
+  for (const r of rows) {
+    const name = String(r.advertiser_name ?? "").trim();
+    if (!name) continue;
+    const b = byBrand.get(name) ?? { name, count: 0, active: 0 };
+    b.count += 1;
+    if (r.is_currently_active) { b.active += 1; active += 1; }
+    byBrand.set(name, b);
+    if (String(r.creative_type ?? "").toLowerCase() === "video") video += 1;
+    if (r.first_seen_at) {
+      const k = weekKey(new Date(String(r.first_seen_at)));
+      weekCounts.set(k, (weekCounts.get(k) ?? 0) + 1);
     }
-
-    // 52 weekly buckets ending this week, zero-filled.
-    const weeks: SeasonData["weeks"] = [];
-    const thisWeek = new Date(weekKey(new Date()));
-    for (let i = 51; i >= 0; i--) {
-      const d = new Date(thisWeek.getTime() - i * 7 * DAY_MS);
-      const k = d.toISOString().slice(0, 10);
-      weeks.push({ weekStart: k, n: weekCounts.get(k) ?? 0 });
-    }
-
-    const longest = rows
-      .filter((r) => r.is_currently_active && r.first_seen_at && isStoredMediaUrl(String(r.thumbnail_url || r.image_url || "")))
-      .sort((a, b) => String(a.first_seen_at).localeCompare(String(b.first_seen_at)));
-    const perBrand = new Map<string, number>();
-    const ads: LongAd[] = [];
-    for (const r of longest) {
-      const brand = String(r.advertiser_name);
-      if ((perBrand.get(brand) ?? 0) >= 1) continue;
-      perBrand.set(brand, 1);
-      const raw = String(r.primary_text || r.headline || "").replace(/\s+/g, " ").trim();
-      ads.push({
-        id: String(r.id),
-        advertiser: brand,
-        advertiserSlug: brandSlug(brand),
-        text: /^started running on\b/i.test(raw) ? "" : raw.slice(0, 140),
-        media: fastMediaUrl(String(r.thumbnail_url || r.image_url)),
-        format: String(r.creative_type ?? "ad").toLowerCase(),
-        days: Math.max(1, Math.floor((now - new Date(String(r.first_seen_at)).getTime()) / DAY_MS)),
-      });
-      if (ads.length >= 6) break;
-    }
-
-    const brands = [...byBrand.values()]
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 12)
-      .map((b) => ({ ...b, slug: brandSlug(b.name) }));
-    return {
-      matched: rows.length,
-      active,
-      brandCount: byBrand.size,
-      brands,
-      weeks,
-      videoShare: pct(video, rows.length),
-      offers: OFFER_PATTERNS.map(([label]) => ({ label, share: pct(offerHits.get(label) ?? 0, rows.length) })).sort((a, b) => b.share - a.share),
-      ads,
-    };
-  } catch {
-    return empty;
+    const text = `${r.headline ?? ""} ${r.primary_text ?? ""}`;
+    for (const [label, re] of OFFER_PATTERNS) if (re.test(text)) offerHits.set(label, (offerHits.get(label) ?? 0) + 1);
   }
+
+  // 52 weekly buckets ending this week, zero-filled.
+  const weeks: SeasonData["weeks"] = [];
+  const thisWeek = new Date(weekKey(new Date()));
+  for (let i = 51; i >= 0; i--) {
+    const d = new Date(thisWeek.getTime() - i * 7 * DAY_MS);
+    const k = d.toISOString().slice(0, 10);
+    weeks.push({ weekStart: k, n: weekCounts.get(k) ?? 0 });
+  }
+
+  const longest = rows
+    .filter((r) => r.is_currently_active && r.first_seen_at && isStoredMediaUrl(String(r.thumbnail_url || r.image_url || "")))
+    .sort((a, b) => String(a.first_seen_at).localeCompare(String(b.first_seen_at)));
+  const perBrand = new Map<string, number>();
+  const ads: LongAd[] = [];
+  for (const r of longest) {
+    const brand = String(r.advertiser_name);
+    if ((perBrand.get(brand) ?? 0) >= 1) continue;
+    perBrand.set(brand, 1);
+    const raw = String(r.primary_text || r.headline || "").replace(/\s+/g, " ").trim();
+    ads.push({
+      id: String(r.id),
+      advertiser: brand,
+      advertiserSlug: brandSlug(brand),
+      text: /^started running on\b/i.test(raw) ? "" : raw.slice(0, 140),
+      media: fastMediaUrl(String(r.thumbnail_url || r.image_url)),
+      format: String(r.creative_type ?? "ad").toLowerCase(),
+      days: Math.max(1, Math.floor((now - new Date(String(r.first_seen_at)).getTime()) / DAY_MS)),
+    });
+    if (ads.length >= 6) break;
+  }
+
+  const brands = [...byBrand.values()]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 12)
+    .map((b) => ({ ...b, slug: brandSlug(b.name) }));
+  return {
+    matched: rows.length,
+    active,
+    brandCount: byBrand.size,
+    brands,
+    weeks,
+    videoShare: pct(video, rows.length),
+    offers: OFFER_PATTERNS.map(([label]) => ({ label, share: pct(offerHits.get(label) ?? 0, rows.length) })).sort((a, b) => b.share - a.share),
+    ads,
+    dataDate: newestDate(rows.map((r) => (typeof r.last_seen_at === "string" ? r.last_seen_at : null))),
+  };
 }

@@ -148,7 +148,7 @@ export function entitlementFor(row: SubscriptionRow | null, now: number = Date.n
       alerts: running,
       trialDaysLeft: Math.max(0, left),
       renewsAt: null,
-      label: running ? `Free trial · ${left} ${left === 1 ? "day" : "days"} left` : "Trial ended · choose a plan to keep collecting",
+      label: running ? "Free trial" : "Trial ended · choose a plan to keep collecting",
       admin: false,
     };
   }

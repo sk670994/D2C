@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 
 import { cached } from "@/lib/today/cache";
 
+import { isLiveAd } from "@/lib/ad-intelligence/live";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { startAdSpyCollection } from "@/lib/ad-intelligence/jobs/start-collection";
 import {
@@ -81,7 +82,8 @@ export type RawAd = {
   thumbnail_url: string | null;
 };
 
-const isActive = (row: RawAd) => row.is_currently_active !== false;
+/** Live = active on Meta and seen in the last LIVE_WINDOW_HOURS (lib/ad-intelligence/live.ts). */
+const isActive = (row: RawAd) => isLiveAd(row);
 const days = (row: RawAd) => runningDays(row.first_seen_at, row.last_seen_at);
 const hookOf = (row: RawAd) => firstSentence(row.primary_text ?? row.headline);
 

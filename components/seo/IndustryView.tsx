@@ -3,12 +3,13 @@ import type { CSSProperties } from "react";
 
 import { JsonLd } from "@/components/seo/JsonLd";
 import { adNameOf, findIndustry, INDUSTRIES } from "@/lib/seo/industries";
-import { fmt, getBrandStats, getLongestRunning, totals } from "@/lib/seo/market";
+import { fmt, getBrandStats, getLongestRunning, statsDataDate, totals } from "@/lib/seo/market";
+import { dataStamp } from "@/lib/seo/data-date";
 import { breadcrumbSchema, faqSchema, SITE_URL } from "@/lib/seo/schema";
 import type { SeoEntry } from "@/lib/seo/site";
 
 import { Bars, BrandTable, LongAds, Race } from "./MarketBits";
-import { Crumbs, Faqs, FooterCta, RelatedLinks, Shell, updatedLabel } from "./SeoChrome";
+import { Crumbs, DataDate, Faqs, FooterCta, RelatedLinks, Shell } from "./SeoChrome";
 import t from "./Themes.module.css";
 
 /** An industry page in the category's own colour; the ranking chart leads. */
@@ -19,6 +20,7 @@ export async function IndustryView({ entry }: { entry: SeoEntry }) {
   const stats = await getBrandStats(industry.brands);
   const sum = totals(stats);
   const longest = await getLongestRunning(stats.slice(0, 12), 6);
+  const dataDate = statsDataDate(stats);
   const leader = stats[0];
   const ad = adNameOf(industry);
   const adLower = ad.charAt(0) === ad.charAt(0).toUpperCase() && ad.length <= 3 ? ad : ad.toLowerCase();
@@ -34,7 +36,7 @@ export async function IndustryView({ entry }: { entry: SeoEntry }) {
     <Shell theme="industry" path={path} style={{ "--cat": industry.hue } as CSSProperties}>
       <JsonLd
         graph={[
-          { "@type": "WebPage", url: `${SITE_URL}${path}`, name: entry.title, description: entry.description, inLanguage: "en-IN", dateModified: new Date().toISOString() },
+          { "@type": "WebPage", url: `${SITE_URL}${path}`, name: entry.title, description: entry.description, inLanguage: "en-IN", dateModified: dataStamp(dataDate).iso },
           breadcrumbSchema([{ name: "Home", path: "/" }, { name: "Industries", path: "/industries" }, { name: industry.name, path }]),
           faqSchema(faqs),
         ]}
@@ -55,7 +57,7 @@ export async function IndustryView({ entry }: { entry: SeoEntry }) {
           ) : (
             <p className={t.sentence}>Live numbers are refreshing. Check back shortly.</p>
           )}
-          <p className={t.note} style={{ marginTop: 14 }}>Updated {updatedLabel()}</p>
+          <DataDate date={dataDate} style={{ marginTop: 14 }} />
         </div>
         {stats.length ? <Race stats={stats} title={`Who is advertising hardest in ${industry.name.toLowerCase()}`} /> : null}
       </section>

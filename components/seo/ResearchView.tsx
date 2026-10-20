@@ -3,11 +3,12 @@ import type { CSSProperties } from "react";
 
 import { JsonLd } from "@/components/seo/JsonLd";
 import { INDUSTRIES, type Industry } from "@/lib/seo/industries";
-import { fmt, getBrandStats, getLongestRunning, share, totals, type BrandStat, type MarketTotals } from "@/lib/seo/market";
+import { fmt, getBrandStats, getLongestRunning, share, statsDataDate, totals, type BrandStat, type MarketTotals } from "@/lib/seo/market";
+import { dataStamp } from "@/lib/seo/data-date";
 import { breadcrumbSchema, faqSchema, ORG_ID, SITE_URL } from "@/lib/seo/schema";
 import type { SeoEntry } from "@/lib/seo/site";
 
-import { Crumbs, Faqs, FooterCta, RelatedLinks, Shell, updatedLabel } from "./SeoChrome";
+import { Crumbs, Faqs, FooterCta, RelatedLinks, Shell } from "./SeoChrome";
 import { BrandTable, LongAds } from "./MarketBits";
 import t from "./Themes.module.css";
 
@@ -29,10 +30,11 @@ async function loadMarket() {
 const pickMax = <T,>(rows: T[], f: (r: T) => number) => rows.reduce<T | null>((best, r) => (best == null || f(r) > f(best) ? r : best), null);
 const pickMin = <T,>(rows: T[], f: (r: T) => number) => rows.reduce<T | null>((best, r) => (best == null || f(r) < f(best) ? r : best), null);
 
-function Method({ brands }: { brands: number }) {
+function Method({ brands, dataDate }: { brands: number; dataDate: string | null }) {
+  const stamp = dataStamp(dataDate);
   return (
     <div className={t.method}>
-      <strong>How we measure.</strong> Zooptrack collects every public ad from {brands} Indian D2C brands in Meta&apos;s Ad Library (India) every night, across {INDUSTRIES.length} categories. Counts include live and stopped ads we have collected. Live means running on the day this page was built; new in 30 days counts ads first seen in the last 30 days. Format comes from Meta&apos;s ad data; language is detected from ad text. Meta does not publish spend, reach or results for commercial ads in India, so nothing here estimates spend. Rebuilt daily; this version: {updatedLabel()}.
+      <strong>How we measure.</strong> Zooptrack collects every public ad from {brands} Indian D2C brands in Meta&apos;s Ad Library (India) every night, across {INDUSTRIES.length} categories. Counts include live and stopped ads we have collected. Live means running on the day this page was built; new in 30 days counts ads first seen in the last 30 days. Format comes from Meta&apos;s ad data; language is detected from ad text. Meta does not publish spend, reach or results for commercial ads in India, so nothing here estimates spend. Rebuilt daily. {stamp.text}{stamp.pending ? " (refresh pending)" : ""}.
     </div>
   );
 }
@@ -82,8 +84,8 @@ export async function ResearchView({ entry }: { entry: SeoEntry }) {
     <Shell theme="research" path={path}>
       <JsonLd
         graph={[
-          { "@type": "Article", headline: entry.h1, description: entry.description, url: `${SITE_URL}${path}`, inLanguage: "en-IN", dateModified: new Date().toISOString(), author: { "@id": ORG_ID }, publisher: { "@id": ORG_ID } },
-          { "@type": "Dataset", name: entry.title, description: entry.description, url: `${SITE_URL}${path}`, creator: { "@id": ORG_ID }, spatialCoverage: "India", isAccessibleForFree: true, measurementTechnique: "Daily collection of public ads from Meta's Ad Library (India)", dateModified: new Date().toISOString() },
+          { "@type": "Article", headline: entry.h1, description: entry.description, url: `${SITE_URL}${path}`, inLanguage: "en-IN", dateModified: dataStamp(statsDataDate(all)).iso, author: { "@id": ORG_ID }, publisher: { "@id": ORG_ID } },
+          { "@type": "Dataset", name: entry.title, description: entry.description, url: `${SITE_URL}${path}`, creator: { "@id": ORG_ID }, spatialCoverage: "India", isAccessibleForFree: true, measurementTechnique: "Daily collection of public ads from Meta's Ad Library (India)", dateModified: dataStamp(statsDataDate(all)).iso },
           breadcrumbSchema([{ name: "Home", path: "/" }, { name: "Research", path: "/research" }, { name: entry.h1, path }]),
           faqSchema(faqs),
         ]}
@@ -171,7 +173,7 @@ export async function ResearchView({ entry }: { entry: SeoEntry }) {
           </>
         )}
 
-        <Method brands={overall.brands} />
+        <Method dataDate={statsDataDate(all)} brands={overall.brands} />
       </article>
 
       <Faqs faqs={faqs} />

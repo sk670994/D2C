@@ -11,7 +11,7 @@ const sections = [
   {
     title: "Free trial",
     body:
-      "New accounts get a 7-day free trial. No payment details are needed for the trial and nothing is charged during it."
+      "New accounts get a free trial of 3 brand searches. No card is required for the trial and nothing is charged during it."
   },
   {
     title: "Cancelling a subscription",
@@ -45,7 +45,7 @@ export default function CancellationRefundPolicyPage() {
         <p className="muted-text">
           This policy explains how you can cancel a Zooptrack subscription and when payments are refunded.
         </p>
-        <p className="policy-meta">Effective date: October 7, 2026</p>
+        <p className="policy-meta">Last updated: 20 October 2026</p>
       </header>
       <section className="policy-grid">
         {sections.map((section) => (

@@ -8,12 +8,14 @@ import { brandSlug } from "@/lib/ad-intelligence/brand-slug";
 import { INDUSTRIES } from "@/lib/seo/industries";
 import seed from "@/scripts/adspy-seed-brands.json";
 
-export const metadata: Metadata = {
-  title: "Indian D2C brand ads on Facebook & Instagram",
-  description:
-    "Browse the Meta ads of 145 Indian D2C brands across 15 categories: their longest-running ads, hooks, offers, languages and weekly launches. Updated every night.",
-  alternates: { canonical: "/brand" },
-};
+export function generateMetadata(): Metadata {
+  const brands = (seed as { brands: string[] }).brands.length;
+  return {
+    title: "Indian D2C brand ads on Facebook & Instagram",
+    description: `Browse the Meta ads of ${brands} Indian D2C brands across ${INDUSTRIES.length} categories: their longest-running ads, hooks, offers, languages and weekly launches. Updated every night.`,
+    alternates: { canonical: "/brand" },
+  };
+}
 
 export default function BrandIndexPage() {
   const all = (seed as { brands: string[] }).brands;
