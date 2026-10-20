@@ -1197,7 +1197,7 @@ setReport(merged);
         .from("ad_metrics")
         // Only the columns the table and the per-platform totals use. The
         // limit stays at 100: the performance cards total every row.
-        .select("platform,ad_id,ad_name,campaign_id,campaign_name,date,impressions,clicks,spend,ctr,roas")
+        .select("platform,ad_id,ad_name,campaign_id,campaign_name,date,impressions,clicks,spend,ctr,cpc,roas")
         .eq("user_id", userId)
         .gte("date", thirtyDaysAgo.toISOString().split('T')[0])
         .order("date", { ascending: false })

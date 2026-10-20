@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 import { queryFor, resolveBrandPages, resolveBrandPagesFrom, seedBrandFor, type BrandPageCandidate } from "./resolve-brand-pages";
 
