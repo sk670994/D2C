@@ -78,12 +78,15 @@ function mapJob(
     // Queued but no worker claimed it (e.g. worker runs only at night).
     // The client treats it like stale: "tonight's collection, by 9 AM IST".
     deferred,
+    // An exhausted job without completedAt is deliberately partial (for
+    // example Meta's total was unknown); it is still eligible for a reread.
     hasMore:
-      job.status !== "complete" &&
-      job.status !== "exhausted" &&
-      job.status !== "failed" &&
-      job.status !== "cancelled" &&
-      !stale,
+      job.status === "exhausted"
+        ? job.completedAt == null
+        : job.status !== "complete" &&
+          job.status !== "failed" &&
+          job.status !== "cancelled" &&
+          !stale,
   };
 }
 

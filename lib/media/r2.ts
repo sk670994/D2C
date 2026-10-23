@@ -172,6 +172,8 @@ export function isR2Url(value: string | null | undefined, config: R2Config | nul
   return Boolean(config && value && value.startsWith(`${config.publicBaseUrl}/`));
 }
 
+const RETRYABLE_UPLOAD_STATUSES = new Set([429, 500, 502, 503, 504]);
+
 /** Upload (idempotent: same bytes -> same key). Returns the public URL. */
 export async function putR2Object(
   bytes: Uint8Array,
@@ -183,17 +185,34 @@ export async function putR2Object(
   if (!config) return null;
   const key = mediaKeyFor(bytes, ext);
   const signed = signR2Request({ config, method: "PUT", key, body: bytes, contentType, extraHeaders: { "cache-control": "public, max-age=31536000, immutable" } });
-  const response = await (options.fetchImpl ?? fetch)(signed.url, {
-    method: "PUT",
-    headers: signed.headers,
-    body: Buffer.from(bytes),
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!response.ok) {
-    console.warn(`[${config.kind ?? "r2"}] upload failed`, response.status, (await response.text().catch(() => "")).slice(0, 200));
-    return null;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetchImpl(signed.url, {
+        method: "PUT",
+        headers: signed.headers,
+        body: Buffer.from(bytes),
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (response.ok) return r2PublicUrl(config, key);
+
+      const body = (await response.text().catch(() => "")).slice(0, 200);
+      if (RETRYABLE_UPLOAD_STATUSES.has(response.status) && attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * (2 ** attempt)));
+        continue;
+      }
+      console.warn(`[${config.kind ?? "r2"}] upload failed`, response.status, body);
+      return null;
+    } catch (error) {
+      if (attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * (2 ** attempt)));
+        continue;
+      }
+      console.warn(`[${config.kind ?? "r2"}] upload request failed`, error instanceof Error ? error.message : String(error));
+      return null;
+    }
   }
-  return r2PublicUrl(config, key);
+  return null;
 }
 
 /**

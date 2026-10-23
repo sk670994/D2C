@@ -92,6 +92,37 @@ function matchBracket(text: string, start: number): number {
   return -1;
 }
 
+/** Extract Meta's authoritative count without relying on JSON property order. */
+export function extractMetaSearchResultsCount(text: string): number | null {
+  const marker = '"search_results_connection":';
+  let from = 0;
+  let total: number | null = null;
+  while (from < text.length) {
+    const at = text.indexOf(marker, from);
+    if (at < 0) break;
+    let start = at + marker.length;
+    while (start < text.length && /\s/.test(text[start])) start += 1;
+    if (text[start] !== "{") { from = start + 1; continue; }
+    const end = matchBracket(text, start);
+    if (end < 0) break;
+    try {
+      const connection = JSON.parse(text.slice(start, end)) as { count?: unknown };
+      const count = Number(connection.count);
+      if (Number.isSafeInteger(count) && count >= 0) total = Math.max(total ?? 0, count);
+    } catch {
+      // Do not guess a total from a malformed or nested count field.
+    }
+    from = end;
+  }
+  if (total === null) {
+    for (const match of text.matchAll(/"search_results_connection":\{"count":(\d+)/g)) {
+      const count = Number(match[1]);
+      if (Number.isSafeInteger(count) && count >= 0) total = Math.max(total ?? 0, count);
+    }
+  }
+  return total;
+}
+
 const COLLATED_KEY = '"collated_results":';
 
 export function extractLibraryPage(text: string): MetaLibraryPage {
@@ -100,10 +131,7 @@ export function extractLibraryPage(text: string): MetaLibraryPage {
   let endCursor: string | null = null;
   let hasNextPage: boolean | null = null;
 
-  for (const m of text.matchAll(/"search_results_connection":\{"count":(\d+)/g)) {
-    const value = Number(m[1]);
-    if (Number.isFinite(value)) totalCount = Math.max(totalCount ?? 0, value);
-  }
+  totalCount = extractMetaSearchResultsCount(text);
   let from = 0;
   let lastEnd = 0;
   while (from < text.length) {

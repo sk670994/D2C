@@ -259,14 +259,14 @@ export async function runUser(
 
     scenario = await runScenario(page);
 
-    return {
-      userId: user.id,
-      email: user.email,
-      success: true,
-      durationMs: Date.now() - startedAt,
-      scenario,
-      errors,
-    };
+  return {
+  userId: user.id,
+  email: user.email,
+  success: errors.length === 0,
+  durationMs: Date.now() - startedAt,
+  scenario,
+  errors,
+};
   } catch (error) {
     return {
       userId: user.id,

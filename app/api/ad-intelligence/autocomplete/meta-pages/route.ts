@@ -1,0 +1,182 @@
+import { NextRequest, NextResponse } from "next/server";
+
+import { createClient as createServerAuthClient } from "@/lib/supabase/server";
+import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { persistMetaPageSearchResults } from "@/lib/ad-intelligence/discovery/advertiser-discovery";
+import {
+  searchMetaPagesDetailed,
+  type MetaPageSearchOutcome,
+} from "@/lib/ad-intelligence/global/meta-page-search";
+import { isScrapeCreatorsPageSearchEnabled, scrapeCreatorsMetaPageSearch } from "@/lib/ad-intelligence/sources/scrapecreators-page-search";
+
+export const runtime = "nodejs";
+export const preferredRegion = "syd1";
+export const dynamic = "force-dynamic";
+export const maxDuration = 10;
+
+const LIVE_LOOKUP_LIMIT = 20;
+const LIVE_LOOKUP_WINDOW_MS = 60_000;
+const MIN_QUERY_LENGTH = 2;
+
+type LiveStatus = "found" | "no_match" | "timeout" | "error";
+type PublicAdvertiser = {
+  source: "meta_public";
+  id: string;
+  pageId: string;
+  label: string;
+  type: "advertiser";
+  domain: string | null;
+  profileUrl: string | null;
+  profileImageUrl: string | null;
+  category: string | null;
+  verification: string | null;
+  likes: number | null;
+  igFollowers: number | null;
+};
+type PublicOutcome = {
+  advertisers: PublicAdvertiser[];
+  liveLookup: {
+    status: LiveStatus;
+    message: string;
+    resultCount: number;
+    durationMs: number;
+  };
+};
+
+function normalizeQuery(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/g, " ").trim();
+}
+
+function mapPublicPage(page: MetaPageSearchOutcome["pages"][number]): PublicAdvertiser | null {
+  const pageId = String(page.pageId ?? "").trim();
+  const label = String(page.name ?? "").replace(/\s+/g, " ").trim();
+  // Do not let a random numeric object ID masquerade as a Meta Page ID.
+  if (!/^\d+$/.test(pageId) || !label) return null;
+
+  const alias = String(page.pageAlias ?? "").trim();
+  const profileUrl = alias
+    ? (/^https?:\/\//i.test(alias) ? alias : `https://www.facebook.com/${encodeURIComponent(alias)}`)
+    : null;
+  const username = String(page.igUsername ?? "").trim().replace(/^@/, "");
+  const domain = username ? `https://www.instagram.com/${encodeURIComponent(username)}` : null;
+
+  return {
+    source: "meta_public",
+    id: `meta:${pageId}`,
+    pageId,
+    label,
+    type: "advertiser",
+    domain,
+    profileUrl,
+    profileImageUrl: page.imageUrl ?? null,
+    category: page.category ?? null,
+    verification: page.verification ?? null,
+    likes: typeof page.likes === "number" && Number.isFinite(page.likes) ? page.likes : null,
+    igFollowers: typeof page.igFollowers === "number" && Number.isFinite(page.igFollowers) ? page.igFollowers : null,
+  };
+}
+
+function safeMessage(status: LiveStatus, resultCount: number): string {
+  if (status === "found") return `Found ${resultCount} public Meta page match${resultCount === 1 ? "" : "es"}.`;
+  if (status === "timeout") return "Meta page lookup timed out. Indexed suggestions remain available; try again shortly.";
+  if (status === "error") return "Live Meta page lookup is temporarily unavailable. Indexed suggestions remain available.";
+  return "Meta returned no matching public pages. No live advertiser match was confirmed.";
+}
+
+export async function GET(request: NextRequest) {
+  const startedAt = performance.now();
+  try {
+    const auth = await createServerAuthClient();
+    const userId = await getVerifiedUserId(auth);
+    if (!userId) {
+      return NextResponse.json({ success: false, advertisers: [], error: "Unauthorized" }, { status: 401 });
+    }
+
+    const params = request.nextUrl.searchParams;
+    const query = normalizeQuery(params.get("q") ?? "");
+    const country = (params.get("country") ?? "IN").trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(country)) {
+      return NextResponse.json({ success: false, advertisers: [], error: "Invalid country code." }, { status: 400 });
+    }
+    if (query.length < MIN_QUERY_LENGTH) {
+      const body: PublicOutcome = {
+        advertisers: [],
+        liveLookup: { status: "no_match", message: "Enter at least two characters to search Meta pages.", resultCount: 0, durationMs: 0 },
+      };
+      return NextResponse.json({ success: true, ...body }, { headers: { "Cache-Control": "private, max-age=3" } });
+    }
+
+    // Local per-user guard keeps this expensive browser path separate from the fast index endpoint.
+    const rate = checkRateLimit(`adspy-meta-autocomplete:${userId}`, LIVE_LOOKUP_LIMIT, LIVE_LOOKUP_WINDOW_MS);
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { success: false, advertisers: [], error: "Live Meta search is temporarily rate-limited.", liveLookup: { status: "error", message: "Please wait before trying Meta page search again.", resultCount: 0, durationMs: 0 } },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds), "Cache-Control": "no-store" } },
+      );
+    }
+
+    let outcome: MetaPageSearchOutcome;
+    try {
+      // A dedicated Page Search API returns real numeric advertiser Page IDs.
+      // Use the Playwright UI fallback unless the provider is explicitly enabled. A provider error is not converted into a false no-match.
+      // Use the same ScrapeCreators account already configured for production ad collection.
+      // The endpoint discovers Page IDs; ad collection remains its own operation.
+      outcome = isScrapeCreatorsPageSearchEnabled()
+        ? await scrapeCreatorsMetaPageSearch(query, country, { signal: request.signal })
+        : await searchMetaPagesDetailed(query, country, request.signal);
+    } catch (error) {
+      console.error("[ADSPY_META_PAGES] lookup failed", {
+        country,
+        queryLength: query.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      outcome = { pages: [], status: "error", message: "Live Meta page lookup failed.", durationMs: Math.round(performance.now() - startedAt) };
+    }
+
+    const advertisers = outcome.pages.map(mapPublicPage).filter((page): page is PublicAdvertiser => page !== null);
+    if (outcome.pages.length > 0) {
+      void persistMetaPageSearchResults(outcome.pages, country).catch((error) => {
+        console.warn(
+          "[ADSPY_META_PAGES] could not cache live Meta pages",
+          error instanceof Error ? error.message : error,
+        );
+      });
+    }
+    const status: LiveStatus = advertisers.length > 0
+      ? "found"
+      : outcome.status === "found" ? "no_match" : outcome.status;
+    const durationMs = Math.max(0, Math.round(performance.now() - startedAt));
+    const body: PublicOutcome = {
+      advertisers,
+      liveLookup: {
+        status,
+        message: safeMessage(status, advertisers.length),
+        resultCount: advertisers.length,
+        durationMs,
+      },
+    };
+    const liveSource = isScrapeCreatorsPageSearchEnabled() ? "scrapecreators_page_search" : "meta_public_browser";
+    console.info("[ADSPY_META_PAGES] lookup", { country, queryLength: query.length, source: liveSource, status, resultCount: advertisers.length, durationMs });
+    return NextResponse.json({ success: true, ...body }, {
+      headers: {
+        "Cache-Control": "private, max-age=3, stale-while-revalidate=8",
+        "X-AdSpy-Live-Source": isScrapeCreatorsPageSearchEnabled() ? "scrapecreators_page_search" : "meta_public",
+        "Server-Timing": `meta;dur=${durationMs}`,
+      },
+    });
+  } catch (error) {
+    // Keep implementation details in server logs only; the indexed endpoint remains independent.
+    console.error("[ADSPY_META_PAGES] route failed", error instanceof Error ? error.message : String(error));
+    return NextResponse.json({
+      success: true,
+      advertisers: [],
+      liveLookup: {
+        status: "error" as const,
+        message: "Live Meta page lookup is temporarily unavailable. Indexed suggestions remain available.",
+        resultCount: 0,
+        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      },
+    }, { headers: { "Cache-Control": "private, no-store" } });
+  }
+}

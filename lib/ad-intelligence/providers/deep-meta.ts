@@ -862,7 +862,32 @@ async function scrapeWithBrowser(
 
       if (collected.size >= target) break;
       if (quick && jsonMode) break; // quick = Meta's first page (~30 ads), no scrolling
-      if (jsonMode && state.hasNextPage === false) break; // Meta says there is nothing more
+      if (jsonMode && state.hasNextPage === false) {
+        const expectedTotal = input.advertiserPageId ? metaIdentity.totalCount : null;
+        const belowKnownTotal = expectedTotal != null && expectedTotal > 0 && collected.size < Math.ceil(expectedTotal * 0.98);
+        if (!belowKnownTotal || retriedAtCount === collected.size || outOfTime()) break;
+
+        // Meta can return a terminal page flag before the known total is reached.
+        // Re-trigger once for this count; if no new ads arrive, stop safely.
+        retriedAtCount = collected.size;
+        state.hasNextPage = null;
+        const retryResponse = page.waitForResponse(
+          (r) => r.url().includes("/api/graphql") &&
+            r.request().method() === "POST" &&
+            /AdLibrarySearchPaginationQuery/.test(r.request().postData() ?? ""),
+          { timeout: Math.max(500, Math.min(5_000, remaining() - 1_000)) },
+        ).catch(() => null);
+        await page.mouse.wheel(0, -600).catch(() => undefined);
+        await page.waitForTimeout(300);
+        await page.mouse.wheel(0, 2400).catch(() => undefined);
+        await clickPaginationControls(page);
+        const retryPage = await retryResponse;
+        if (retryPage) await retryPage.text().catch(() => undefined);
+        await Promise.allSettled(Array.from(pendingScans));
+        if (collected.size === retriedAtCount) break;
+        stableRounds = 0;
+        continue;
+      }
       // Meta's own total reached (exact page search): stop only once Meta's
       // paging has also said "no more" (or will not say anything), so the
       // scan can count as complete. One extra page query at most.

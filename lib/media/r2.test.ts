@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { getS3Object, isR2Url, mediaKeyFor, signR2Request, sigv4 } from "./r2";
+import { getS3Object, isR2Url, mediaKeyFor, putR2Object, signR2Request, sigv4 } from "./r2";
 
 it("matches AWS's published SigV4 example (GET object with Range)", () => {
   const out = sigv4({
@@ -59,6 +59,29 @@ it("reads private S3 objects with a signed GET", async () => {
   expect(res && (await res.text())).toBe("img");
   const missing = await getS3Object("ads/ab/y.webp", { config: s3, fetchImpl: (async () => new Response("", { status: 404 })) as unknown as typeof fetch });
   expect(missing).toBeNull();
+});
+
+it("retries transient object-store 500 responses", async () => {
+  let calls = 0;
+  const fake = (async () => {
+    calls += 1;
+    if (calls === 1) return new Response("InternalError", { status: 500 });
+    return new Response("", { status: 200 });
+  }) as unknown as typeof fetch;
+  const url = await putR2Object(new Uint8Array([9, 8, 7]), "image/webp", "webp", { config: s3, fetchImpl: fake });
+  expect(calls).toBe(2);
+  expect(url).toContain("https://www.zooptrack.co.in/m/s3/ads/");
+});
+
+it("does not retry permanent object-store 403 responses", async () => {
+  let calls = 0;
+  const fake = (async () => {
+    calls += 1;
+    return new Response("Forbidden", { status: 403 });
+  }) as unknown as typeof fetch;
+  const url = await putR2Object(new Uint8Array([1]), "image/webp", "webp", { config: s3, fetchImpl: fake });
+  expect(calls).toBe(1);
+  expect(url).toBeNull();
 });
 
 it("signs S3-compatible hosts (Backblaze B2) with their own endpoint", () => {

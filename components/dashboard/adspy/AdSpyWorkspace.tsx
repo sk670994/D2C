@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 
 import type { Ad, AutocompleteAdvertiser, Job, MetaSourceCounts, SearchResponse, Summary } from "./adspy-types";
+import { mergeAdvertiserSuggestions } from "./merge-advertiser-suggestions";
 import { pageChoices, pickExactPage } from "@/lib/ad-intelligence/discovery/pick-page";
 import { TrialMeter } from "./TrialMeter";
 import { coveragePercent } from "@/lib/ad-intelligence/global/source-scope";
@@ -99,6 +100,7 @@ const COUNTRIES: Array<[string, string]> = [
 ];
 
 const suggestCache = new Map<string, { at: number; items: AutocompleteAdvertiser[] }>();
+const liveSuggestCache = new Map<string, { at: number; items: AutocompleteAdvertiser[]; status: "found" | "no_match" | "timeout" | "error"; message: string }>();
 const resultCache = new Map<string, { at: number; data: SearchResponse }>();
 
 /**
@@ -117,8 +119,8 @@ const DEGRADED_NOTICE =
   "This brand is new or our database is busy. We've queued it — its full ad library will be read in tonight's collection (by 9 AM IST).";
 const TONIGHT_NOTICE =
   "This brand is taking longer than usual. Its full ad library is read in tonight's collection and will be here by 9 AM IST.";
-/** Status polling: give up (and point to tonight's run) after this long. */
-const POLL_MAX_MS = 10 * 60_000;
+/** A deep worker can run for 40 minutes; stop polling only after a generous cap. */
+const POLL_MAX_MS = 45 * 60_000;
 const POLL_MAX_DELAY_MS = 15_000;
 /** While a live read is young, check every 3 s (ads stream in); then back off. */
 const POLL_FAST_MS = 3_000;
@@ -159,11 +161,17 @@ export function AdSpyWorkspace() {
   const [input, setInput] = useState("");
   const [country, setCountry] = useState("IN");
   const [mode, setMode] = useState<"advertiser" | "keyword">("advertiser");
-  const [suggestions, setSuggestions] = useState<AutocompleteAdvertiser[]>([]);
+  const [indexedSuggestions, setIndexedSuggestions] = useState<AutocompleteAdvertiser[]>([]);
+  const [metaSuggestions, setMetaSuggestions] = useState<AutocompleteAdvertiser[]>([]);
+  const suggestions = mergeAdvertiserSuggestions(indexedSuggestions, metaSuggestions, input);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [suggestedFor, setSuggestedFor] = useState("");
+  const [metaLookupLoading, setMetaLookupLoading] = useState(false);
+  const [metaLookupMessage, setMetaLookupMessage] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const canSearchMetaPages = mode === "advertiser" && input.trim().length >= 2;
+  const searchAllIndex = suggestions.length + (canSearchMetaPages ? 1 : 0);
   const [recent, setRecent] = useState<RecentItem[]>([]);
 
   /* ------------------------------- results ------------------------------ */
@@ -207,10 +215,13 @@ export function AdSpyWorkspace() {
   const [pageOptions, setPageOptions] = useState<AutocompleteAdvertiser[]>([]);
   const [autoLockedFrom, setAutoLockedFrom] = useState<string | null>(null);
   const nameOnly = useRef<Set<string>>(new Set());
+  // Avoid repeatedly reopening Meta's browser lookup for the same empty prefix.
+  const autoMetaLookupTried = useRef<Map<string, number>>(new Map());
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const comboRef = useRef<HTMLDivElement | null>(null);
   const suggestAbort = useRef<AbortController | null>(null);
+  const metaSuggestAbort = useRef<AbortController | null>(null);
   const searchAbort = useRef<AbortController | null>(null);
   const facetAbort = useRef<AbortController | null>(null);
   const warmedUp = useRef(false);
@@ -271,11 +282,16 @@ export function AdSpyWorkspace() {
   }, [country]);
 
   useEffect(() => {
+    suggestAbort.current?.abort();
+    metaSuggestAbort.current?.abort();
+    setMetaLookupLoading(false);
+    setMetaLookupMessage("");
+    setMetaSuggestions([]);
     const q = input.trim();
     // Only look up while the user is interacting with the box (not after a
     // suggestion was picked and the input was filled programmatically).
     if (mode !== "advertiser" || !q || !suggestOpen) {
-      setSuggestions([]);
+      setIndexedSuggestions([]);
       setSuggestedFor("");
       setSuggestLoading(false);
       return;
@@ -287,7 +303,7 @@ export function AdSpyWorkspace() {
     // Instant: exact cache hit, or filter the nearest cached prefix locally.
     const exact = suggestCache.get(keyFor(lower));
     if (exact && Date.now() - exact.at < SUGGEST_CACHE_TTL_MS) {
-      setSuggestions(exact.items);
+      setIndexedSuggestions(exact.items);
       setSuggestedFor(q);
       setSuggestLoading(false);
       return;
@@ -298,7 +314,7 @@ export function AdSpyWorkspace() {
       if (parent && Date.now() - parent.at < SUGGEST_CACHE_TTL_MS) {
         const filtered = parent.items.filter((s) => s.label.toLocaleLowerCase().includes(lower));
         if (filtered.length) {
-          setSuggestions(filtered);
+          setIndexedSuggestions(filtered);
           setSuggestedFor(q);
           shownFromCache = true;
         }
@@ -312,7 +328,7 @@ export function AdSpyWorkspace() {
         .slice(0, 6)
         .map((name) => ({ source: "indexed", id: `popular-${name}`, pageId: "", label: name, type: "advertiser", category: "Popular D2C brand" }) as AutocompleteAdvertiser);
       if (local.length) {
-        setSuggestions(local);
+        setIndexedSuggestions(local);
         setSuggestedFor(q);
       }
     }
@@ -347,12 +363,12 @@ export function AdSpyWorkspace() {
         if (controller.signal.aborted) return;
         const items = response.ok && data.success ? data.advertisers ?? [] : [];
         suggestCache.set(keyFor(lower), { at: Date.now(), items });
-        setSuggestions(items);
+        setIndexedSuggestions(items);
         setSuggestedFor(q);
         setActiveIndex(0);
       } catch (reason) {
         if (!(reason instanceof DOMException && reason.name === "AbortError")) {
-          setSuggestions([]);
+          setIndexedSuggestions([]);
         }
       } finally {
         if (!controller.signal.aborted) setSuggestLoading(false);
@@ -392,10 +408,106 @@ export function AdSpyWorkspace() {
   const pickSuggestion = useCallback(
     (s: AutocompleteAdvertiser) => {
       setInput(s.label);
-      go({ query: s.label, pageId: s.pageId || null, mode: "advertiser", country, avatar: s.profileImageUrl ?? null });
+      go({ query: s.label, pageId: /^\d+$/.test(String(s.pageId ?? "")) ? String(s.pageId) : null, mode: "advertiser", country, avatar: s.profileImageUrl ?? null });
     },
     [country, go],
   );
+
+  const searchMetaPagesLive = useCallback(async () => {
+    const q = input.trim();
+    if (mode !== "advertiser" || q.length < 2 || metaLookupLoading) return;
+    const cacheKey = `${country}|${q.toLocaleLowerCase()}`;
+    const cached = liveSuggestCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < (cached.status === "found" ? SUGGEST_CACHE_TTL_MS : 5_000)) {
+      setMetaSuggestions(cached.items);
+      setMetaLookupMessage(cached.message);
+      setActiveIndex(0);
+      return;
+    }
+    metaSuggestAbort.current?.abort();
+    const controller = new AbortController();
+    metaSuggestAbort.current = controller;
+    let timer: number | undefined;
+    let timedOut = false;
+    setMetaLookupLoading(true);
+    setMetaLookupMessage("");
+    setSuggestOpen(true);
+    try {
+      const url = new URL("/api/ad-intelligence/autocomplete/meta-pages", window.location.origin);
+      url.searchParams.set("q", q);
+      url.searchParams.set("country", country);
+      timer = window.setTimeout(() => { timedOut = true; controller.abort(); }, 9_000);
+      const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+      const data = (await response.json().catch(() => ({ success: false }))) as {
+        success?: boolean;
+        advertisers?: AutocompleteAdvertiser[];
+        liveLookup?: {
+          status?: "found" | "no_match" | "timeout" | "error";
+          message?: string;
+          resultCount?: number;
+          durationMs?: number;
+        };
+      };
+      if (controller.signal.aborted || inputRef.current?.value.trim() !== q) return;
+      if (response.status === 429) {
+        throw new Error("Live Meta page search is temporarily rate-limited. Please wait a minute.");
+      }
+      if (!response.ok || !data.success) throw new Error("Live Meta page search could not complete.");
+      const items = (data.advertisers ?? []).filter((item) => /^\d+$/.test(String(item.pageId ?? "")));
+      setMetaSuggestions(items);
+      setSuggestedFor(q);
+      setActiveIndex(0);
+
+      const liveCount = items.length;
+      const lookup = data.liveLookup;
+      const status = lookup?.status ?? (liveCount ? "found" : "no_match");
+      const message = status === "found"
+        ? `Found ${liveCount} public Meta page${liveCount === 1 ? "" : "s"}. Confirm the exact advertiser Page ID before collecting ads.`
+        : status === "timeout"
+          ? "Meta page lookup timed out. Indexed suggestions remain available; try again shortly."
+          : status === "error"
+            ? "Live Meta page lookup is temporarily unavailable. Indexed suggestions remain available."
+            : "Meta returned no matching public page. Indexed suggestions are shown separately; you can still search all ads by keyword.";
+      setMetaLookupMessage(message);
+      liveSuggestCache.set(cacheKey, { at: Date.now(), items, status, message });
+      while (liveSuggestCache.size > 250) {
+        const first = liveSuggestCache.keys().next().value;
+        if (first === undefined) break;
+        liveSuggestCache.delete(first);
+      }
+    } catch (reason) {
+      if (timedOut && inputRef.current?.value.trim() === q) {
+        setMetaLookupMessage("Meta page search timed out. You can still search by brand name.");
+      } else if (!controller.signal.aborted) {
+        setMetaLookupMessage(reason instanceof Error ? reason.message : "Live Meta page search could not complete.");
+      }
+    } finally {
+      if (timer !== undefined) window.clearTimeout(timer);
+      if (metaSuggestAbort.current === controller) setMetaLookupLoading(false);
+    }
+  }, [country, input, metaLookupLoading, mode]);
+
+  // Meta-style fallback for brands missing from the local advertiser index.
+  // Debounce until the user pauses, and only try each query once automatically.
+  useEffect(() => {
+    const q = input.trim();
+    if (!canSearchMetaPages || !suggestOpen || metaLookupLoading) return;
+    const lookupKey = `${country}|${q.toLocaleLowerCase()}`;
+    const cached = liveSuggestCache.get(lookupKey);
+    if (cached && Date.now() - cached.at < (cached.status === "found" ? SUGGEST_CACHE_TTL_MS : 5_000)) {
+      setMetaSuggestions(cached.items);
+      setMetaLookupMessage(cached.message);
+      return;
+    }
+    const attemptedAt = autoMetaLookupTried.current.get(lookupKey);
+    if (attemptedAt && Date.now() - attemptedAt < 5_000) return;
+    if (attemptedAt) autoMetaLookupTried.current.delete(lookupKey);
+    const timer = window.setTimeout(() => {
+      autoMetaLookupTried.current.set(lookupKey, Date.now());
+      void searchMetaPagesLive();
+    }, 1_200);
+    return () => window.clearTimeout(timer);
+  }, [canSearchMetaPages, country, input, metaLookupLoading, searchMetaPagesLive, suggestOpen]);
 
   const submitFreeText = useCallback(async () => {
     const q = input.trim();
@@ -437,13 +549,15 @@ export function AdSpyWorkspace() {
     event.preventDefault();
     if (suggestOpen && mode === "advertiser" && suggestions[activeIndex] && activeIndex < suggestions.length) {
       pickSuggestion(suggestions[activeIndex]);
+    } else if (suggestOpen && canSearchMetaPages && activeIndex === suggestions.length) {
+      void searchMetaPagesLive();
     } else {
       void submitFreeText();
     }
   };
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    const count = suggestions.length + 1; // + "search all" row
+    const count = searchAllIndex + 1; // optional live-Meta row + "search all" row
     if (event.key === "ArrowDown") {
       event.preventDefault();
       setSuggestOpen(true);
@@ -453,7 +567,10 @@ export function AdSpyWorkspace() {
       setActiveIndex((i) => Math.max(i - 1, 0));
     } else if (event.key === "Escape") {
       setSuggestOpen(false);
-    } else if (event.key === "Enter" && suggestOpen && activeIndex === suggestions.length) {
+    } else if (event.key === "Enter" && suggestOpen && canSearchMetaPages && activeIndex === suggestions.length) {
+      event.preventDefault();
+      void searchMetaPagesLive();
+    } else if (event.key === "Enter" && suggestOpen && activeIndex === searchAllIndex) {
       event.preventDefault();
       void submitFreeText();
     }
@@ -671,7 +788,7 @@ export function AdSpyWorkspace() {
     const giveUp = () => {
       alive = false;
       setJob((current) => (current && current.id === jobId ? { ...current, status: "stale" } : current));
-      setNotice(liveSource.current ? LIVE_RETRY_NOTICE : TONIGHT_NOTICE);
+      setNotice("We haven't confirmed that this read finished. The background job may still be running; check again before starting another collection.");
     };
     // ~3 s while the read is young (first 2 minutes), then the slower pace.
     const young = () => Date.now() - startedAt < POLL_FAST_WINDOW_MS;
@@ -726,7 +843,19 @@ export function AdSpyWorkspace() {
               setNotice(friendly(next.errorMessage, TONIGHT_NOTICE));
             } else if (next.status === "exhausted" || next.status === "complete") {
               const saved = Number(next.persistedAds ?? 0);
-              setNotice(saved > 0 ? `Complete. ${formatInt(saved)} ads ${liveSource.current ? "read live from Meta" : "collected"}.` : "Complete. Meta shows no live ads for this search right now.");
+              if (next.completedAt) {
+                setNotice(saved > 0
+                  ? `Full read completed. ${formatInt(saved)} ads were processed and stored.`
+                  : "Full read completed. Meta returned no ads for this page.");
+              } else if (next.stage === "complete") {
+                setNotice(saved > 0
+                  ? `Quick read finished: ${formatInt(saved)} ads were processed. Full-library coverage has not been verified.`
+                  : "Quick read finished, but full-library coverage has not been verified.");
+              } else {
+                setNotice(saved > 0
+                  ? `Partial read: ${formatInt(saved)} ads were processed, but Meta's full library coverage could not be verified. Press Refresh data to try again.`
+                  : "Partial read: Meta's full library coverage could not be verified. Press Refresh data to try again.");
+              }
             }
             return;
           }
@@ -949,7 +1078,7 @@ export function AdSpyWorkspace() {
                 aria-label="Clear search"
                 onClick={() => {
                   setInput("");
-                  setSuggestions([]);
+                  setIndexedSuggestions([]);
                   inputRef.current?.focus();
                 }}
               >
@@ -979,7 +1108,7 @@ export function AdSpyWorkspace() {
                       <span className="azs-option-main">
                         <strong>{highlight(s.label, suggestedFor || input)}</strong>
                         <span>
-                          {[s.category, s.igFollowers ? `${formatCompact(s.igFollowers)} followers` : null, s.domain]
+                          {[s.source === "meta_public" ? "Meta Ad Library" : "ZoopLens index", s.category, s.igFollowers ? `${formatCompact(s.igFollowers)} followers` : null, s.domain]
                             .filter(Boolean)
                             .join(" · ") || `Page ID ${s.pageId}`}
                         </span>
@@ -988,15 +1117,39 @@ export function AdSpyWorkspace() {
                     </button>
                   ))}
                 {mode === "advertiser" && !suggestLoading && suggestions.length === 0 && (
-                  <div className="azs-dropdown-empty">No indexed advertiser matches yet — search Meta directly below.</div>
+                  <div className="azs-dropdown-empty">
+                    {metaLookupLoading ? "Searching Meta Ad Library…" : (metaLookupMessage || "No matching advertiser is indexed yet. Meta may still return public page suggestions; keyword search remains available separately.")}
+                  </div>
+                )}
+                {canSearchMetaPages && (
+                  <button
+                    type="button"
+                    role="option"
+                    id={`azs-opt-${suggestions.length}`}
+                    aria-selected={activeIndex === suggestions.length}
+                    disabled={metaLookupLoading}
+                    className={`azs-option ${activeIndex === suggestions.length ? "is-active" : ""}`}
+                    onMouseEnter={() => setActiveIndex(suggestions.length)}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => void searchMetaPagesLive()}
+                  >
+                    <span className="azs-option-icon">
+                      {metaLookupLoading ? <Loader2 size={15} className="azs-spin" /> : <Globe2 size={15} />}
+                    </span>
+                    <span className="azs-option-main">
+                      <strong>{metaLookupLoading ? "Searching Meta Ad Library…" : "Find matching pages on Meta"}</strong>
+                      <span>{metaLookupMessage || "Look up public Meta advertiser pages, including pages not indexed in ZoopLens."}</span>
+                    </span>
+                    {!metaLookupLoading && <ArrowUpRight size={14} />}
+                  </button>
                 )}
                 <button
                   type="button"
                   role="option"
-                  id={`azs-opt-${suggestions.length}`}
-                  aria-selected={activeIndex === suggestions.length}
-                  className={`azs-option azs-option-all ${activeIndex === suggestions.length ? "is-active" : ""}`}
-                  onMouseEnter={() => setActiveIndex(suggestions.length)}
+                  id={`azs-opt-${searchAllIndex}`}
+                  aria-selected={activeIndex === searchAllIndex}
+                  className={`azs-option azs-option-all ${activeIndex === searchAllIndex ? "is-active" : ""}`}
+                  onMouseEnter={() => setActiveIndex(searchAllIndex)}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => void submitFreeText()}
                 >

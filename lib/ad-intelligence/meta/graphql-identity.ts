@@ -1,3 +1,5 @@
+import { extractMetaSearchResultsCount } from "./library-json";
+
 /**
  * Extracts authoritative advertiser identity from the JSON that Meta's
  * Ad Library embeds in its HTML and returns from /api/graphql while the
@@ -46,13 +48,7 @@ function firstMatch(window: string, re: RegExp): RegExpMatchArray | null {
 
 export function scanMetaIdentity(text: string): MetaIdentityScan {
   const ads = new Map<string, MetaAdIdentity>();
-  let totalCount: number | null = null;
-
-  const countRe = /"search_results_connection":\{"count":(\d+)/g;
-  for (const m of text.matchAll(countRe)) {
-    const value = Number(m[1]);
-    if (Number.isFinite(value)) totalCount = Math.max(totalCount ?? 0, value);
-  }
+  const totalCount = extractMetaSearchResultsCount(text);
 
   const positions: Array<{ id: string; index: number }> = [];
   for (const m of text.matchAll(AD_ID_RE)) {

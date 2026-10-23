@@ -11,6 +11,7 @@ import {
 import chromiumPack from "@sparticuz/chromium-min";
 
 import { browserProxy, ESBUILD_NAME_SHIM } from "@/lib/ad-intelligence/browser-shim";
+import { withKeyedSerialLock } from "./keyed-serial-lock";
 
 export type MetaPageSearchResult = {
   pageId: string;
@@ -32,23 +33,36 @@ type SuggestionSession = {
   page: Page;
   country: string;
   requestCount: number;
-  busy: Promise<void> | null;
   lastUsedAt: number;
+};
+
+export type MetaPageSearchStatus = "found" | "no_match" | "timeout" | "error";
+
+export type MetaPageSearchOutcome = {
+  pages: MetaPageSearchResult[];
+  status: MetaPageSearchStatus;
+  message: string;
+  durationMs: number;
 };
 
 type CacheEntry = {
   expiresAt: number;
   value: Candidate[];
+  status?: MetaPageSearchStatus;
+  message?: string;
+  durationMs?: number;
 };
 
 const META_LIBRARY_URL = "https://www.facebook.com/ads/library/";
 const DEFAULT_COUNTRY = "IN";
 
-const NAV_TIMEOUT_MS = 8_000;
-const SUGGESTION_WAIT_MS = 1500;
-const OVERALL_TIMEOUT_MS = 10_000;
+const NAV_TIMEOUT_MS = 4_500;
+const SUGGESTION_WAIT_MS = 650;
+const OVERALL_TIMEOUT_MS = 7_000;
 
 const CACHE_TTL_MS = 30_000;
+// Empty/error outcomes must not hide a later successful lookup for 30 seconds.
+const EMPTY_CACHE_TTL_MS = 5_000;
 const CACHE_MAX = 180;
 
 const SESSION_MAX_REQUESTS = 80;
@@ -104,15 +118,8 @@ function relevanceScore(
     return 7000 - n.indexOf(q);
   }
 
-  const tokens = q.split(" ").filter(Boolean);
-
-  if (
-    tokens.length &&
-    tokens.every((token) => n.includes(token))
-  ) {
-    return 5000 - Math.max(0, n.length - q.length);
-  }
-
+  // Require the full normalized phrase. Matching each token independently
+  // can surface unrelated pages whose names happen to contain both words.
   return -1;
 }
 
@@ -398,12 +405,16 @@ function extractCandidatesFromJSON(
         unknown
       >;
 
+    // Do not treat an arbitrary numeric `id` (e.g. an ad/creative ID) as a
+    // Page ID. Generic objects only qualify when they explicitly identify a Page.
+    const typename = String(object.__typename ?? object.typename ?? object.entity_type ?? object.type ?? "");
+    const isExplicitPageObject = /(?:^|[_ .-])page(?:$|[_ .-])/i.test(typename);
     const pageId =
       object.page_id ??
       object.pageId ??
       object.view_all_page_id ??
       object.pageID ??
-      object.id;
+      (isExplicitPageObject ? object.id : null);
 
     const name =
       object.page_name ??
@@ -652,53 +663,38 @@ async function extractCandidatesFromDOM(
           continue;
         }
 
-        const text = (
-          el.textContent ?? ""
-        )
-          .replace(/\s+/g, " ")
-          .trim();
-
-        if (!text) {
-          continue;
+        let root = el;
+        let nameElement = el.querySelector("strong,b,h3,h4");
+        // A direct Page link often contains only "See all ads". Walk up to the
+        // nearest card heading that actually matches the query, retaining the
+        // numeric page ID from the original view_all_page_id URL.
+        if (el.matches('a[href*="view_all_page_id"]')) {
+          let ancestor = el.parentElement;
+          for (let depth = 0; ancestor && depth < 6; depth += 1, ancestor = ancestor.parentElement) {
+            const heading = ancestor.querySelector("strong,b,h3,h4");
+            const headingText = heading?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+            if (headingText && score(headingText) >= 0) {
+              root = ancestor;
+              nameElement = heading;
+              break;
+            }
+          }
         }
 
-        const firstLine =
-          (
-            el.textContent ?? ""
-          )
-            .split(/\r?\n/)
-            .map((v) =>
-              v.trim(),
-            )
-            .find(Boolean) ??
-          text;
+        const text = (root.textContent ?? "").replace(/\s+/g, " ").trim();
+        if (!text) continue;
+        const firstLine = (root.textContent ?? "").split(/\r?\n/).map((v) => v.trim()).find(Boolean) ?? text;
+        const name = nameElement?.textContent?.replace(/\s+/g, " ").trim() ?? firstLine;
+        if (!name || score(name) < 0) continue;
 
-        const name =
-          el
-            .querySelector(
-              "strong,b,h3,h4",
-            )
-            ?.textContent?.trim() ??
-          firstLine;
-
-        if (
-          !name ||
-          score(name) < 0
-        ) {
-          continue;
-        }
-
-        const pageId =
-          readId(el);
+        const pageId = readId(el) ?? readId(root);
 
         if (!pageId) {
           continue;
         }
 
         const img =
-          el.querySelector(
-            "img",
-          ) as HTMLImageElement | null;
+          root.querySelector("img") as HTMLImageElement | null;
 
         output.push({
           pageId,
@@ -978,26 +974,27 @@ async function createSuggestionSession(
       page,
       country,
       requestCount: 0,
-      busy: null,
       lastUsedAt: Date.now(),
     };
 
-  await page.goto(
-    `${META_LIBRARY_URL}?active_status=all&ad_type=all&country=${encodeURIComponent(
-      country,
-    )}&media_type=all&is_targeted_country=false`,
-    {
-      waitUntil:
-        "domcontentloaded",
-
-      timeout:
-        NAV_TIMEOUT_MS,
-    },
-  );
-
-  await acceptCookies(page);
-
-  return session;
+  try {
+    await page.goto(
+      `${META_LIBRARY_URL}?active_status=all&ad_type=all&country=${encodeURIComponent(
+        country,
+      )}&media_type=all&is_targeted_country=false`,
+      {
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS,
+      },
+    );
+    await acceptCookies(page);
+    return session;
+  } catch (error) {
+    // A cold Meta navigation can fail before the session reaches the map.
+    // Always close the context so that timed-out lookups do not leak Chromium.
+    await context.close().catch(() => undefined);
+    throw error;
+  }
 }
 
 async function getSuggestionSession(
@@ -1128,10 +1125,7 @@ const onResponse = async (response: {
 }) => {
   const url = response.url();
 
-  if (
-    !url.includes("facebook.com") ||
-    !/(graphql|ajax|api|ads\/library)/i.test(url)
-  ) {
+  if (!url.includes("facebook.com") || !/graphql/i.test(url)) {
     return;
   }
 
@@ -1144,6 +1138,10 @@ const onResponse = async (response: {
   try {
     const contentType =
       response.headers()["content-type"] ?? "";
+
+    // The response listener handles GraphQL JSON only. HTML is parsed by the
+    // live DOM extractor; avoid reading megabytes of HTML as if it were JSON.
+    if (/text\/html/i.test(contentType)) return;
 
     console.log(
       "[MetaPageSearch] CONTENT-TYPE:",
@@ -1171,22 +1169,17 @@ const onResponse = async (response: {
       return;
     }
 
+    const normalizedText = text.trim().replace(
+      /^(?:for\s*\(\s*;\s*;\s*\)|while\s*\(\s*1\s*\))\s*;\s*/,
+      "",
+    ).replace(/^\)\]\}',?\s*/, "");
     try {
-      const payload = JSON.parse(text);
-
-      console.log(
-        "[MetaPageSearch] TEXT->JSON CAPTURED:",
-        url,
-      );
-
+      const payload = JSON.parse(normalizedText);
+      console.log("[MetaPageSearch] TEXT->JSON CAPTURED:", url);
       payloads.push(payload);
     } catch {
-      console.log(
-        "[MetaPageSearch] NON-JSON RESPONSE:",
-        url,
-        "length=",
-        text.length,
-      );
+      // Do not log body contents: Meta responses can contain session material.
+      console.log("[MetaPageSearch] NON-JSON RESPONSE:", url, "length=", text.length);
     }
   } catch (error) {
     console.log(
@@ -1380,26 +1373,38 @@ const onResponse = async (response: {
         .map(({ candidate }) => candidate);
     }
 
-    await input.click({
-      timeout: 1_500,
-    });
-
-    await input.fill("");
-
-    await input.pressSequentially(
-      query,
-      {
-        delay: 5,
-      },
-    );
+    // `click()` waits for a navigation it thinks the focus action initiated.
+    // On the Meta Ad Library this can eat the whole request budget after the
+    // GraphQL response has already arrived. `fill()` focuses and edits without
+    // waiting for a navigation, while still firing the input/change events.
+    let typedSuccessfully = false;
+    try {
+      await input.fill(query, { timeout: 1_500 });
+      typedSuccessfully = true;
+    } catch (error) {
+      console.warn("[MetaPageSearch] search input disappeared; using direct query navigation", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      try {
+        const url = new URL(META_LIBRARY_URL);
+        url.searchParams.set("active_status", "all");
+        url.searchParams.set("ad_type", "all");
+        url.searchParams.set("country", session.country);
+        url.searchParams.set("is_targeted_country", "false");
+        url.searchParams.set("media_type", "all");
+        url.searchParams.set("search_type", "keyword_unordered");
+        url.searchParams.set("q", query);
+        await page.goto(url.toString(), { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      } catch (navigationError) {
+        console.warn("[MetaPageSearch] direct query navigation fallback failed", navigationError);
+      }
+    }
 
     /**
      * Give Meta time to fire its
      * typeahead / GraphQL requests.
      */
-    await page.waitForTimeout(
-      SUGGESTION_WAIT_MS,
-    );
+    await page.waitForTimeout(typedSuccessfully ? SUGGESTION_WAIT_MS : 600);
 
     const network =
       await extractNetworkCandidates(
@@ -1519,132 +1524,149 @@ const onResponse = async (response: {
 async function lookupMetaPages(
   query: string,
   country: string,
+  signal?: AbortSignal,
 ): Promise<Candidate[]> {
-  const browserInstance =
-    await getBrowser();
+  // One country-level lock covers browser startup, session creation, navigation,
+  // and input interaction. Locking only session.busy allowed simultaneous cold
+  // requests to create and overwrite multiple sessions for the same country.
+  return withKeyedSerialLock(country, async () => {
+    if (signal?.aborted) return [];
 
-  const session =
-    await getSuggestionSession(
-      browserInstance,
-      country,
-    );
+    let session: SuggestionSession | null = null;
+    let closeOnAbort: Promise<void> = Promise.resolve();
+    const abortSession = () => {
+      if (!session) return;
+      if (sessions.get(country) === session) sessions.delete(country);
+      closeOnAbort = session.context.close().then(() => undefined).catch(() => undefined);
+    };
+    signal?.addEventListener("abort", abortSession, { once: true });
 
-  let resolveBusy!: () => void;
+    try {
+      const browserInstance = await getBrowser();
+      if (signal?.aborted) return [];
 
-  const previous =
-    session.busy;
+      const activeSession = await getSuggestionSession(browserInstance, country);
+      session = activeSession;
+      if (signal?.aborted) {
+        if (sessions.get(country) === activeSession) sessions.delete(country);
+        await activeSession.context.close().catch(() => undefined);
+        return [];
+      }
 
-  const gate =
-    new Promise<void>(
-      (resolve) => {
-        resolveBusy = resolve;
-      },
-    );
-
-  session.busy =
-    previous
-      ? previous.then(
-          () => gate,
-        )
-      : gate;
-
-  await previous;
-
-  try {
-    return await runInteractiveLookup(
-      session,
-      query,
-    );
-  } catch (error) {
-    console.warn(
-      "[MetaPageSearch] interactive public lookup failed",
-      error,
-    );
-
-    await session.context
-      .close()
-      .catch(
-        () => undefined,
-      );
-
-    sessions.delete(
-      country,
-    );
-
-    return [];
-  } finally {
-    resolveBusy();
-
-    if (
-      session.busy === gate
-    ) {
-      session.busy = null;
+      try {
+        return await runInteractiveLookup(activeSession, query);
+      } catch (error) {
+        // A timeout/client cancellation may close only this exact session. It
+        // must never dispose a newer session created for the same country.
+        if (signal?.aborted) return [];
+        if (sessions.get(country) === activeSession) sessions.delete(country);
+        await activeSession.context.close().catch(() => undefined);
+        console.warn("[MetaPageSearch] interactive public lookup failed", error);
+        throw error;
+      }
+    } finally {
+      signal?.removeEventListener("abort", abortSession);
+      if (signal?.aborted) await closeOnAbort;
     }
-  }
+  });
 }
 
+export async function searchMetaPagesDetailed(
+  query: string,
+  country = DEFAULT_COUNTRY,
+  externalSignal?: AbortSignal,
+): Promise<MetaPageSearchOutcome> {
+  const startedAt = Date.now();
+  const normalizedQuery = normalizeQuery(query);
+  const normalizedCountry = normalizeCountry(country);
+
+  if (normalizedQuery.length < 2) {
+    return {
+      pages: [],
+      status: "no_match",
+      message: "Enter at least two characters to search Meta pages.",
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
+  const key = cacheKey(normalizedQuery, normalizedCountry);
+  const cached = cache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return {
+      pages: cached.value,
+      status: cached.status ?? (cached.value.length ? "found" : "no_match"),
+      message: cached.message ?? (cached.value.length ? "Found public Meta page matches." : "Meta returned no matching public pages."),
+      durationMs: cached.durationMs ?? 0,
+    };
+  }
+  if (cached) cache.delete(key);
+
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener("abort", forwardAbort, { once: true });
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let result: { kind: "result"; pages: Candidate[] } | { kind: "error"; error: unknown } | { kind: "timeout" };
+  try {
+    const lookup = lookupMetaPages(normalizedQuery, normalizedCountry, controller.signal);
+    result = await Promise.race([
+      lookup.then(
+        (pages) => ({ kind: "result" as const, pages }),
+        (error: unknown) => ({ kind: "error" as const, error }),
+      ),
+      new Promise<{ kind: "timeout" }>((resolve) => {
+        timer = setTimeout(() => {
+          // Aborting closes only the active context held by this lookup. A queued
+          // stale request checks the signal before creating a browser session.
+          controller.abort();
+          resolve({ kind: "timeout" });
+        }, OVERALL_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", forwardAbort);
+  }
+
+  const durationMs = Date.now() - startedAt;
+  let pages: Candidate[] = [];
+  let status: MetaPageSearchStatus;
+  let message: string;
+  let ttlMs = EMPTY_CACHE_TTL_MS;
+
+  if (result.kind === "timeout") {
+    status = "timeout";
+    message = "Meta public page lookup timed out before a matching advertiser could be confirmed.";
+    console.warn("[MetaPageSearch] LOOKUP TIMEOUT", { country: normalizedCountry, queryLength: normalizedQuery.length, durationMs });
+  } else if (result.kind === "error") {
+    status = "error";
+    message = "Meta public page lookup failed. Check the server terminal for the underlying browser or network error.";
+    console.error("[MetaPageSearch] LOOKUP ERROR", { country: normalizedCountry, queryLength: normalizedQuery.length, durationMs, error: result.error instanceof Error ? result.error.message : String(result.error) });
+  } else {
+    pages = result.pages;
+    status = pages.length ? "found" : "no_match";
+    message = pages.length
+      ? `Found ${pages.length} public Meta page match${pages.length === 1 ? "" : "es"}.`
+      : "Meta returned no matching public pages. No live advertiser match was confirmed.";
+    if (pages.length) ttlMs = CACHE_TTL_MS;
+    console.info("[MetaPageSearch] LOOKUP RESULT", { country: normalizedCountry, status, resultCount: pages.length, durationMs });
+  }
+
+  // Don't cache results from a client disconnect; keep timeout/error cache short.
+  if (!externalSignal?.aborted) {
+    cache.set(key, { expiresAt: Date.now() + ttlMs, value: pages, status, message, durationMs });
+    trimCache();
+  }
+  return { pages, status, message, durationMs };
+}
+
+/** Backwards-compatible list-only API. */
 export async function searchMetaPages(
   query: string,
   country = DEFAULT_COUNTRY,
 ): Promise<MetaPageSearchResult[]> {
-  const normalizedQuery =
-    normalizeQuery(query);
-
-  const normalizedCountry =
-    normalizeCountry(country);
-
-  if (
-    normalizedQuery.length < 2
-  ) {
-    return [];
-  }
-
-  const key =
-    cacheKey(
-      normalizedQuery,
-      normalizedCountry,
-    );
-
-  const cached =
-    cache.get(key);
-
-  if (
-    cached &&
-    cached.expiresAt >
-      Date.now()
-  ) {
-    return cached.value;
-  }
-
-  const value =
-    await Promise.race([
-      lookupMetaPages(
-        normalizedQuery,
-        normalizedCountry,
-      ),
-
-      new Promise<
-        Candidate[]
-      >((resolve) =>
-        setTimeout(
-          () =>
-            resolve([]),
-          OVERALL_TIMEOUT_MS,
-        ),
-      ),
-    ]);
-
-  cache.set(key, {
-    expiresAt:
-      Date.now() +
-      CACHE_TTL_MS,
-
-    value,
-  });
-
-  trimCache();
-
-  return value;
+  return (await searchMetaPagesDetailed(query, country)).pages;
 }
 
 export function normalizeAdvertiserName(

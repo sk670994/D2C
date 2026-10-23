@@ -817,6 +817,14 @@ async function persistPages(
   );
 }
 
+/** Persist live Meta page candidates through the existing advertiser index RPC. */
+export async function persistMetaPageSearchResults(
+  pages: MetaPageSearchResult[],
+  country: string,
+): Promise<void> {
+  await persistPages(pages, normalizeCountry(country));
+}
+
 export async function discoverAdvertisers({
   query,
   platform:

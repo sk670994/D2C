@@ -57,6 +57,7 @@ function mapJob(job: any) {
     ),
     errorMessage:
       job.errorMessage ?? null,
+    completedAt: job.completedAt ?? null,
   };
 }
 

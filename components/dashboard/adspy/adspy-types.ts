@@ -250,6 +250,8 @@ export type Job = {
   errorMessage?:
     | string
     | null;
+
+  completedAt?: string | null;
 };
 
 export type Summary = {
