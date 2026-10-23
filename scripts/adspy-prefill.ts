@@ -175,6 +175,15 @@ async function runPayload(payload: CollectionEvent): Promise<CollectionResult | 
   }
   doneTonight.add(nameKey(payload.query));
   const pageId = result.pageId ?? payload.advertiserPageId ?? null;
+  console.info("[Zooptrack prefill] collection metrics", {
+    query: payload.query,
+    pageId,
+    discoveredAds: result.discoveredAds,
+    normalizedAds: result.normalizedAds,
+    persistedAds: result.persistedAds,
+    complete: result.complete ?? null,
+    stoppedBy: result.stoppedBy ?? null,
+  });
   if (pageId) doneTonight.add(`page:${pageId}`);
   // Tell people who searched this brand for the first time that it's complete.
   if (pageId) {

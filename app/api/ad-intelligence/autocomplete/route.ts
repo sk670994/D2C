@@ -5,6 +5,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { createGlobalServiceClient } from "@/lib/ad-intelligence/global/supabase";
 import { getVerifiedUserId } from "@/lib/ad-intelligence/auth-claims";
 import { pickExactPage } from "@/lib/ad-intelligence/discovery/pick-page";
+import { isRelevantAdvertiserMatch } from "@/lib/ad-intelligence/discovery/advertiser-relevance";
 
 
 export const runtime = "nodejs";
@@ -12,12 +13,13 @@ export const runtime = "nodejs";
 export const preferredRegion = "syd1";
 export const dynamic = "force-dynamic";
 // A cold start alone can take ~5s; 5s made the first lookup of a session 504.
-export const maxDuration = 15;
+export const maxDuration = 10;
 
 // The advertiser index changes slowly; keep hot prefixes warm per instance.
 const CACHE_TTL_MS = 60_000;
 const CACHE_MAX = 1_000;
 const MAX_RESULTS = 12;
+const INDEXED_LOOKUP_TIMEOUT_MS = 1_200;
 
 type Row = {
   id?: string | number | null;
@@ -55,6 +57,18 @@ const cache = new Map<
 >();
 
 const inflight = new Map<string, Promise<Suggestion[]>>();
+
+type LiveLookupStatus = "found" | "no_match" | "timeout" | "error";
+type LiveSuggestionResult = {
+  advertisers: Suggestion[];
+  liveLookup: {
+    status: LiveLookupStatus;
+    message: string;
+    resultCount: number;
+    durationMs: number;
+  };
+};
+const liveInflight = new Map<string, Promise<LiveSuggestionResult>>();
 
 function normalize(value: string): string {
   return value
@@ -97,18 +111,12 @@ function mapRow(row: Row, country: string): Suggestion | null {
 }
 
 function dedupe(items: Suggestion[]): Suggestion[] {
+  // Page ID defines the advertiser. Distinct pages can legitimately share a name.
   const seenPageIds = new Set<string>();
-  const seenLabels = new Set<string>();
-
   return items.filter((item) => {
-    const pid = item.pageId.trim();
-    const label = normalize(item.label);
-
-    if (pid && seenPageIds.has(pid)) return false;
-    if (label && seenLabels.has(label)) return false;
-
-    if (pid) seenPageIds.add(pid);
-    if (label) seenLabels.add(label);
+    const pageId = item.pageId.trim();
+    if (!pageId || seenPageIds.has(pageId)) return false;
+    seenPageIds.add(pageId);
     return true;
   });
 }
@@ -116,13 +124,15 @@ function dedupe(items: Suggestion[]): Suggestion[] {
 function score(query: string, item: Suggestion): number {
   const q = normalize(query);
   const label = normalize(item.label);
-  const domain = normalize(item.domain ?? "");
-
-  const username = domain
-    .replace(/^https?:\/\//, "")
-    .replace(/^www\./, "")
-    .replace(/^instagram\.com\//, "")
+  // Strip URL syntax before normalization; normalizing first erased slashes and
+  // made Instagram username-based ranking ineffective.
+  const rawDomain = (item.domain ?? "").trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/^www\./i, "")
+    .replace(/^instagram\.com\//i, "")
+    .replace(/^@/, "")
     .replace(/\/+$/, "");
+  const username = normalize(rawDomain);
 
   let value = 0;
 
@@ -148,7 +158,7 @@ async function loadIndexed(
     p_platform: platform,
     p_country: country,
     p_limit: MAX_RESULTS,
-  });
+  }).abortSignal(AbortSignal.timeout(INDEXED_LOOKUP_TIMEOUT_MS));
 
   if (result.error) {
     throw new Error(result.error.message);
@@ -164,7 +174,7 @@ async function loadIndexed(
       p_platform: platform,
       p_country: country,
       p_limit: MAX_RESULTS,
-    });
+    }).abortSignal(AbortSignal.timeout(INDEXED_LOOKUP_TIMEOUT_MS));
     // Punctuation-free matches first, then whatever the normal search found.
     if (!compact.error && compact.data?.length) rows = [...((compact.data ?? []) as Row[]), ...rows];
   }
@@ -173,11 +183,51 @@ async function loadIndexed(
     rows
       .map((row) => mapRow(row, country))
       .filter((item): item is Suggestion => item !== null)
+      // The index RPC can return fuzzy candidates with score 0. Never present
+      // those as matches for the user's actual brand query.
+      .filter((item) => isRelevantAdvertiserMatch(query, item.label, item.domain))
       .map((item) => ({ ...item, score: undefined }))
       .sort((a, b) => score(query, b) - score(query, a) || a.label.localeCompare(b.label)),
   ).slice(0, MAX_RESULTS);
 }
 
+async function loadMetaSuggestions(
+  rawQuery: string,
+  normalizedQuery: string,
+  country: string,
+): Promise<LiveSuggestionResult> {
+  const startedAt = performance.now();
+
+  try {
+    const advertisers = await loadIndexed(normalizedQuery, "meta", country);
+
+    return {
+      advertisers,
+      liveLookup: {
+        status: "no_match",
+        message: "Live Meta page discovery is handled by the dedicated endpoint.",
+        resultCount: 0,
+        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      },
+    };
+  } catch (error) {
+    console.warn("[ADSPY_AUTOCOMPLETE] indexed lookup failed", {
+      country,
+      queryLength: rawQuery.length,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    return {
+      advertisers: [],
+      liveLookup: {
+        status: "error",
+        message: "Indexed brand suggestions are temporarily unavailable.",
+        resultCount: 0,
+        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      },
+    };
+  }
+}
 function getCache(key: string): Suggestion[] | null {
   const entry = cache.get(key);
   if (!entry) return null;
@@ -190,9 +240,9 @@ function getCache(key: string): Suggestion[] | null {
   return entry.advertisers;
 }
 
-function setCache(key: string, advertisers: Suggestion[]) {
+function setCache(key: string, advertisers: Suggestion[], ttlMs = CACHE_TTL_MS) {
   cache.set(key, {
-    expiresAt: Date.now() + CACHE_TTL_MS,
+    expiresAt: Date.now() + ttlMs,
     advertisers,
   });
 
@@ -237,7 +287,9 @@ export async function GET(request: NextRequest) {
     }
 
     const params = request.nextUrl.searchParams;
-    const query = normalize(params.get("q") ?? "");
+    const rawQuery = (params.get("q") ?? "").replace(/\s+/g, " ").trim();
+    const query = normalize(rawQuery);
+    const liveSearch = params.get("live") === "1";
     const country = (params.get("country") ?? "IN").trim().toUpperCase();
     const rawPlatform = (params.get("platform") ?? "meta").trim().toLowerCase();
 
@@ -257,6 +309,50 @@ export async function GET(request: NextRequest) {
         advertisers: [],
         source: "none",
       });
+    }
+
+    if (liveSearch) {
+      // User-triggered only: don't run browser automation on every keystroke.
+      if (platform !== "meta" || query.replace(/\s/g, "").length < 3) {
+        return NextResponse.json({ success: true, advertisers: [], source: "none" });
+      }
+      const liveKey = `${platform}|${country}|${query}|live`;
+      const liveRate = checkRateLimit(`adspy-meta-page-search:${userId}`, 12, 60_000);
+      if (!liveRate.allowed) {
+        return NextResponse.json(
+          { success: false, advertisers: [], source: "none", error: "Live Meta page search is temporarily rate-limited. Please wait a minute." },
+          { status: 429, headers: { "Retry-After": String(liveRate.retryAfterSeconds) } },
+        );
+      }
+      let livePromise = liveInflight.get(liveKey);
+      if (!livePromise) {
+        livePromise = loadMetaSuggestions(rawQuery, query, country);
+        liveInflight.set(liveKey, livePromise);
+      }
+      let liveResult: LiveSuggestionResult;
+      try {
+        liveResult = await livePromise;
+      } finally {
+        if (liveInflight.get(liveKey) === livePromise) liveInflight.delete(liveKey);
+      }
+      const source = liveResult.advertisers.some((item) => item.source === "meta_public")
+        ? "meta_public"
+        : liveResult.advertisers.length
+          ? "indexed"
+          : "none";
+      return NextResponse.json(
+        {
+          success: true,
+          advertisers: liveResult.advertisers,
+          source,
+          liveLookup: liveResult.liveLookup,
+        },
+        { headers: {
+          "Cache-Control": "no-store",
+          "X-AdSpy-Suggestion-Source": source,
+          "Server-Timing": `meta;dur=${Math.max(0, performance.now() - start).toFixed(1)}`,
+        } },
+      );
     }
 
     const key = `${platform}|${country}|${query}`;

@@ -1,0 +1,21 @@
+.page{min-height:100vh;padding:0 26px 70px;color:#172229;background:#f5f2eb}
+.header{width:min(1240px,100%);margin:auto;padding:20px 0;border-bottom:1px solid rgba(23,34,41,.13);display:flex;align-items:center;justify-content:space-between}
+.logo{display:inline-flex}
+.header nav{display:flex;align-items:center;gap:15px;flex-wrap:wrap;font:700 .62rem ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;letter-spacing:.08em}
+.header nav a,.header nav span{color:#637074;text-decoration:none}
+.header nav a:last-child{background:#175cae;color:#fff;padding:10px 13px;border-radius:6px;letter-spacing:.02em;text-transform:none;font-family:inherit}
+.faq{width:min(1100px,100%);margin:115px auto 0;display:grid;grid-template-columns:.65fr 1.35fr;gap:65px;padding-top:70px;border-top:1px solid rgba(23,34,41,.13)}
+.faqTitle span,.faqTitle h2,.faqList summary{letter-spacing:-.04em}
+.faqTitle span{font:800 .58rem ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;color:#b95c32}
+.faqTitle h2{margin:12px 0 0;font-size:clamp(2.7rem,4.8vw,5rem);line-height:.9}
+.faqList details{border-bottom:1px solid rgba(23,34,41,.13)}
+.faqList summary{list-style:none;cursor:pointer;padding:23px 0;display:flex;justify-content:space-between;gap:25px;font-weight:800}
+.faqList summary::-webkit-details-marker{display:none}
+.faqList summary b{color:#b95c32}
+.faqList p{margin:0 0 22px;color:#667277;line-height:1.7}
+.footer{width:min(1240px,100%);margin:0 auto;background:#172229;color:#fff;padding:45px;display:flex;justify-content:space-between;gap:40px;align-items:end}
+.footer span{font:800 .57rem ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.12em}
+.footer h2{max-width:760px;margin:12px 0 0;font-size:clamp(2.7rem,5vw,5rem);line-height:.88;letter-spacing:-.06em}
+.footer a{color:#fff;text-decoration:none;font-weight:800;white-space:nowrap}
+@media(max-width:900px){.faq{grid-template-columns:1fr}.footer{flex-direction:column;align-items:flex-start}}
+@media(max-width:650px){.page{padding:0 15px 45px}.header nav span,.header nav a:not(:last-child){display:none}.footer{padding:30px}}

@@ -45,6 +45,11 @@ $env:ADSPY_BROWSER = "playwright"
 $env:ADSPY_COLLECTOR = "worker"
 $env:ADSPY_WORKER_ID = "pc-$env:COMPUTERNAME"
 $env:NODE_ENV = "production"
+# Standalone worker imports Next.js server modules. Select the server export explicitly;
+# do not patch node_modules/server-only/index.js (that file is an intentional guard).
+if ($env:NODE_OPTIONS -notmatch '(^|\s)--conditions(?:=|\s+)react-server(\s|$)') {
+  $env:NODE_OPTIONS = (($env:NODE_OPTIONS + " --conditions=react-server").Trim())
+}
 # "server-only" is bundled inside Next.js, not installed as a package, so the
 # worker (plain Node) cannot find it. Give Node an empty stand-in, exactly as
 # the Docker image does. Local only; node_modules is never committed.
